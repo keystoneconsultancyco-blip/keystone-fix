@@ -45,13 +45,26 @@ service menu, notification emails, Vapi/SIP IDs).
    Calendar ID, business hours, service menu, and notification emails.
 3. **Credentials** - create these directly in n8n's Credential manager
    (never commit real secrets to this repo):
-   - Twilio (Account SID + API Key SID/Secret) - only needed if you want
-     n8n to also manage the number's webhook via the Twilio API; otherwise
-     just set the webhook URL by hand in the Twilio Console.
-   - Google Calendar OAuth2 - connect the client's Google account.
-   - SMTP - the mailbox that should send confirmations/notifications.
+   - Twilio (Account SID + Auth Token, or API Key SID/Secret) - only
+     needed if you want n8n to also manage the number's webhook via the
+     Twilio API; otherwise just set the webhook URL by hand in the Twilio
+     Console.
+   - Vapi - Header Auth credential, header `Authorization: Bearer <vapi-private-key>`.
+     Use the **Private Key**, not the Public Key.
+   - Google Calendar OAuth2 - connect the client's Google account. See
+     "Google Calendar OAuth troubleshooting" below if sign-in fails with
+     `invalid_client`.
+   - Resend - Header Auth credential (same pattern as Vapi), header
+     `Authorization: Bearer <resend-api-key>`. **Not SMTP** - this n8n
+     instance runs on Railway, which blocks outbound SMTP connections
+     (`ENETUNREACH`), so both email nodes call Resend's HTTPS API instead.
+     Sign up at resend.com, verify a sending domain that matches
+     `confirmationFromEmail` in the client config (or use Resend's shared
+     test sender while developing, which only delivers to the account
+     owner's own address), then create an API key under
+     Dashboard -> API Keys.
    Then select each credential in the relevant node (Google Calendar nodes
-   in `02-vapi-tools`, Send Email nodes in `03-post-call-actions`).
+   in `02-vapi-tools`, HTTP Request email nodes in `03-post-call-actions`).
 4. **Twilio Console**: set the client's number's Voice webhook (A call comes
    in) to:
    `https://n8n-production-f071.up.railway.app/webhook/twilio/inbound-call`
@@ -72,6 +85,45 @@ service menu, notification emails, Vapi/SIP IDs).
      in `vapi-assistant-config.json`.
 6. **Activate** all three call-handling workflows in n8n (they must be
    Active for the production webhook URLs to respond).
+
+## Google Calendar OAuth troubleshooting (`Error 401: invalid_client`)
+
+This error means Google's OAuth server doesn't recognize the `client_id`
+n8n sent it at all - it happens before the consent screen even loads, so
+it's not a scopes/test-user/publishing problem. In rough order of
+likelihood:
+
+1. **Propagation delay.** A newly created OAuth Client ID can take
+   anywhere from a few minutes to a couple of hours to become live on
+   Google's auth servers. If you tested immediately after creating it,
+   wait 15-30 minutes and try again before changing anything.
+2. **Wrong value pasted into n8n.** The most common mixup is copying the
+   Client Secret's *Secret ID* (a short UUID shown in the Google Cloud
+   console's secrets table) instead of the actual *Secret value* - or
+   pasting a truncated Client ID missing the trailing
+   `.apps.googleusercontent.com`. Re-copy both fields directly from Google
+   Cloud Console -> APIs & Services -> Credentials -> your OAuth client,
+   using the "copy" icon next to each field rather than manual selection.
+3. **Client ID belongs to a different project than you think.** If the
+   Google account has access to multiple projects/orgs, double check the
+   project selector in the top bar matches "My Project 84916" when you're
+   viewing the credential.
+4. **Google Calendar API not enabled.** Won't cause `invalid_client`
+   itself, but you'll hit it right after fixing the above - enable it at
+   APIs & Services -> Library -> Google Calendar API -> Enable, in the
+   same project.
+
+If none of that resolves it: delete the OAuth client and the redirect URI
+entry, wait a minute, then recreate both from scratch (Web application
+type, same redirect URI
+`https://n8n-production-f071.up.railway.app/rest/oauth2-credential/callback`),
+wait ~15 minutes before testing the new one. Recreating clean rules out
+any corrupted/half-propagated state from the first attempt.
+
+Since this is only a stock placeholder (real clients will likely bring
+their own calendar system), it's fine to timebox this - if a clean
+recreate plus a wait still fails, it's worth a support ticket to Google
+rather than more local debugging.
 
 ## Known risk to validate first: the SIP handoff
 

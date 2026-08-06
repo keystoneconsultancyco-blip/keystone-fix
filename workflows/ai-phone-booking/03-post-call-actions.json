@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://n8n-production-f071.up.railway.app/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time. This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification (both via generic SMTP - swap for another provider per client if needed).",
+        "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://n8n-production-f071.up.railway.app/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time. This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification, both via the Resend HTTP API (NOT SMTP - Railway blocks outbound SMTP, so these are plain HTTPS calls instead). Requires a \"Resend API\" Header Auth credential in n8n with header 'Authorization: Bearer <resend-api-key>', same pattern as the Vapi credential.",
         "height": 320,
         "width": 460
       },
@@ -151,49 +151,55 @@
     },
     {
       "parameters": {
-        "fromEmail": "={{ $json.confirmationFromEmail }}",
-        "toEmail": "={{ $('Extract Call Summary').item.json.customerEmail }}",
-        "subject": "=Your booking with {{ $json.businessName }} is confirmed",
-        "emailFormat": "text",
-        "text": "=Hi {{ $('Extract Call Summary').item.json.customerName }},\n\nYour {{ $('Extract Call Summary').item.json.service }} appointment with {{ $json.businessName }} is confirmed for {{ $('Extract Call Summary').item.json.bookingDate }} at {{ $('Extract Call Summary').item.json.bookingTime }}.\n\nIf you need to change or cancel, just call us back.\n\nThanks,\n{{ $json.businessName }}",
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$('Extract Call Summary').item.json.customerEmail], subject: `Your booking with ${$json.businessName} is confirmed`, text: `Hi ${$('Extract Call Summary').item.json.customerName},\\n\\nYour ${$('Extract Call Summary').item.json.service} appointment with ${$json.businessName} is confirmed for ${$('Extract Call Summary').item.json.bookingDate} at ${$('Extract Call Summary').item.json.bookingTime}.\\n\\nIf you need to change or cancel, just call us back.\\n\\nThanks,\\n${$json.businessName}` }) }}",
         "options": {}
       },
       "id": "email-customer-confirmation",
       "name": "Email Customer Confirmation",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         -140,
         60
       ],
+      "notes": "Resend API - POST /emails. Requires a Header Auth credential named 'Resend API' with header Authorization: Bearer <resend-api-key>.",
       "credentials": {
-        "smtp": {
-          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
-          "name": "SMTP - REPLACE_WITH_CLIENT_NAME"
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RESEND_CREDENTIAL_ID",
+          "name": "Resend API - REPLACE_WITH_CLIENT_NAME"
         }
       }
     },
     {
       "parameters": {
-        "fromEmail": "={{ $json.confirmationFromEmail }}",
-        "toEmail": "={{ $json.businessNotificationEmail }}",
-        "subject": "=New booking: {{ $('Extract Call Summary').item.json.customerName }} - {{ $('Extract Call Summary').item.json.bookingDate }}",
-        "emailFormat": "text",
-        "text": "=New booking taken by the AI phone assistant:\n\nCustomer: {{ $('Extract Call Summary').item.json.customerName }}\nPhone: {{ $('Extract Call Summary').item.json.customerPhone }}\nEmail: {{ $('Extract Call Summary').item.json.customerEmail }}\nService: {{ $('Extract Call Summary').item.json.service }}\nDate: {{ $('Extract Call Summary').item.json.bookingDate }}\nTime: {{ $('Extract Call Summary').item.json.bookingTime }}",
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `New booking: ${$('Extract Call Summary').item.json.customerName} - ${$('Extract Call Summary').item.json.bookingDate}`, text: `New booking taken by the AI phone assistant:\\n\\nCustomer: ${$('Extract Call Summary').item.json.customerName}\\nPhone: ${$('Extract Call Summary').item.json.customerPhone}\\nEmail: ${$('Extract Call Summary').item.json.customerEmail}\\nService: ${$('Extract Call Summary').item.json.service}\\nDate: ${$('Extract Call Summary').item.json.bookingDate}\\nTime: ${$('Extract Call Summary').item.json.bookingTime}` }) }}",
         "options": {}
       },
       "id": "email-business-notification",
       "name": "Email Business Notification",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         -140,
         260
       ],
+      "notes": "Resend API - POST /emails. Requires a Header Auth credential named 'Resend API' with header Authorization: Bearer <resend-api-key>.",
       "credentials": {
-        "smtp": {
-          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
-          "name": "SMTP - REPLACE_WITH_CLIENT_NAME"
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RESEND_CREDENTIAL_ID",
+          "name": "Resend API - REPLACE_WITH_CLIENT_NAME"
         }
       }
     },
