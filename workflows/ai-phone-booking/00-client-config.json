@@ -1,0 +1,155 @@
+{
+  "name": "[Stock] Phone Booking - Client Config",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "client-config-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Client Config\nThis is the ONLY file you should need to edit per client.\n\nDuplicate this whole template folder per client, then edit the values below (and swap credentials in each workflow's nodes to that client's Twilio / Vapi / Google / SMTP accounts).\n\nEvery other workflow calls this one via \"Execute Sub-Workflow\" to pull these values - never hardcode client details anywhere else.",
+        "height": 260,
+        "width": 380
+      },
+      "id": "client-config-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "client-id",
+              "name": "clientId",
+              "type": "string",
+              "value": "REPLACE_WITH_CLIENT_ID"
+            },
+            {
+              "id": "business-name",
+              "name": "businessName",
+              "type": "string",
+              "value": "REPLACE_WITH_BUSINESS_NAME"
+            },
+            {
+              "id": "timezone",
+              "name": "timezone",
+              "type": "string",
+              "value": "Europe/London"
+            },
+            {
+              "id": "reception-forward-number",
+              "name": "receptionForwardNumber",
+              "type": "string",
+              "value": "+15550000000"
+            },
+            {
+              "id": "vapi-sip-credential-id",
+              "name": "vapiSipCredentialId",
+              "type": "string",
+              "value": "REPLACE_WITH_VAPI_SIP_CREDENTIAL_ID"
+            },
+            {
+              "id": "vapi-sip-region-host",
+              "name": "vapiSipRegionHost",
+              "type": "string",
+              "value": "sip.vapi.ai"
+            },
+            {
+              "id": "vapi-assistant-id",
+              "name": "vapiAssistantId",
+              "type": "string",
+              "value": "REPLACE_WITH_VAPI_ASSISTANT_ID"
+            },
+            {
+              "id": "google-calendar-id",
+              "name": "googleCalendarId",
+              "type": "string",
+              "value": "primary"
+            },
+            {
+              "id": "booking-slot-minutes",
+              "name": "bookingSlotDurationMinutes",
+              "type": "number",
+              "value": 30
+            },
+            {
+              "id": "business-hours-start",
+              "name": "businessHoursStart",
+              "type": "string",
+              "value": "09:00"
+            },
+            {
+              "id": "business-hours-end",
+              "name": "businessHoursEnd",
+              "type": "string",
+              "value": "17:00"
+            },
+            {
+              "id": "business-days",
+              "name": "businessDays",
+              "type": "array",
+              "value": "=[\"Monday\",\"Tuesday\",\"Wednesday\",\"Thursday\",\"Friday\"]"
+            },
+            {
+              "id": "service-menu",
+              "name": "serviceMenu",
+              "type": "array",
+              "value": "=[{ \"name\": \"General Consultation\", \"durationMinutes\": 30 }, { \"name\": \"Follow-up\", \"durationMinutes\": 15 }]"
+            },
+            {
+              "id": "confirmation-from-email",
+              "name": "confirmationFromEmail",
+              "type": "string",
+              "value": "bookings@REPLACE_WITH_CLIENT_DOMAIN.com"
+            },
+            {
+              "id": "business-notification-email",
+              "name": "businessNotificationEmail",
+              "type": "string",
+              "value": "reception@REPLACE_WITH_CLIENT_DOMAIN.com"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "client-config-set",
+      "name": "Client Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -200,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateId": "keystone-ai-phone-booking-client-config"
+  }
+}

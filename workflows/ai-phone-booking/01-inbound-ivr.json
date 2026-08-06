@@ -1,0 +1,462 @@
+{
+  "name": "[Stock] Phone Booking - 1. Inbound IVR",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stage 1: Inbound IVR\nTwilio's Voice webhook for the client's number points at the \"Inbound Call\" webhook below.\n\nFlow:\n1. Call arrives -> greeting + Gather (Press 1 / Press 2)\n2. Twilio POSTs the pressed digit to \"Gather Result\"\n3. Digit 1 -> <Dial> straight to reception (pure Twilio forwarding, no AI)\n4. Digit 2 -> <Dial><Sip> handoff to the Vapi assistant (see README for Vapi SIP Trunking setup)\n\nSet the Twilio number's Voice webhook (in the Twilio Console, or via the Twilio node) to:\nhttps://n8n-production-f071.up.railway.app/webhook/twilio/inbound-call",
+        "height": 320,
+        "width": 420
+      },
+      "id": "ivr-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio/inbound-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-inbound-call",
+      "name": "Inbound Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        140
+      ],
+      "webhookId": "twilio-inbound-call"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config-1",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -660,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "greeting-twiml",
+              "name": "twiml",
+              "type": "string",
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather numDigits=\"1\" timeout=\"6\" action=\"https://n8n-production-f071.up.railway.app/webhook/twilio/gather-result\" method=\"POST\">\n    <Say voice=\"Polly.Joanna\">Thanks for calling {{ $json.businessName }}. Press 1 for general enquiries. Press 2 to book an appointment.</Say>\n  </Gather>\n  <Say voice=\"Polly.Joanna\">Sorry, we didn't get your response. Goodbye.</Say>\n</Response>"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-greeting-twiml",
+      "name": "Build Greeting TwiML",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -420,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-greeting",
+      "name": "Return Greeting TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -180,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio/gather-result",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-gather-result",
+      "name": "Gather Result",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        480
+      ],
+      "webhookId": "twilio-gather-result"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config-2",
+      "name": "Get Client Config1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -660,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "merge-digits",
+              "name": "digits",
+              "type": "string",
+              "value": "={{ $('Gather Result').item.json.body.Digits }}"
+            },
+            {
+              "id": "merge-from",
+              "name": "callerNumber",
+              "type": "string",
+              "value": "={{ $('Gather Result').item.json.body.From }}"
+            },
+            {
+              "id": "merge-to",
+              "name": "calledNumber",
+              "type": "string",
+              "value": "={{ $('Gather Result').item.json.body.To }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-merge-context",
+      "name": "Merge Call Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -420,
+        480
+      ],
+      "notes": "Combines the Client Config output with the caller's raw Twilio params (available via $('Gather Result')) since Execute Workflow replaces the item's json."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.digits }}",
+                    "rightValue": "1",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Press 1 - Reception"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.digits }}",
+                    "rightValue": "2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Press 2 - AI Booking"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-digit",
+      "name": "Route On Digit",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -180,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "forward-twiml",
+              "name": "twiml",
+              "type": "string",
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Say voice=\"Polly.Joanna\">Connecting you now.</Say>\n  <Dial>{{ $json.receptionForwardNumber }}</Dial>\n</Response>"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-forward-twiml",
+      "name": "Build Forward-To-Reception TwiML",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        80,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vapi-twiml",
+              "name": "twiml",
+              "type": "string",
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial answerOnBridge=\"true\">\n    <Sip>\n      sip:{{ $json.calledNumber }}@{{ $json.vapiSipCredentialId }}.{{ $json.vapiSipRegionHost }}\n      <Parameter name=\"clientId\" value=\"{{ $json.clientId }}\" />\n      <Parameter name=\"callerNumber\" value=\"{{ $json.callerNumber }}\" />\n    </Sip>\n  </Dial>\n</Response>"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-vapi-twiml",
+      "name": "Build Vapi Handoff TwiML",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        80,
+        480
+      ],
+      "notes": "REQUIRES VALIDATION IN TESTING: dynamic <Dial><Sip> handoff mid-call to Vapi's SIP trunking URI. Set up the SIP trunking phone number + credential in the Vapi dashboard first (see README). Fallback documented in README if this does not connect cleanly."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fallback-twiml",
+              "name": "twiml",
+              "type": "string",
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Say voice=\"Polly.Joanna\">Sorry, I didn't get a valid response. Goodbye.</Say>\n</Response>"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-fallback-twiml",
+      "name": "Build Fallback TwiML",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        80,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-routed",
+      "name": "Return Routed TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        340,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Inbound Call": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config": {
+      "main": [
+        [
+          {
+            "node": "Build Greeting TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Greeting TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Greeting TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gather Result": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config1": {
+      "main": [
+        [
+          {
+            "node": "Merge Call Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Call Context": {
+      "main": [
+        [
+          {
+            "node": "Route On Digit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route On Digit": {
+      "main": [
+        [
+          {
+            "node": "Build Forward-To-Reception TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Vapi Handoff TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Forward-To-Reception TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Routed TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Vapi Handoff TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Routed TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fallback TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Routed TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateId": "keystone-ai-phone-booking-inbound-ivr"
+  }
+}

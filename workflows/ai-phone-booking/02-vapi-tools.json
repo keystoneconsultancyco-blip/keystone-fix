@@ -1,0 +1,536 @@
+{
+  "name": "[Stock] Phone Booking - 2. Vapi Tools",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add two Custom Tools, both pointing at:\nhttps://n8n-production-f071.up.railway.app/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+        "height": 340,
+        "width": 460
+      },
+      "id": "tools-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi/tools",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-vapi-tools",
+      "name": "Vapi Tool Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        160
+      ],
+      "webhookId": "vapi-tool-call"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "tool-call-id",
+              "name": "toolCallId",
+              "type": "string",
+              "value": "={{ $json.body.message.toolCallList[0].id }}"
+            },
+            {
+              "id": "tool-name",
+              "name": "toolName",
+              "type": "string",
+              "value": "={{ $json.body.message.toolCallList[0].name }}"
+            },
+            {
+              "id": "tool-args",
+              "name": "toolArgs",
+              "type": "object",
+              "value": "={{ $json.body.message.toolCallList[0].arguments }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-extract-tool-call",
+      "name": "Extract Tool Call",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "merge-tool-call-id",
+              "name": "toolCallId",
+              "type": "string",
+              "value": "={{ $('Extract Tool Call').item.json.toolCallId }}"
+            },
+            {
+              "id": "merge-tool-name",
+              "name": "toolName",
+              "type": "string",
+              "value": "={{ $('Extract Tool Call').item.json.toolName }}"
+            },
+            {
+              "id": "merge-tool-args",
+              "name": "toolArgs",
+              "type": "object",
+              "value": "={{ $('Extract Tool Call').item.json.toolArgs }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-merge-context",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -400,
+        160
+      ],
+      "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "check_availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "check_availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "book_appointment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "book_appointment"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-tool-name",
+      "name": "Route On Tool Name",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -160,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $json.googleCalendarId }}",
+          "mode": "expression"
+        },
+        "timeMin": "={{ $json.toolArgs.date }}T00:00:00",
+        "timeMax": "={{ $json.toolArgs.date }}T23:59:59",
+        "options": {
+          "timeZone": "={{ $json.timezone }}"
+        }
+      },
+      "id": "gcal-get-busy",
+      "name": "Google Calendar - Get Day's Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        40
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_CALENDAR_CREDENTIAL_ID",
+          "name": "Google Calendar - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst busyEvents = items.map(i => i.json);\nconst args = config.toolArgs;\n\nconst slotMinutes = config.bookingSlotDurationMinutes || 30;\nconst [startH, startM] = (config.businessHoursStart || '09:00').split(':').map(Number);\nconst [endH, endM] = (config.businessHoursEnd || '17:00').split(':').map(Number);\n\nconst dayStart = new Date(`${args.date}T00:00:00`);\ndayStart.setHours(startH, startM, 0, 0);\nconst dayEnd = new Date(`${args.date}T00:00:00`);\ndayEnd.setHours(endH, endM, 0, 0);\n\nconst busyRanges = busyEvents.map(e => ({\n  start: new Date(e.start?.dateTime || e.start?.date),\n  end: new Date(e.end?.dateTime || e.end?.date),\n}));\n\nconst slots = [];\nfor (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + slotMinutes * 60000)) {\n  const slotEnd = new Date(t.getTime() + slotMinutes * 60000);\n  const overlaps = busyRanges.some(b => t < b.end && slotEnd > b.start);\n  if (!overlaps) {\n    slots.push(t.toTimeString().slice(0, 5));\n  }\n}\n\nconst preferredTime = args.preferredTime;\nconst preferredAvailable = preferredTime ? slots.includes(preferredTime) : false;\n\nreturn [{\n  json: {\n    date: args.date,\n    preferredTime: preferredTime || null,\n    preferredAvailable,\n    alternativeSlots: slots.filter(s => s !== preferredTime).slice(0, 5),\n    allAvailableSlots: slots,\n  }\n}];"
+      },
+      "id": "code-compute-slots",
+      "name": "Compute Available Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "avail-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "={{ $json.preferredTime && $json.preferredAvailable ? ($json.date + ' at ' + $json.preferredTime + ' is available.') : ($json.preferredTime ? ($json.date + ' at ' + $json.preferredTime + ' is not available. Alternative times on ' + $json.date + ': ' + $json.alternativeSlots.join(', ') + '.') : ('Available times on ' + $json.date + ': ' + $json.allAvailableSlots.join(', ') + '.')) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-avail-result",
+      "name": "Build Availability Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $('Merge Context').item.json.googleCalendarId }}",
+          "mode": "expression"
+        },
+        "start": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
+        "end": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
+        "additionalFields": {
+          "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
+          "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
+        }
+      },
+      "id": "gcal-create-event",
+      "name": "Google Calendar - Book Slot",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        300
+      ],
+      "notes": "The 'end' field here is a placeholder equal to start; set end = start + serviceDurationMinutes via an upstream Code/Set node once you know each service's duration from Client Config's serviceMenu.",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_CALENDAR_CREDENTIAL_ID",
+          "name": "Google Calendar - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "booking-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "=You're booked for {{ $('Merge Context').item.json.toolArgs.service }} on {{ $('Merge Context').item.json.toolArgs.date }} at {{ $('Merge Context').item.json.toolArgs.time }}. A confirmation email is on its way."
+            },
+            {
+              "id": "booking-event-id",
+              "name": "calendarEventId",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-booking-result",
+      "name": "Build Booking Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "Sorry, I couldn't process that request."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-error-result",
+      "name": "Build Unknown-Tool Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        80,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "final-tool-call-id",
+              "name": "toolCallId",
+              "type": "string",
+              "value": "={{ $('Merge Context').item.json.toolCallId }}"
+            },
+            {
+              "id": "final-result",
+              "name": "result",
+              "type": "string",
+              "value": "={{ $json.resultText }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-final-response",
+      "name": "Build Tool Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        780,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { results: [ { toolCallId: $json.toolCallId, result: $json.result } ] } }}",
+        "options": {}
+      },
+      "id": "respond-tool-result",
+      "name": "Return Tool Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1020,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Vapi Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Extract Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Route On Tool Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route On Tool Name": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Get Day's Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Calendar - Book Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unknown-Tool Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Get Day's Events": {
+      "main": [
+        [
+          {
+            "node": "Compute Available Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Available Slots": {
+      "main": [
+        [
+          {
+            "node": "Build Availability Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Availability Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Book Slot": {
+      "main": [
+        [
+          {
+            "node": "Build Booking Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Booking Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Unknown-Tool Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tool Response": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateId": "keystone-ai-phone-booking-vapi-tools"
+  }
+}
