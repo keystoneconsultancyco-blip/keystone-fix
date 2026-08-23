@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stage 1: Inbound IVR\nTwilio's Voice webhook for the client's number points at the \"Inbound Call\" webhook below.\n\nFlow:\n1. Call arrives -> greeting + Gather (Press 1 / Press 2)\n2. Twilio POSTs the pressed digit to \"Gather Result\"\n3. Digit 1 -> <Dial> straight to reception (pure Twilio forwarding, no AI)\n4. Digit 2 -> <Dial><Sip> handoff to the Vapi assistant (see README for Vapi SIP Trunking setup)\n\nSet the Twilio number's Voice webhook (in the Twilio Console, or via the Twilio node) to:\nhttps://n8n-production-f071.up.railway.app/webhook/twilio/inbound-call",
+        "content": "## Stage 1: Inbound IVR\nTwilio's Voice webhook for the client's number points at the \"Inbound Call\" webhook below.\n\nFlow:\n1. Call arrives -> greeting + Gather (Press 1 / Press 2)\n2. Twilio POSTs the pressed digit to \"Gather Result\"\n3. Digit 1 -> <Dial> straight to reception (pure Twilio forwarding, no AI)\n4. Digit 2 -> <Dial><Sip> handoff to the Vapi assistant (see README for Vapi SIP Trunking setup)\n\nSet the Twilio number's Voice webhook (in the Twilio Console, or via the Twilio node) to:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/twilio/inbound-call",
         "height": 320,
         "width": 420
       },
@@ -60,7 +60,7 @@
               "id": "greeting-twiml",
               "name": "twiml",
               "type": "string",
-              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather numDigits=\"1\" timeout=\"6\" action=\"https://n8n-production-f071.up.railway.app/webhook/twilio/gather-result\" method=\"POST\">\n    <Say voice=\"Polly.Joanna\">Thanks for calling {{ $json.businessName }}. Press 1 for general enquiries. Press 2 to book an appointment.</Say>\n  </Gather>\n  <Say voice=\"Polly.Joanna\">Sorry, we didn't get your response. Goodbye.</Say>\n</Response>"
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather numDigits=\"1\" timeout=\"6\" action=\"https://keystoneconsultancy.app.n8n.cloud/webhook/twilio/gather-result\" method=\"POST\">\n    <Say voice=\"Polly.Joanna\">Thanks for calling {{ $json.businessName }}. Press 1 for general enquiries. Press 2 to book an appointment.</Say>\n  </Gather>\n  <Say voice=\"Polly.Joanna\">Sorry, we didn't get your response. Goodbye.</Say>\n</Response>"
             }
           ]
         },

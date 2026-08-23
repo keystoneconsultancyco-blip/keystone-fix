@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add two Custom Tools, both pointing at:\nhttps://n8n-production-f071.up.railway.app/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add two Custom Tools, both pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
         "height": 340,
         "width": 460
       },

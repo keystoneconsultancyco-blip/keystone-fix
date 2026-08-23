@@ -34,6 +34,37 @@ service menu, notification emails, Vapi/SIP IDs).
 | `03-post-call-actions.json` | Webhook Vapi calls after hangup; sends confirmation + notification emails. |
 | `vapi-assistant-config.json` | Reference payload for creating the Vapi assistant (system prompt, tools, analysis schema). Not an n8n file. |
 
+## Current live deployment (keystoneconsultancy.app.n8n.cloud)
+
+All four workflows are deployed on this instance as of this migration.
+Webhook URLs and the `vapiSipCredentialId`/config placeholders below are
+still generic - this is the reference/stock deployment, not yet a
+real client instance.
+
+| Workflow | Live ID | Active |
+|---|---|---|
+| `[Stock] Phone Booking - Client Config` | `xNwsUFYDgiXVvXPv` | No |
+| `[Stock] Phone Booking - 1. Inbound IVR` | `P1PTZaUWSSwNOFua` | No |
+| `[Stock] Phone Booking - 2. Vapi Tools` | `3gyq87AL3ZrOfZ0y` | No |
+| `[Stock] Phone Booking - 3. Post-Call Actions` | `SoTR9D5CjH1BGs4F` | No |
+
+Outstanding before this deployment can go live:
+- None of the four are **Active** yet (production webhook URLs won't
+  respond until each is toggled active in the n8n UI) - do this only once
+  credentials below are wired up, to avoid Twilio/Vapi hitting dead ends.
+- The Google Calendar nodes in `2. Vapi Tools` and the two Resend HTTP
+  Request nodes in `3. Post-Call Actions` were deployed **without**
+  credentials attached (the placeholder credential IDs in the source JSON
+  don't exist in this workspace and the API rejects unknown credential
+  references). Once you've created the Twilio, Vapi, Google Calendar, and
+  Resend credentials in this workspace, open each node and pick the
+  credential from the dropdown:
+  - `2. Vapi Tools`: "Google Calendar - Get Day's Events", "Google Calendar - Book Slot"
+  - `3. Post-Call Actions`: "Email Customer Confirmation", "Email Business Notification"
+- `00-client-config` still holds generic placeholder values
+  (`REPLACE_WITH_*`) - edit the "Client Config" node directly in the n8n
+  UI once you have real values for this deployment.
+
 ## One-time setup per client
 
 1. **Import** all four `*.json` workflow files into n8n (Import from File, or
@@ -55,10 +86,11 @@ service menu, notification emails, Vapi/SIP IDs).
      "Google Calendar OAuth troubleshooting" below if sign-in fails with
      `invalid_client`.
    - Resend - Header Auth credential (same pattern as Vapi), header
-     `Authorization: Bearer <resend-api-key>`. **Not SMTP** - this n8n
-     instance runs on Railway, which blocks outbound SMTP connections
-     (`ENETUNREACH`), so both email nodes call Resend's HTTPS API instead.
-     Sign up at resend.com, verify a sending domain that matches
+     `Authorization: Bearer <resend-api-key>`. **Not SMTP** - the original
+     hosting (Railway) blocked outbound SMTP (`ENETUNREACH`), so both email
+     nodes were built against Resend's HTTPS API instead. Kept that way
+     after migrating off Railway since it's simpler to deploy per client
+     regardless of host. Sign up at resend.com, verify a sending domain that matches
      `confirmationFromEmail` in the client config (or use Resend's shared
      test sender while developing, which only delivers to the account
      owner's own address), then create an API key under
@@ -67,7 +99,7 @@ service menu, notification emails, Vapi/SIP IDs).
    in `02-vapi-tools`, HTTP Request email nodes in `03-post-call-actions`).
 4. **Twilio Console**: set the client's number's Voice webhook (A call comes
    in) to:
-   `https://n8n-production-f071.up.railway.app/webhook/twilio/inbound-call`
+   `https://keystoneconsultancy.app.n8n.cloud/webhook/twilio/inbound-call`
    (HTTP POST).
 5. **Vapi dashboard**:
    - Create the assistant using `vapi-assistant-config.json` as a starting
@@ -116,7 +148,7 @@ likelihood:
 If none of that resolves it: delete the OAuth client and the redirect URI
 entry, wait a minute, then recreate both from scratch (Web application
 type, same redirect URI
-`https://n8n-production-f071.up.railway.app/rest/oauth2-credential/callback`),
+`https://keystoneconsultancy.app.n8n.cloud/rest/oauth2-credential/callback`),
 wait ~15 minutes before testing the new one. Recreating clean rules out
 any corrupted/half-propagated state from the first attempt.
 

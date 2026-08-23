@@ -13,7 +13,7 @@
     "voiceId": "REPLACE_WITH_VOICE_ID"
   },
   "server": {
-    "url": "https://n8n-production-f071.up.railway.app/webhook/vapi/end-of-call"
+    "url": "https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/end-of-call"
   },
   "serverMessages": [
     "end-of-call-report"
@@ -50,7 +50,7 @@
         }
       },
       "server": {
-        "url": "https://n8n-production-f071.up.railway.app/webhook/vapi/tools"
+        "url": "https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools"
       }
     },
     {
@@ -72,7 +72,7 @@
         }
       },
       "server": {
-        "url": "https://n8n-production-f071.up.railway.app/webhook/vapi/tools"
+        "url": "https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools"
       }
     }
   ]
