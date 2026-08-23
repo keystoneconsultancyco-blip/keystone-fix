@@ -1,0 +1,626 @@
+{
+  "name": "[Stock] Invoice Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Invoice Automation - Stock Template\n\nTwo triggers feed the same pipeline:\n- Manual Trigger + \"Sample Job Data\" -> click-to-test in the n8n editor.\n- Webhook \"Job Completion Input\" -> POST real (or test) job-completion JSON here; also what a real job-management system would call.\n\nFlow: validate -> Client Config -> branding/discount/payment options -> send-window check (queues via a Wait node if outside window) -> resolve Xero contact (search by AccountNumber == internal customerId; create if not found) -> duplicate check (by Reference on the invoice) -> create Xero invoice -> Resend confirmation email if we have one.\n\nWebhook responds with whatever the final node in the branch that fired produced (responseMode: lastNode), so POSTing test payloads is a full round-trip test.",
+        "height": 320,
+        "width": 480
+      },
+      "id": "top-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-2000, -420]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-2000, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  jobId: 'JOB-1001',\n  customerId: 'CUST-001',\n  customerName: 'Jane Doe',\n  customerEmail: 'jane@example.com',\n  jobDescription: 'Boiler service and safety check',\n  jobValue: 250.00,\n  milestoneNumber: null,\n  milestoneLabel: null,\n  jobCompletedAt: new Date().toISOString(),\n} }];"
+      },
+      "id": "code-sample-job",
+      "name": "Sample Job Data (Manual Test)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1760, -80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice/job-completed",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-job-input",
+      "name": "Job Completion Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-2000, 160],
+      "webhookId": "invoice-job-completed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: { ...body } }];"
+      },
+      "id": "code-extract-webhook",
+      "name": "Extract Job Data From Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1760, 160]
+    },
+    {
+      "parameters": {},
+      "id": "noop-job-data-in",
+      "name": "Job Data In",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [-1520, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.item.json;\nconst errors = [];\n\nif (!job.jobId) errors.push('MISSING_JOB_ID');\nif (!job.customerId) errors.push('MISSING_CUSTOMER_ID');\nif (!job.customerName) errors.push('MISSING_CUSTOMER_NAME');\n\nconst jobValueNum = Number(job.jobValue);\nconst jobValueInvalid = job.jobValue === undefined || job.jobValue === null || job.jobValue === '' || isNaN(jobValueNum) || jobValueNum <= 0;\nif (jobValueInvalid) errors.push('INVALID_JOB_VALUE');\n\nconst hasCustomerEmail = !!job.customerEmail;\n\nreturn [{\n  json: {\n    ...job,\n    jobValue: isNaN(jobValueNum) ? 0 : jobValueNum,\n    hasCustomerEmail,\n    isValid: errors.length === 0,\n    validationErrors: errors,\n  }\n}];"
+      },
+      "id": "code-validate",
+      "name": "Validate Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1280, 40]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-1040, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.item.json;\nreturn [{ json: {\n  status: 'rejected',\n  reason: 'validation_failed',\n  jobId: job.jobId || null,\n  errors: job.validationErrors,\n} }];"
+      },
+      "id": "code-validation-error",
+      "name": "Build Validation Error Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-800, -140]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [-800, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst job = $('Validate Job Data').item.json;\nreturn [{ json: { ...job, ...config } }];"
+      },
+      "id": "code-merge-config-job",
+      "name": "Merge Config + Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst discountPercent = Number(d.discountPercent) || 0;\nconst rawValue = Number(d.jobValue) || 0;\nconst discountedValue = Math.round(rawValue * (1 - discountPercent / 100) * 100) / 100;\n\nconst useMilestone = !!(d.milestoneInvoicingEnabled && d.milestoneNumber);\nconst invoiceReference = useMilestone ? `${d.jobId}-M${d.milestoneNumber}` : `${d.jobId}`;\nconst milestoneLabelText = (useMilestone && d.milestoneLabel) ? ` (${d.milestoneLabel})` : '';\nconst lineDescription = `${d.jobDescription || 'Completed job'}${milestoneLabelText} - ${d.clientName}`;\n\nreturn [{\n  json: {\n    ...d,\n    lineAmount: discountedValue,\n    invoiceReference,\n    lineDescription,\n  }\n}];"
+      },
+      "id": "code-apply-branding",
+      "name": "Apply Branding, Discount, Payment Options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst tz = d.sendWindowTimezone || 'UTC';\nconst now = new Date();\n\nfunction getParts(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', {\n    timeZone, hour12: false,\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit'\n  });\n  const parts = {};\n  for (const p of dtf.formatToParts(date)) {\n    if (p.type !== 'literal') parts[p.type] = parseInt(p.value, 10);\n  }\n  if (parts.hour === 24) parts.hour = 0;\n  return parts;\n}\n\nfunction getOffsetMinutes(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });\n  const tzPart = dtf.formatToParts(date).find(p => p.type === 'timeZoneName').value;\n  const m = tzPart.match(/GMT([+-]\\d+)(?::(\\d+))?/);\n  if (!m) return 0;\n  const h = parseInt(m[1], 10);\n  const mm = m[2] ? parseInt(m[2], 10) : 0;\n  return h * 60 + (h < 0 ? -mm : mm);\n}\n\nconst nowParts = getParts(now, tz);\nconst nowMinutes = nowParts.hour * 60 + nowParts.minute;\n\nconst [startH, startM] = (d.sendWindowStart || '00:00').split(':').map(Number);\nconst [endH, endM] = (d.sendWindowEnd || '23:59').split(':').map(Number);\nconst startMinutes = startH * 60 + startM;\nconst endMinutes = endH * 60 + endM;\n\nconst inWindow = nowMinutes >= startMinutes && nowMinutes <= endMinutes;\n\nlet resumeAt = null;\nif (!inWindow) {\n  let targetY = nowParts.year, targetM = nowParts.month, targetD = nowParts.day;\n  if (nowMinutes > endMinutes) {\n    const nextDay = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + 1));\n    targetY = nextDay.getUTCFullYear(); targetM = nextDay.getUTCMonth() + 1; targetD = nextDay.getUTCDate();\n  }\n  const offsetMin = getOffsetMinutes(now, tz);\n  const utcMs = Date.UTC(targetY, targetM - 1, targetD, startH, startM) - offsetMin * 60000;\n  resumeAt = new Date(utcMs);\n}\n\nreturn [{ json: { ...d, inSendWindow: inWindow, resumeAt: resumeAt ? resumeAt.toISOString() : null } }];"
+      },
+      "id": "code-check-window",
+      "name": "Check Send-Time Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.inSendWindow }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-in-window",
+      "name": "In Send Window?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [160, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, queueStatus: 'queued_outside_send_window', queuedUntil: d.resumeAt } }];"
+      },
+      "id": "code-queue",
+      "name": "Queue Until Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 320]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.resumeAt }}"
+      },
+      "id": "wait-until-window",
+      "name": "Wait For Send Window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [640, 320],
+      "webhookId": "invoice-wait-resume"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Accept", "value": "application/json" }]
+        },
+        "options": {}
+      },
+      "id": "http-get-connections",
+      "name": "Xero - Get Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 160],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Check Send-Time Window').item.json;\nreturn [{ json: { ...prior, xeroTenantId: tenantId } }];"
+      },
+      "id": "code-extract-tenant",
+      "name": "Extract Tenant ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 160]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "where", "value": "=Reference==\"{{ $json.invoiceReference }}\"" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-check-duplicate",
+      "name": "Xero - Check Existing Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 160],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID').item.json;\nconst invoices = resp.Invoices || [];\nreturn [{ json: { ...prior, isDuplicate: invoices.length > 0, existingInvoiceId: invoices[0] ? invoices[0].InvoiceID : null } }];"
+      },
+      "id": "code-is-duplicate",
+      "name": "Check Duplicate Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1840, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'skipped',\n  reason: 'duplicate_invoice',\n  jobId: d.jobId,\n  invoiceReference: d.invoiceReference,\n  existingInvoiceId: d.existingInvoiceId,\n} }];"
+      },
+      "id": "code-duplicate-result",
+      "name": "Build Duplicate Skipped Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 40]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "where", "value": "=AccountNumber==\"{{ $json.customerId }}\"" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-search-contact",
+      "name": "Xero - Search Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2080, 280],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Check Duplicate Result').item.json;\nconst contacts = resp.Contacts || [];\nreturn [{ json: { ...prior, contactFound: contacts.length > 0, existingContactId: contacts[0] ? contacts[0].ContactID : null } }];"
+      },
+      "id": "code-contact-found",
+      "name": "Contact Search Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2320, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.contactFound }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-contact-found",
+      "name": "Contact Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2560, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, resolvedContactId: d.existingContactId, contactResolution: 'existing' } }];"
+      },
+      "id": "code-use-existing-contact",
+      "name": "Use Existing Contact ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2800, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Contacts: [{ Name: $json.customerName, EmailAddress: $json.customerEmail || undefined, AccountNumber: $json.customerId }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-contact",
+      "name": "Xero - Create Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2800, 380],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Search Result').item.json;\nconst contact = (resp.Contacts || [])[0] || {};\nreturn [{ json: { ...prior, resolvedContactId: contact.ContactID || null, contactResolution: 'created' } }];"
+      },
+      "id": "code-extract-new-contact",
+      "name": "Extract New Contact ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, 380]
+    },
+    {
+      "parameters": {},
+      "id": "noop-contact-resolved",
+      "name": "Contact Resolved",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3280, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: $json.invoiceStatus, DueDate: new Date(Date.now() + (Number($json.invoiceDueDays) || 14) * 86400000).toISOString().slice(0,10) }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-invoice",
+      "name": "Xero - Create Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3520, 280],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Resolved').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+      },
+      "id": "code-parse-invoice",
+      "name": "Parse Invoice Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3760, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasCustomerEmail }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-email",
+      "name": "Has Customer Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4000, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.customerEmail], subject: `Your invoice from ${$json.clientName}`, text: `Hi ${$json.customerName},\\n\\nYour invoice for \"${$json.lineDescription}\" (${$json.invoiceNumber || $json.invoiceReference}) has been created.\\n\\nAmount: ${$json.lineAmount}\\nPayment options: ${$json.paymentOptions}\\n\\nThanks,\\n${$json.clientName}` }) }}",
+        "options": {}
+      },
+      "id": "http-send-email",
+      "name": "Send Confirmation Email (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4240, 200],
+      "notes": "Resend API - POST /emails. Requires a Header Auth credential named 'Resend API' with header Authorization: Bearer <resend-api-key>. Not yet attached - user is creating this credential.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RESEND_CREDENTIAL_ID",
+          "name": "Resend API - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Invoice Result').item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: true,\n} }];"
+      },
+      "id": "code-success-emailed",
+      "name": "Build Success Result (Email Sent)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4480, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: false,\n  emailSkippedReason: 'missing_customer_email',\n} }];"
+      },
+      "id": "code-success-no-email",
+      "name": "Build Success Result (Email Skipped)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4240, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Sample Job Data (Manual Test)", "type": "main", "index": 0 }]]
+    },
+    "Sample Job Data (Manual Test)": {
+      "main": [[{ "node": "Job Data In", "type": "main", "index": 0 }]]
+    },
+    "Job Completion Input": {
+      "main": [[{ "node": "Extract Job Data From Webhook", "type": "main", "index": 0 }]]
+    },
+    "Extract Job Data From Webhook": {
+      "main": [[{ "node": "Job Data In", "type": "main", "index": 0 }]]
+    },
+    "Job Data In": {
+      "main": [[{ "node": "Validate Job Data", "type": "main", "index": 0 }]]
+    },
+    "Validate Job Data": {
+      "main": [[{ "node": "Is Valid?", "type": "main", "index": 0 }]]
+    },
+    "Is Valid?": {
+      "main": [
+        [{ "node": "Get Client Config", "type": "main", "index": 0 }],
+        [{ "node": "Build Validation Error Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Client Config": {
+      "main": [[{ "node": "Merge Config + Job", "type": "main", "index": 0 }]]
+    },
+    "Merge Config + Job": {
+      "main": [[{ "node": "Apply Branding, Discount, Payment Options", "type": "main", "index": 0 }]]
+    },
+    "Apply Branding, Discount, Payment Options": {
+      "main": [[{ "node": "Check Send-Time Window", "type": "main", "index": 0 }]]
+    },
+    "Check Send-Time Window": {
+      "main": [[{ "node": "In Send Window?", "type": "main", "index": 0 }]]
+    },
+    "In Send Window?": {
+      "main": [
+        [{ "node": "Xero - Get Connections", "type": "main", "index": 0 }],
+        [{ "node": "Queue Until Window", "type": "main", "index": 0 }]
+      ]
+    },
+    "Queue Until Window": {
+      "main": [[{ "node": "Wait For Send Window", "type": "main", "index": 0 }]]
+    },
+    "Wait For Send Window": {
+      "main": [[{ "node": "Xero - Get Connections", "type": "main", "index": 0 }]]
+    },
+    "Xero - Get Connections": {
+      "main": [[{ "node": "Extract Tenant ID", "type": "main", "index": 0 }]]
+    },
+    "Extract Tenant ID": {
+      "main": [[{ "node": "Xero - Check Existing Invoice", "type": "main", "index": 0 }]]
+    },
+    "Xero - Check Existing Invoice": {
+      "main": [[{ "node": "Check Duplicate Result", "type": "main", "index": 0 }]]
+    },
+    "Check Duplicate Result": {
+      "main": [[{ "node": "Is Duplicate?", "type": "main", "index": 0 }]]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [{ "node": "Build Duplicate Skipped Result", "type": "main", "index": 0 }],
+        [{ "node": "Xero - Search Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "Xero - Search Contact": {
+      "main": [[{ "node": "Contact Search Result", "type": "main", "index": 0 }]]
+    },
+    "Contact Search Result": {
+      "main": [[{ "node": "Contact Found?", "type": "main", "index": 0 }]]
+    },
+    "Contact Found?": {
+      "main": [
+        [{ "node": "Use Existing Contact ID", "type": "main", "index": 0 }],
+        [{ "node": "Xero - Create Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "Use Existing Contact ID": {
+      "main": [[{ "node": "Contact Resolved", "type": "main", "index": 0 }]]
+    },
+    "Xero - Create Contact": {
+      "main": [[{ "node": "Extract New Contact ID", "type": "main", "index": 0 }]]
+    },
+    "Extract New Contact ID": {
+      "main": [[{ "node": "Contact Resolved", "type": "main", "index": 0 }]]
+    },
+    "Contact Resolved": {
+      "main": [[{ "node": "Xero - Create Invoice", "type": "main", "index": 0 }]]
+    },
+    "Xero - Create Invoice": {
+      "main": [[{ "node": "Parse Invoice Result", "type": "main", "index": 0 }]]
+    },
+    "Parse Invoice Result": {
+      "main": [[{ "node": "Has Customer Email?", "type": "main", "index": 0 }]]
+    },
+    "Has Customer Email?": {
+      "main": [
+        [{ "node": "Send Confirmation Email (Resend)", "type": "main", "index": 0 }],
+        [{ "node": "Build Success Result (Email Skipped)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Confirmation Email (Resend)": {
+      "main": [[{ "node": "Build Success Result (Email Sent)", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": { "templateId": "keystone-invoice-automation" }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "[Stock] Invoice Automation - Client Config",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "client-config-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "content": "## Client Config\nEdit these values per client. Every other node in the main workflow pulls from here via \"Execute Sub-Workflow\" - never hardcode client details elsewhere.\n\nxeroSalesAccountCode must match a real account code in the client's Xero chart of accounts (200 is Xero's common default demo-org \"Sales\" code - verify per client).\n\ninvoiceStatus defaults to DRAFT so nothing gets auto-sent to a real customer until you deliberately flip it to AUTHORISED for a live client.",
+        "height": 260,
+        "width": 400
+      },
+      "id": "client-config-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-680, -160]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "client-id", "name": "clientId", "type": "string", "value": "REPLACE_WITH_CLIENT_ID" },
+            { "id": "client-name", "name": "clientName", "type": "string", "value": "REPLACE_WITH_CLIENT_NAME" },
+            { "id": "brand-logo-url", "name": "brandLogoUrl", "type": "string", "value": "https://REPLACE_WITH_CLIENT_DOMAIN.com/logo.png" },
+            { "id": "brand-colour", "name": "brandColour", "type": "string", "value": "#1A1A1A" },
+            { "id": "payment-options", "name": "paymentOptions", "type": "string", "value": "Bank transfer or card payment - details on invoice" },
+            { "id": "send-window-start", "name": "sendWindowStart", "type": "string", "value": "09:00" },
+            { "id": "send-window-end", "name": "sendWindowEnd", "type": "string", "value": "18:00" },
+            { "id": "send-window-timezone", "name": "sendWindowTimezone", "type": "string", "value": "Europe/London" },
+            { "id": "milestone-invoicing-enabled", "name": "milestoneInvoicingEnabled", "type": "boolean", "value": false },
+            { "id": "discount-percent", "name": "discountPercent", "type": "number", "value": 0 },
+            { "id": "xero-sales-account-code", "name": "xeroSalesAccountCode", "type": "string", "value": "200" },
+            { "id": "invoice-status", "name": "invoiceStatus", "type": "string", "value": "DRAFT" },
+            { "id": "invoice-due-days", "name": "invoiceDueDays", "type": "number", "value": 14 },
+            { "id": "confirmation-from-email", "name": "confirmationFromEmail", "type": "string", "value": "billing@REPLACE_WITH_CLIENT_DOMAIN.com" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "client-config-set",
+      "name": "Client Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-200, 180]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [[{ "node": "Client Config", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": { "templateId": "keystone-invoice-automation-client-config" }
+}
