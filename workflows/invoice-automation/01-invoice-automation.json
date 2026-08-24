@@ -485,11 +485,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [4240, 200],
-      "notes": "Resend API - POST /emails. Requires a Header Auth credential named 'Resend API' with header Authorization: Bearer <resend-api-key>. Not yet attached - user is creating this credential.",
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account' credential (header Authorization: Bearer <resend-api-key>).",
       "credentials": {
         "httpHeaderAuth": {
-          "id": "REPLACE_WITH_RESEND_CREDENTIAL_ID",
-          "name": "Resend API - REPLACE_WITH_CLIENT_NAME"
+          "id": "Zb621ma6S6rC8Xw4",
+          "name": "Header Auth account"
         }
       }
     },
