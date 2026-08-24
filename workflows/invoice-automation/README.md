@@ -65,54 +65,60 @@ Expected job payload:
 ```
 
 Wired to the existing `Xero account` credential (`4p323BIqqLPBGyHS`) already
-in this workspace - not duplicated. The Resend HTTP node ("Send Confirmation
-Email (Resend)") was deployed **without** a credential attached (the
-placeholder doesn't exist in this workspace yet) - once you've created the
-"Resend API" Header Auth credential, open that node and attach it.
+in this workspace - not duplicated. Reconnected and verified live (see
+below). The Resend HTTP node ("Send Confirmation Email (Resend)") is still
+deployed **without** a credential attached - the "Resend API" Header Auth
+credential doesn't exist in this workspace yet. Once you create it, open
+that node and attach it; everything upstream of it (validation, config,
+branding, send-window, Xero contact + invoice) is fully verified working.
 
-## Outstanding blocker: Xero credential needs re-authentication
+## Test results (all against the live deployed workflow, via its real webhook + the n8n executions API)
 
-Every Xero API call in test runs fails with:
+- Missing `customerId` -> `{"status":"rejected","reason":"validation_failed","errors":["MISSING_CUSTOMER_ID"]}` ✅
+- `jobValue` = 0 -> `errors":["INVALID_JOB_VALUE"]` ✅
+- `jobValue` missing -> `errors":["INVALID_JOB_VALUE"]` ✅
+- Send-window check routes correctly both ways ✅ - **found and fixed a real
+  bug**: the original timezone math computed `resumeAt` off by the
+  timezone's UTC offset (e.g. queued for 01:00 UTC instead of 01:00 London
+  time during BST), because `toLocaleString()` + `new Date()` silently
+  mis-parses. Rewrote it using `Intl.DateTimeFormat` to get true wall-clock
+  parts and UTC offset. Reverified: `resumeAt` now lands on the correct UTC
+  instant, and the outside-window branch correctly reaches a `waiting`
+  execution via the Wait node.
+- Contact resolution, new customer -> Xero Contact created with
+  `AccountNumber` set to the internal `customerId`, and that returned
+  `ContactID` GUID (not the internal ID) used on the invoice ✅
+- Contact resolution, repeat customer -> same `customerId` on a second job
+  correctly finds the existing Contact by `AccountNumber` and reuses its
+  `ContactID` - confirmed via the executions API that "Xero - Create
+  Contact" did **not** run on the second call, no duplicate contact created ✅
+- Duplicate invoice detection -> same `jobId` submitted twice returns
+  `{"status":"skipped","reason":"duplicate_invoice", ...}` on the second
+  call, no second invoice created ✅
+- Missing customer email -> invoice still created successfully, response
+  shows `"emailSent": false, "emailSkippedReason": "missing_customer_email"`,
+  Resend never gets called ✅
+- **Found and fixed a second real bug**: Xero invoices defaulted to
+  `LineAmountTypes: "Exclusive"`, so the sales account's default 20% VAT
+  was added *on top* of `jobValue` (a £180.50 job invoiced as £216.60
+  total). Added `invoiceLineAmountType` to Client Config (default
+  `"Inclusive"`) so the invoice total matches `jobValue` exactly, with tax
+  backed out of it instead of added on. Reverified: same £180.50 job now
+  totals £180.50 (£150.42 net + £30.08 VAT) ✅
+- All test invoices were created as `Status: "DRAFT"` as configured -
+  nothing was auto-sent to a real customer during testing ✅
+- Test data cleanup: deleted all 4 test invoices (`Status: DELETED`) and
+  archived all 3 test contacts (`ContactStatus: ARCHIVED`) created during
+  testing, via a temporary one-off n8n workflow built and torn down for
+  that purpose - confirmed via the executions API, so this real paid Xero
+  org is left clean, not cluttered with test data.
 
-```
-Unable to sign without access token
-```
+## Only remaining gap: Resend credential
 
-on the very first Xero step ("Xero - Get Connections"). This is n8n
-reporting that the stored `Xero account` credential currently holds no
-usable OAuth token - not a bug in this workflow's requests. The credential
-was created 15 July and hasn't been used/refreshed since; something about
-that refresh has failed silently. This can only be fixed interactively (it
-needs your browser to complete Xero's consent screen), not via the API:
-
-1. n8n -> Credentials -> "Xero account" -> Reconnect / Sign in with Xero again.
-2. Let me know once that's done and I'll immediately re-run the remaining
-   test cases (duplicate detection, contact found/not found, invoice
-   creation, confirmation email) against it.
-
-## Known-good so far (verified via live test executions against the deployed workflow)
-
-- Validation: missing `customerId` -> `{"status":"rejected","reason":"validation_failed","errors":["MISSING_CUSTOMER_ID"]}`
-- Validation: `jobValue` = 0 -> `errors":["INVALID_JOB_VALUE"]`
-- Validation: `jobValue` missing -> `errors":["INVALID_JOB_VALUE"]`
-- Send-window check routes correctly both ways (confirmed by forcing the
-  client config's window narrow/wide and re-testing) - **caught and fixed a
-  real bug here**: the original timezone math computed `resumeAt` off by the
-  timezone's UTC offset (e.g. queued for 01:00 UTC instead of 01:00
-  London time during BST). Rewrote it using `Intl.DateTimeFormat` to get
-  wall-clock parts and the true UTC offset instead of the
-  `toLocaleString()` + `new Date()` round-trip, which silently
-  mis-parses. Reverified after the fix: `resumeAt` now lands on the
-  correct UTC instant for the configured local window.
-- The "outside window" branch correctly reaches a `waiting` execution with
-  the Wait node holding the corrected resume time (confirmed via the
-  executions API, then cleaned up so it doesn't fire against live Xero data
-  once reconnected).
-
-## Still to test once Xero is reconnected
-
-- Happy path end-to-end (contact not found -> created -> invoice created -> email sent)
-- Contact-found branch (run the happy path twice with the same `customerId` - second run should resolve the existing contact, not create a duplicate)
-- Duplicate invoice detection (run the same `jobId` twice - second run should skip with `status: "skipped", reason: "duplicate_invoice"`)
-- Missing customer email (invoice should still be created; response should show `emailSent: false, emailSkippedReason: "missing_customer_email"`)
-- Confirmation email actually arriving (needs the Resend credential too)
+The `Send Confirmation Email (Resend)` node is correctly wired and
+structurally unreachable-error-free (it fails with a clean "Credentials
+not found" precisely because no credential is attached yet - not a logic
+bug). This is the one piece I can't finish myself: once you create the
+"Resend API" Header Auth credential (Header: `Authorization: Bearer
+<resend-api-key>`) and I attach it to that node, I'll run one more happy-path
+test to confirm the email actually sends and arrives.

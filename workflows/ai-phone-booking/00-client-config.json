@@ -2,7 +2,7 @@
   "name": "[Stock] Phone Booking - Client Config",
   "nodes": [
     {
-      "parameters": {},
+      "parameters": { "inputSource": "passthrough" },
       "id": "client-config-trigger",
       "name": "When Called by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",

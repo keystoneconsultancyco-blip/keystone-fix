@@ -426,7 +426,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: $json.invoiceStatus, DueDate: new Date(Date.now() + (Number($json.invoiceDueDays) || 14) * 86400000).toISOString().slice(0,10) }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: $json.invoiceStatus, DueDate: new Date(Date.now() + (Number($json.invoiceDueDays) || 14) * 86400000).toISOString().slice(0,10) }] }) }}",
         "options": {}
       },
       "id": "http-create-invoice",
