@@ -485,11 +485,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [4240, 200],
-      "notes": "Resend API - POST /emails. Uses the 'Header Auth account' credential (header Authorization: Bearer <resend-api-key>).",
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
       "credentials": {
         "httpHeaderAuth": {
-          "id": "Zb621ma6S6rC8Xw4",
-          "name": "Header Auth account"
+          "id": "YHY8OwE9VDR10sYO",
+          "name": "Header Auth account 2"
         }
       }
     },
