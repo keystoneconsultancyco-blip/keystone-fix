@@ -265,7 +265,7 @@
               "id": "vapi-twiml",
               "name": "twiml",
               "type": "string",
-              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial answerOnBridge=\"true\">\n    <Sip>\n      sip:{{ $json.calledNumber }}@{{ $json.vapiSipCredentialId }}.{{ $json.vapiSipRegionHost }}\n      <Parameter name=\"clientId\" value=\"{{ $json.clientId }}\" />\n      <Parameter name=\"callerNumber\" value=\"{{ $json.callerNumber }}\" />\n    </Sip>\n  </Dial>\n</Response>"
+              "value": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial answerOnBridge=\"true\" action=\"https://keystoneconsultancy.app.n8n.cloud/webhook/twilio/vapi-dial-status\" method=\"POST\">\n    <Sip>\n      sip:{{ $json.calledNumber }}@{{ $json.vapiSipCredentialId }}.{{ $json.vapiSipRegionHost }}\n      <Parameter name=\"clientId\" value=\"{{ $json.clientId }}\" />\n      <Parameter name=\"callerNumber\" value=\"{{ $json.callerNumber }}\" />\n    </Sip>\n  </Dial>\n</Response>"
             }
           ]
         },
@@ -279,7 +279,7 @@
         80,
         480
       ],
-      "notes": "REQUIRES VALIDATION IN TESTING: dynamic <Dial><Sip> handoff mid-call to Vapi's SIP trunking URI. Set up the SIP trunking phone number + credential in the Vapi dashboard first (see README). Fallback documented in README if this does not connect cleanly."
+      "notes": "REQUIRES VALIDATION IN TESTING: dynamic <Dial><Sip> handoff mid-call to Vapi's SIP trunking URI. Set up the SIP trunking phone number + credential in the Vapi dashboard first (see README). The Dial's action callback (Dial Status Callback node below) catches a failed handoff (busy/no-answer/failed/canceled) and falls back to forwarding the caller to reception instead of dropping the call, plus emails the business with the specific DialCallStatus so a failure is never silent."
     },
     {
       "parameters": {
@@ -326,6 +326,205 @@
       "position": [
         340,
         480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## SIP Handoff Failure Handling\nTwilio calls this back automatically after the Vapi <Dial> leg ends, whatever the outcome (DialCallStatus: completed / busy / no-answer / failed / canceled).\n\n- completed -> the call already ended normally (Vapi/caller hung up); just acknowledge, no further TwiML has any effect.\n- anything else -> the SIP handoff itself failed to connect. The caller is still on the line waiting, so we recover instead of dropping them: forward to reception, and email the business immediately with the exact DialCallStatus + CallSid so a failure is never silent or vague.\n\nThis is the fallback + logging asked for around the SIP handoff risk - it does not remove the risk itself (still unverified against a real call), it just makes a failure recoverable and visible instead of a dropped call with no trace.",
+        "height": 300,
+        "width": 460
+      },
+      "id": "dial-status-note",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio/vapi-dial-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-dial-status",
+      "name": "Dial Status Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        1000
+      ],
+      "webhookId": "twilio-vapi-dial-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: {\n  dialCallStatus: body.DialCallStatus || 'unknown',\n  dialCallDuration: body.DialCallDuration || null,\n  callSid: body.CallSid || null,\n  callerNumber: body.From || null,\n  calledNumber: body.To || null,\n} }];"
+      },
+      "id": "code-parse-dial-status",
+      "name": "Parse Dial Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config-3",
+      "name": "Get Client Config2",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst status = $('Parse Dial Status').item.json;\nreturn [{ json: { ...status, ...config } }];"
+      },
+      "id": "code-merge-dial-status",
+      "name": "Merge Dial Status Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.dialCallStatus }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-handoff-ok",
+      "name": "Was Handoff Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        60,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { twiml: '<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>' } }];"
+      },
+      "id": "code-ack-completed",
+      "name": "Build Empty Ack TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  ...d,\n  twiml: `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<Response>\\n  <Say voice=\"Polly.Joanna\">Sorry, I'm having trouble connecting you to booking right now. Let me put you through to the team instead.</Say>\\n  <Dial>${d.receptionForwardNumber}</Dial>\\n</Response>`,\n} }];"
+      },
+      "id": "code-fallback-twiml",
+      "name": "Build SIP-Failure Fallback TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `AI booking line failed to connect - ${$json.dialCallStatus}`, text: `The Vapi SIP handoff failed on an inbound call and the caller was forwarded to reception as a fallback.\\n\\nDialCallStatus: ${$json.dialCallStatus}\\nCallSid: ${$json.callSid}\\nCaller: ${$json.callerNumber}\\nCalled number: ${$json.calledNumber}\\nDial duration: ${$json.dialCallDuration}\\n\\nCheck the Vapi SIP trunking config and n8n execution logs for this CallSid if this keeps happening.` }) }}",
+        "options": {}
+      },
+      "id": "http-notify-handoff-failure",
+      "name": "Notify Business Of Failed Handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        1100
+      ],
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>). onError continues regardless - the caller must still get the fallback TwiML even if this notification itself fails to send.",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YHY8OwE9VDR10sYO",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { twiml: $('Build SIP-Failure Fallback TwiML').item.json.twiml } }];"
+      },
+      "id": "code-restore-fallback-twiml",
+      "name": "Restore Fallback TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-dial-status",
+      "name": "Return Dial Status TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        780,
+        1000
       ]
     }
   ],
@@ -448,6 +647,112 @@
         [
           {
             "node": "Return Routed TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dial Status Callback": {
+      "main": [
+        [
+          {
+            "node": "Parse Dial Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Dial Status": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config2": {
+      "main": [
+        [
+          {
+            "node": "Merge Dial Status Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Dial Status Context": {
+      "main": [
+        [
+          {
+            "node": "Was Handoff Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Handoff Successful?": {
+      "main": [
+        [
+          {
+            "node": "Build Empty Ack TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build SIP-Failure Fallback TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Empty Ack TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Dial Status TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build SIP-Failure Fallback TwiML": {
+      "main": [
+        [
+          {
+            "node": "Notify Business Of Failed Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Business Of Failed Handoff": {
+      "main": [
+        [
+          {
+            "node": "Restore Fallback TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Fallback TwiML": {
+      "main": [
+        [
+          {
+            "node": "Return Dial Status TwiML",
             "type": "main",
             "index": 0
           }

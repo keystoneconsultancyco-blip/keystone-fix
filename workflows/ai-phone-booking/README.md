@@ -36,34 +36,31 @@ service menu, notification emails, Vapi/SIP IDs).
 
 ## Current live deployment (keystoneconsultancy.app.n8n.cloud)
 
-All four workflows are deployed on this instance as of this migration.
+All four workflows are deployed and **Active** on this instance.
 Webhook URLs and the `vapiSipCredentialId`/config placeholders below are
 still generic - this is the reference/stock deployment, not yet a
 real client instance.
 
 | Workflow | Live ID | Active |
 |---|---|---|
-| `[Stock] Phone Booking - Client Config` | `xNwsUFYDgiXVvXPv` | No |
-| `[Stock] Phone Booking - 1. Inbound IVR` | `P1PTZaUWSSwNOFua` | No |
-| `[Stock] Phone Booking - 2. Vapi Tools` | `3gyq87AL3ZrOfZ0y` | No |
-| `[Stock] Phone Booking - 3. Post-Call Actions` | `SoTR9D5CjH1BGs4F` | No |
+| `[Stock] Phone Booking - Client Config` | `xNwsUFYDgiXVvXPv` | Yes |
+| `[Stock] Phone Booking - 1. Inbound IVR` | `P1PTZaUWSSwNOFua` | Yes |
+| `[Stock] Phone Booking - 2. Vapi Tools` | `3gyq87AL3ZrOfZ0y` | Yes |
+| `[Stock] Phone Booking - 3. Post-Call Actions` | `SoTR9D5CjH1BGs4F` | Yes |
 
-Outstanding before this deployment can go live:
-- None of the four are **Active** yet (production webhook URLs won't
-  respond until each is toggled active in the n8n UI) - do this only once
-  credentials below are wired up, to avoid Twilio/Vapi hitting dead ends.
-- The Google Calendar nodes in `2. Vapi Tools` and the two Resend HTTP
-  Request nodes in `3. Post-Call Actions` were deployed **without**
-  credentials attached (the placeholder credential IDs in the source JSON
-  don't exist in this workspace and the API rejects unknown credential
-  references). Once you've created the Twilio, Vapi, Google Calendar, and
-  Resend credentials in this workspace, open each node and pick the
-  credential from the dropdown:
-  - `2. Vapi Tools`: "Google Calendar - Get Day's Events", "Google Calendar - Book Slot"
-  - `3. Post-Call Actions`: "Email Customer Confirmation", "Email Business Notification"
+Credential wiring confirmed live (via the n8n API):
+- Google Calendar nodes in `2. Vapi Tools` ("Get Day's Events", "Book Slot") -> attached, per user confirmation.
+- Resend HTTP nodes in `3. Post-Call Actions` and the new SIP-failure notification node in `1. Inbound IVR` -> attached to `Header Auth account 2`.
+- Twilio and Vapi have no node in this build that calls out to their APIs (both call *into* n8n via webhook), so there is nothing to wire for them here - see the architecture diagram above.
+
+Still outstanding:
 - `00-client-config` still holds generic placeholder values
   (`REPLACE_WITH_*`) - edit the "Client Config" node directly in the n8n
-  UI once you have real values for this deployment.
+  UI once you have real values for this deployment. In particular,
+  `confirmationFromEmail` must be a real Resend-verified sending domain
+  before any of the emails (booking confirmation, business notification,
+  or the new SIP-failure alert below) will actually deliver - Resend
+  rejects the placeholder domain with a 422.
 
 ## One-time setup per client
 
@@ -163,14 +160,38 @@ The mid-call `<Dial><Sip>` from Twilio straight into Vapi's SIP trunking
 number (Stage 1, digit "2" branch) combines two capabilities that are each
 independently documented (Twilio's `<Dial><Sip>` to an arbitrary SIP URI,
 and Vapi's SIP trunking phone number format) but I did not find a worked
-example of the two chained together after a dynamic IVR digit. **Test this
-first**, before anything else, using the checklist below.
+example of the two chained together after a dynamic IVR digit. **This is
+still unverified against a real call** - only an actual test call resolves
+it either way. What *has* been added and verified (via simulated Twilio
+callbacks, not a real call) is failure handling around that risk, so a
+failed handoff is recoverable and visible instead of silently dropping the
+caller:
 
-If it doesn't connect cleanly, the fallback is to have `01-inbound-ivr`
-call Vapi's REST API (`POST /call`) directly on digit "2" to originate the
-assistant leg, using a `<Dial>` back into a new Twilio number/conference
-that bridges the caller to that leg instead of a raw SIP dial. That's more
-moving parts, so only build it if the direct SIP dial fails in testing.
+- The `<Dial>` now carries an `action` callback
+  (`/webhook/twilio/vapi-dial-status`) that Twilio hits automatically after
+  the SIP leg ends, with a `DialCallStatus` (`completed` / `busy` /
+  `no-answer` / `failed` / `canceled`).
+- Anything other than `completed` -> the caller is still on the line, so
+  the workflow returns fresh TwiML forwarding them to reception (with a
+  short spoken apology) instead of leaving them with nothing.
+- The business also gets an immediate email with the exact
+  `DialCallStatus` and `CallSid`, so a handoff failure shows up as a
+  specific, searchable error rather than "the call didn't connect" -
+  verified this fires even in the failure case using
+  `onError: continueRegularOutput`, so a failure in the alert email itself
+  can never block the caller's fallback TwiML from being returned.
+- Simulated both outcomes directly against the live webhook
+  (`DialCallStatus=completed` and `DialCallStatus=failed`) and confirmed
+  the correct TwiML each time. This validates the *failure-handling logic*
+  end-to-end; it does not validate the SIP dial itself connecting to Vapi,
+  which only a real call can do.
+
+If the SIP dial itself doesn't connect cleanly on the first real test call,
+the fallback is to have `01-inbound-ivr` call Vapi's REST API (`POST
+/call`) directly on digit "2" to originate the assistant leg, using a
+`<Dial>` back into a new Twilio number/conference that bridges the caller
+to that leg instead of a raw SIP dial. That's more moving parts, so only
+build it if the direct SIP dial fails in testing.
 
 ## Test call checklist (do in order)
 
