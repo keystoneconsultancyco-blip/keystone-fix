@@ -137,39 +137,17 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "merge-digits",
-              "name": "digits",
-              "type": "string",
-              "value": "={{ $('Gather Result').item.json.body.Digits }}"
-            },
-            {
-              "id": "merge-from",
-              "name": "callerNumber",
-              "type": "string",
-              "value": "={{ $('Gather Result').item.json.body.From }}"
-            },
-            {
-              "id": "merge-to",
-              "name": "calledNumber",
-              "type": "string",
-              "value": "={{ $('Gather Result').item.json.body.To }}"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "const config = $input.item.json;\nconst body = $('Gather Result').item.json.body || {};\nreturn [{ json: {\n  ...config,\n  digits: body.Digits,\n  callerNumber: body.From,\n  calledNumber: body.To,\n} }];"
       },
       "id": "set-merge-context",
       "name": "Merge Call Context",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         -420,
         480
       ],
-      "notes": "Combines the Client Config output with the caller's raw Twilio params (available via $('Gather Result')) since Execute Workflow replaces the item's json."
+      "notes": "Combines the Client Config output with the caller's raw Twilio params (available via $('Gather Result')) since Execute Workflow replaces the item's json. Was a Set node that only kept digits/callerNumber/calledNumber and silently dropped every Client Config field (receptionForwardNumber, vapiSipCredentialId, vapiSipRegionHost, clientId, etc) - converted to a Code node with an explicit spread so the Vapi handoff SIP URI and reception forwarding actually get real values instead of resolving to empty strings."
     },
     {
       "parameters": {

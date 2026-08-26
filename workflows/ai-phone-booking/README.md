@@ -193,6 +193,68 @@ the fallback is to have `01-inbound-ivr` call Vapi's REST API (`POST
 to that leg instead of a raw SIP dial. That's more moving parts, so only
 build it if the direct SIP dial fails in testing.
 
+## Simulated end-to-end test (no real call - Twilio account access was blocked)
+
+Before a real test call was possible, every non-audio part of the pipeline
+was exercised by POSTing simulated Twilio/Vapi payloads directly at each
+webhook and inspecting results via the n8n executions API. This found and
+fixed four real bugs that a real call would have hit blind, with no way to
+tell them apart from the SIP-connectivity risk itself:
+
+1. **Both "merge config with per-request data" nodes silently dropped the
+   Client Config fields.** `Merge Call Context` (inbound-ivr) and `Merge
+   Context` (vapi-tools) were `Set` nodes that only output the 2-3 fields
+   they explicitly assigned - n8n's Set node does not pass through the rest
+   of the input by default. Every field that came from Client Config
+   (`receptionForwardNumber`, `vapiSipCredentialId`, `vapiSipRegionHost`,
+   `clientId`, `googleCalendarId`, `timezone`, ...) was silently empty by
+   the time it reached the reception-forward `<Dial>`, the Vapi SIP URI,
+   and the Google Calendar nodes. Confirmed live: Press 2 produced
+   `sip:+1555...@.` (no host at all) instead of a real SIP URI. **Fixed**
+   by converting both to Code nodes that explicitly spread the prior
+   context (`{ ...config, ...extracted }`) - this is a real n8n footgun
+   worth remembering for any future edit to this template: a Set node
+   after a merge point silently truncates context unless you deliberately
+   design around it.
+2. **Vapi's tool-call payload uses the key `arguments` - n8n's `{{ }}`
+   expression parser refuses to read a property with that exact name**
+   ("Cannot access \"arguments\" due to security concerns" - a
+   sandbox-hardening rule against the JS `arguments` object). This broke
+   `check_availability` and `book_appointment` on every single call, not
+   an edge case. **Fixed** by moving the extraction into a Code node
+   (plain JS execution isn't subject to that expression-parser
+   restriction).
+3. **A day with zero existing calendar events - the normal case for most
+   days - made the Google Calendar node emit zero output items, which
+   means n8n simply never runs any downstream node for that execution.**
+   Vapi would get no tool response at all on a day that happened to be
+   empty. **Fixed** with `alwaysOutputData: true` on that node plus a
+   defensive filter in `Compute Available Slots` so a placeholder empty
+   item can't be mistaken for a real busy event.
+4. **Every booked calendar event had identical start and end times (zero
+   duration)** - flagged as a known TODO in the original build notes but
+   never actually implemented. **Fixed** with a new `Compute Booking End
+   Time` node that looks up the service's `durationMinutes` from Client
+   Config's `serviceMenu` (falling back to `bookingSlotDurationMinutes`).
+
+All four fixes were redeployed and reverified against the live webhooks:
+Press 1 and Press 2 TwiML both now carry real values, `check_availability`
+returns a correct availability sentence even for an empty calendar day,
+`book_appointment` creates a real Google Calendar event with the right
+duration (verified a 15-minute "Follow-up" service produced exactly a
+15-minute event), and the end-of-call-report webhook sends both the
+customer confirmation and business notification emails via Resend
+(verified real message IDs back from Resend's API). Test calendar events
+and the temporary cleanup workflow used to remove them were deleted
+afterwards so the connected Google account isn't left with test data.
+
+**What this does and does not prove:** every part of the pipeline that
+doesn't require an actual phone/SIP audio path is now verified working.
+It does **not** prove the Twilio-to-Vapi SIP handoff itself connects -
+that remains the one thing only a real call can answer, and it's still
+untested. Once Twilio access is restored, the test call checklist below
+is what's left.
+
 ## Test call checklist (do in order)
 
 1. Call the Twilio number. Confirm the greeting plays and Gather waits for

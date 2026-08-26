@@ -35,38 +35,17 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "tool-call-id",
-              "name": "toolCallId",
-              "type": "string",
-              "value": "={{ $json.body.message.toolCallList[0].id }}"
-            },
-            {
-              "id": "tool-name",
-              "name": "toolName",
-              "type": "string",
-              "value": "={{ $json.body.message.toolCallList[0].name }}"
-            },
-            {
-              "id": "tool-args",
-              "name": "toolArgs",
-              "type": "object",
-              "value": "={{ $json.body.message.toolCallList[0].arguments }}"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "const body = $json.body || {};\nconst toolCall = (body.message && body.message.toolCallList && body.message.toolCallList[0]) || {};\nreturn [{ json: {\n  toolCallId: toolCall.id,\n  toolName: toolCall.name,\n  toolArgs: toolCall.arguments,\n} }];"
       },
       "id": "set-extract-tool-call",
       "name": "Extract Tool Call",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         -880,
         160
-      ]
+      ],
+      "notes": "Deliberately a Code node, not Set: n8n's {{ }} expression parser refuses to read a property literally named 'arguments' ('Cannot access \"arguments\" due to security concerns'), and Vapi's tool-call payload uses exactly that key. Plain JS in a Code node isn't subject to that restriction."
     },
     {
       "parameters": {
@@ -89,39 +68,17 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "merge-tool-call-id",
-              "name": "toolCallId",
-              "type": "string",
-              "value": "={{ $('Extract Tool Call').item.json.toolCallId }}"
-            },
-            {
-              "id": "merge-tool-name",
-              "name": "toolName",
-              "type": "string",
-              "value": "={{ $('Extract Tool Call').item.json.toolName }}"
-            },
-            {
-              "id": "merge-tool-args",
-              "name": "toolArgs",
-              "type": "object",
-              "value": "={{ $('Extract Tool Call').item.json.toolArgs }}"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "const config = $input.item.json;\nconst extracted = $('Extract Tool Call').item.json;\nreturn [{ json: { ...config, ...extracted } }];"
       },
       "id": "set-merge-context",
       "name": "Merge Context",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         -400,
         160
       ],
-      "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json."
+      "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json. Was a Set node that only kept 3 assigned fields and silently dropped every Client Config field (googleCalendarId, timezone, etc) reaching everything downstream - converted to a Code node with an explicit spread so the full context actually survives."
     },
     {
       "parameters": {
@@ -205,10 +162,12 @@
       "name": "Google Calendar - Get Day's Events",
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
+      "alwaysOutputData": true,
       "position": [
         80,
         40
       ],
+      "notes": "alwaysOutputData is required here: a day with zero existing events (the normal case for most days) makes this node emit zero items, which means every downstream node in this branch simply never runs and Vapi gets no response at all - alwaysOutputData forces one placeholder item through so the empty-day case reaches Compute Available Slots at all.",
       "credentials": {
         "googleCalendarOAuth2Api": {
           "id": "REPLACE_WITH_GOOGLE_CALENDAR_CREDENTIAL_ID",
@@ -218,7 +177,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const config = $('Merge Context').item.json;\nconst busyEvents = items.map(i => i.json);\nconst args = config.toolArgs;\n\nconst slotMinutes = config.bookingSlotDurationMinutes || 30;\nconst [startH, startM] = (config.businessHoursStart || '09:00').split(':').map(Number);\nconst [endH, endM] = (config.businessHoursEnd || '17:00').split(':').map(Number);\n\nconst dayStart = new Date(`${args.date}T00:00:00`);\ndayStart.setHours(startH, startM, 0, 0);\nconst dayEnd = new Date(`${args.date}T00:00:00`);\ndayEnd.setHours(endH, endM, 0, 0);\n\nconst busyRanges = busyEvents.map(e => ({\n  start: new Date(e.start?.dateTime || e.start?.date),\n  end: new Date(e.end?.dateTime || e.end?.date),\n}));\n\nconst slots = [];\nfor (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + slotMinutes * 60000)) {\n  const slotEnd = new Date(t.getTime() + slotMinutes * 60000);\n  const overlaps = busyRanges.some(b => t < b.end && slotEnd > b.start);\n  if (!overlaps) {\n    slots.push(t.toTimeString().slice(0, 5));\n  }\n}\n\nconst preferredTime = args.preferredTime;\nconst preferredAvailable = preferredTime ? slots.includes(preferredTime) : false;\n\nreturn [{\n  json: {\n    date: args.date,\n    preferredTime: preferredTime || null,\n    preferredAvailable,\n    alternativeSlots: slots.filter(s => s !== preferredTime).slice(0, 5),\n    allAvailableSlots: slots,\n  }\n}];"
+        "jsCode": "const config = $('Merge Context').item.json;\nconst busyEvents = items.map(i => i.json).filter(e => e && (e.start || e.end));\nconst args = config.toolArgs;\n\nconst slotMinutes = config.bookingSlotDurationMinutes || 30;\nconst [startH, startM] = (config.businessHoursStart || '09:00').split(':').map(Number);\nconst [endH, endM] = (config.businessHoursEnd || '17:00').split(':').map(Number);\n\nconst dayStart = new Date(`${args.date}T00:00:00`);\ndayStart.setHours(startH, startM, 0, 0);\nconst dayEnd = new Date(`${args.date}T00:00:00`);\ndayEnd.setHours(endH, endM, 0, 0);\n\nconst busyRanges = busyEvents.map(e => ({\n  start: new Date(e.start?.dateTime || e.start?.date),\n  end: new Date(e.end?.dateTime || e.end?.date),\n}));\n\nconst slots = [];\nfor (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + slotMinutes * 60000)) {\n  const slotEnd = new Date(t.getTime() + slotMinutes * 60000);\n  const overlaps = busyRanges.some(b => t < b.end && slotEnd > b.start);\n  if (!overlaps) {\n    slots.push(t.toTimeString().slice(0, 5));\n  }\n}\n\nconst preferredTime = args.preferredTime;\nconst preferredAvailable = preferredTime ? slots.includes(preferredTime) : false;\n\nreturn [{\n  json: {\n    date: args.date,\n    preferredTime: preferredTime || null,\n    preferredAvailable,\n    alternativeSlots: slots.filter(s => s !== preferredTime).slice(0, 5),\n    allAvailableSlots: slots,\n  }\n}];"
       },
       "id": "code-compute-slots",
       "name": "Compute Available Slots",
@@ -254,6 +213,20 @@
     },
     {
       "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst args = config.toolArgs;\nconst serviceMenu = config.serviceMenu || [];\nconst match = serviceMenu.find(s => (s.name || '').toLowerCase() === (args.service || '').toLowerCase());\nconst durationMinutes = (match && match.durationMinutes) || config.bookingSlotDurationMinutes || 30;\n\nconst [h, m] = args.time.split(':').map(Number);\nconst totalMinutes = h * 60 + m + durationMinutes;\nconst endH = String(Math.floor((totalMinutes / 60) % 24)).padStart(2, '0');\nconst endM = String(totalMinutes % 60).padStart(2, '0');\n\nreturn [{ json: { endTime: `${endH}:${endM}` } }];"
+      },
+      "id": "code-compute-booking-end",
+      "name": "Compute Booking End Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ],
+      "notes": "Looks up the service's durationMinutes from Client Config's serviceMenu (falling back to bookingSlotDurationMinutes), so the created event actually spans the appointment length instead of start==end."
+    },
+    {
+      "parameters": {
         "resource": "event",
         "operation": "create",
         "calendar": {
@@ -262,7 +235,7 @@
           "mode": "expression"
         },
         "start": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
-        "end": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
+        "end": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Compute Booking End Time').item.json.endTime }}:00",
         "additionalFields": {
           "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
           "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
@@ -276,7 +249,6 @@
         80,
         300
       ],
-      "notes": "The 'end' field here is a placeholder equal to start; set end = start + serviceDurationMinutes via an upstream Code/Set node once you know each service's duration from Client Config's serviceMenu.",
       "credentials": {
         "googleCalendarOAuth2Api": {
           "id": "REPLACE_WITH_GOOGLE_CALENDAR_CREDENTIAL_ID",
@@ -437,7 +409,7 @@
         ],
         [
           {
-            "node": "Google Calendar - Book Slot",
+            "node": "Compute Booking End Time",
             "type": "main",
             "index": 0
           }
@@ -478,6 +450,17 @@
         [
           {
             "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Booking End Time": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Book Slot",
             "type": "main",
             "index": 0
           }
