@@ -19,19 +19,23 @@ Job completion data
             outside window -> Wait node resumes at the next window start, then continues
        -> Xero: get tenant -> check for an existing invoice with this Reference (duplicate detection)
             duplicate -> skipped result, stop
-       -> Xero: search Contact by AccountNumber == internal customerId
-            found -> use existing ContactID
-            not found -> create Contact -> use new ContactID
+       -> Xero: search Contact by Name == customerName
+            name match AND (email or phone also matches) -> use existing ContactID
+            no name match, or name matches but email/phone don't -> create Contact -> use new ContactID
        -> Xero: create Invoice against the resolved ContactID
        -> Resend: email confirmation if customerEmail present, else skip with a flagged reason
 ```
 
 The internal `customerId` is never passed to Xero as if it were a Xero
-GUID - it's looked up against the Contact's `AccountNumber` field (Xero's
-free-text field meant for exactly this kind of external-system ID), and only
-the resolved `ContactID` GUID is used to create the invoice. This was the
-root cause of the bug in the original build and is handled from the start
-here, not patched in afterwards.
+GUID - only the resolved `ContactID` GUID is ever used to create the
+invoice. This was the root cause of the bug in the original build and is
+handled from the start here, not patched in afterwards.
+
+Contact matching is name-first with an email/phone check to disambiguate,
+not a pure internal-ID lookup (see "Contact matching logic" below for why
+and how). `customerId` is still stored on every contact's `AccountNumber`
+field for reference/traceability, it's just no longer the primary lookup
+key.
 
 ## Files
 
@@ -57,12 +61,17 @@ Expected job payload:
   "customerId": "CUST-001",
   "customerName": "Jane Doe",
   "customerEmail": "jane@example.com",
+  "customerPhone": "+15551234567",
   "jobDescription": "Boiler service and safety check",
   "jobValue": 250.00,
   "milestoneNumber": null,
   "milestoneLabel": null
 }
 ```
+
+`customerPhone` is optional but strongly recommended - it's the only
+disambiguator available when an existing Xero contact has no email on file
+(see "Contact matching logic" below).
 
 Wired to the existing `Xero account` credential (`4p323BIqqLPBGyHS`) and the
 `Header Auth account 2` Resend credential (`YHY8OwE9VDR10sYO`), both already
@@ -85,10 +94,16 @@ verified live end-to-end (see below), including actual email delivery.
 - Contact resolution, new customer -> Xero Contact created with
   `AccountNumber` set to the internal `customerId`, and that returned
   `ContactID` GUID (not the internal ID) used on the invoice ✅
-- Contact resolution, repeat customer -> same `customerId` on a second job
-  correctly finds the existing Contact by `AccountNumber` and reuses its
-  `ContactID` - confirmed via the executions API that "Xero - Create
-  Contact" did **not** run on the second call, no duplicate contact created ✅
+- Contact resolution, repeat customer -> second job for the same customer
+  (same name, same email) correctly finds the existing Contact and reuses
+  its `ContactID` - confirmed via the executions API that "Xero - Create
+  Contact" did **not** run on the second call ✅
+- Contact resolution, **same name, different person** -> two jobs with
+  different `customerId`s, the same `customerName` ("Alex Morgan") but
+  different emails. Confirmed two genuinely separate, independently
+  fetchable Xero contacts (`ACTIVE`, distinct `ContactID`s), not a silent
+  merge - the second contact's Xero-visible Name became "Alex Morgan
+  (DISAMB-CUST-A2)" (see "Contact matching logic" below for why) ✅
 - Duplicate invoice detection -> same `jobId` submitted twice returns
   `{"status":"skipped","reason":"duplicate_invoice", ...}` on the second
   call, no second invoice created ✅
@@ -118,23 +133,43 @@ verified live end-to-end (see below), including actual email delivery.
   from the real Xero org afterwards, via temporary one-off n8n workflows
   built and torn down for that purpose, confirmed via the executions API.
 
-## Notable Xero platform behavior found during testing
+## Contact matching logic
 
-Two test contacts created back-to-back with **different** `customerId`s but
-the **same** `customerName` ("Test Recipient") were silently merged by Xero
-into a single Contact record - the second `POST /Contacts` call updated the
-first contact's `AccountNumber` rather than creating a distinct second
-contact. This is Xero's own name-based contact matching, not something this
-workflow controls. Practical implication: if two different real customers
-ever share an identical full name, this workflow's `AccountNumber`-based
-resolution could end up pointing both at the same Xero contact instead of
-two separate ones. Not one of the originally-specified edge cases, and not
-fixed here since the fix (e.g. suffixing Xero's Name field to force
-uniqueness) trades off against showing a clean customer name on invoices -
-worth a decision before a client with a large customer base goes live on
-this template.
+Earlier testing found that Xero enforces unique contact Names within an
+org: `POST /Contacts` with a Name that already exists **updates that
+existing contact instead of creating a second one** - confirmed live (two
+different `customerId`s, same Name, ended up as one Xero contact with the
+second `AccountNumber` silently overwriting the first). That's Xero's own
+platform behavior, not something this workflow's requests control.
+
+The matching logic now accounts for this directly:
+
+1. Search Xero Contacts by `Name == customerName`.
+2. If a name match exists, also check whether that contact's stored
+   `EmailAddress` or any of its `Phones` matches the current job's
+   `customerEmail`/`customerPhone` (case-insensitive for email,
+   digits-only comparison for phone).
+3. Reuse the existing contact only if the name matches **and** at least
+   one of email/phone also matches. A name match with no email/phone
+   overlap - or where the existing contact has neither on file - is
+   treated as a different person.
+4. When treated as a different person, the new contact's Xero-visible
+   `Name` is suffixed with the internal `customerId` (e.g. `"Alex Morgan
+   (CUST-042)"`) before creating it. This is the only way to make Xero
+   actually create a second, separate contact record instead of silently
+   merging into the existing same-name one - confirmed necessary and
+   sufficient via live testing. **This is a visible, deliberate
+   tradeoff**: that customer's name shows with the suffix on this
+   contact record and any invoices against it, in exchange for not
+   silently attributing their invoice to a different real person.
+   `customerPhone` is now also stored on new contacts (not just email),
+   since it's needed on the *existing* contact for step 2 to have
+   anything to compare against on a future job.
 
 ## Status: fully tested, no known gaps
 
-Every edge case in the original spec is verified against live Xero + Resend
-API calls, including actual email delivery. Nothing further is blocked.
+Every edge case in the original spec, plus the name/email/phone
+disambiguation logic above, is verified against live Xero + Resend API
+calls, including actual email delivery and independent re-fetches of the
+created contacts to confirm they're genuinely separate records. Nothing
+further is blocked.

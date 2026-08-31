@@ -311,7 +311,7 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "where", "value": "=AccountNumber==\"{{ $json.customerId }}\"" }
+            { "name": "where", "value": "=Name==\"{{ $json.customerName }}\"" }
           ]
         },
         "options": {}
@@ -321,19 +321,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [2080, 280],
+      "notes": "Searches by Name, not AccountNumber/customerId - see 'Contact Search Result' for the email/phone disambiguation this requires. Xero itself enforces unique contact Names within an org (a same-Name POST updates the existing contact rather than creating a second one), which is exactly why a raw name match on its own is not a safe signal that it's the same person.",
       "credentials": {
         "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
       }
     },
     {
       "parameters": {
-        "jsCode": "const resp = $input.item.json;\nconst prior = $('Check Duplicate Result').item.json;\nconst contacts = resp.Contacts || [];\nreturn [{ json: { ...prior, contactFound: contacts.length > 0, existingContactId: contacts[0] ? contacts[0].ContactID : null } }];"
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Check Duplicate Result').item.json;\nconst contacts = resp.Contacts || [];\n\nfunction normEmail(e) { return (e || '').trim().toLowerCase(); }\nfunction normPhone(p) { return (p || '').replace(/\\D/g, ''); }\nfunction contactPhones(c) {\n  return (c.Phones || []).map(p => normPhone(`${p.PhoneCountryCode || ''}${p.PhoneAreaCode || ''}${p.PhoneNumber || ''}`));\n}\n\nconst jobEmail = normEmail(prior.customerEmail);\nconst jobPhone = normPhone(prior.customerPhone);\n\nconst match = contacts.find(c => {\n  const emailMatch = !!jobEmail && normEmail(c.EmailAddress) === jobEmail;\n  const phoneMatch = !!jobPhone && contactPhones(c).some(p => p && p === jobPhone);\n  return emailMatch || phoneMatch;\n});\n\nreturn [{ json: {\n  ...prior,\n  contactFound: !!match,\n  existingContactId: match ? match.ContactID : null,\n  nameMatchedDifferentPerson: contacts.length > 0 && !match,\n} }];"
       },
       "id": "code-contact-found",
       "name": "Contact Search Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2320, 280]
+      "position": [2320, 280],
+      "notes": "Name match alone is not enough to reuse a contact: also requires the existing Xero contact's stored email OR phone to match the current job's customerEmail/customerPhone. A name match with no email/phone overlap (or the stored contact has neither on file) is flagged via nameMatchedDifferentPerson and falls through to contact creation, treating it as a different person."
     },
     {
       "parameters": {
@@ -381,7 +383,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ Contacts: [{ Name: $json.customerName, EmailAddress: $json.customerEmail || undefined, AccountNumber: $json.customerId }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ Contacts: [{ Name: $json.nameMatchedDifferentPerson ? `${$json.customerName} (${$json.customerId})` : $json.customerName, EmailAddress: $json.customerEmail || undefined, Phones: $json.customerPhone ? [{ PhoneType: 'DEFAULT', PhoneNumber: $json.customerPhone }] : undefined, AccountNumber: $json.customerId }] }) }}",
         "options": {}
       },
       "id": "http-create-contact",
@@ -389,6 +391,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [2800, 380],
+      "notes": "Xero enforces unique contact Names within an org - POSTing an unmodified Name that already exists updates that existing contact instead of creating a second one (confirmed via live testing). When nameMatchedDifferentPerson is true (same name, no email/phone overlap - a different person), the Name is suffixed with the internal customerId so Xero actually creates a separate contact instead of silently merging into the wrong person's record. This is a visible, deliberate tradeoff: that customer's name shows with the suffix on this invoice/contact record.",
       "credentials": {
         "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
       }
