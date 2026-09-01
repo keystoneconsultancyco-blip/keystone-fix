@@ -3,15 +3,15 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Sheet Poller\nWatches the \"Jobs\" tab of the Google Sheet in Client Config (jobsSheetId) for rows with Status = \"Complete\", and fires each one through the already-tested main workflow's own webhook - reusing all of its validation/Xero/email logic rather than duplicating any of it.\n\nThree ways this runs:\n- Schedule Trigger: real production path, every 5 minutes.\n- Manual Trigger: editor testing.\n- Webhook (POST /webhook/invoice/poll-now): on-demand / API testing, same pattern used everywhere else in this template.\n\nAfter each row is processed, its Status cell is written back (\"Invoiced\" / \"Skipped - Duplicate\" / \"Error - ...\") so it's never reprocessed on the next poll, plus invoiceReference/invoiceNumber/processedAt/errorMessage for traceability. Only rows whose Status is literally \"Complete\" (case-sensitive) are picked up - staff should leave Status blank until a job is genuinely done.\n\nSee workflows/invoice-automation/README.md for the exact Jobs tab column layout this expects.",
-        "height": 400,
-        "width": 480
+        "content": "## Sheet Poller\nWatches the \"Jobs\" tab of the Google Sheet in Client Config (jobsSheetId) for rows with Status = \"Complete\", and fires each one through the already-tested main workflow's own webhook - reusing all of its validation/Xero/email logic rather than duplicating any of it.\n\nThree ways this runs:\n- Schedule Trigger: real production path, every 5 minutes.\n- Manual Trigger: editor testing.\n- Webhook (POST /webhook/invoice/poll-now): on-demand / API testing, same pattern used everywhere else in this template.\n\nAfter each row is processed, its Status cell is written back (\"Invoiced\" / \"Skipped - Duplicate\" / \"Error - ...\") so it's never reprocessed on the next poll, plus invoiceReference/invoiceNumber/processedAt/errorMessage for traceability. Only rows whose Status is literally \"Complete\" (case-sensitive) are picked up - staff should leave Status blank until a job is genuinely done.\n\nUses raw Google Sheets REST API calls (HTTP Request nodes) rather than the native Google Sheets node - that node's column-mapping/resourceMapper behavior proved unreliable in live testing (a Read/Update combination either errored outright or silently wrote unrelated webhook-request fields into the sheet). The raw REST pattern here is the same proven-working approach already used for Xero throughout this project.\n\nSee workflows/invoice-automation/README.md for the exact Jobs tab column layout this expects.",
+        "height": 460,
+        "width": 500
       },
       "id": "poller-note",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-1300, -460]
+      "position": [-1300, -500]
     },
     {
       "parameters": {
@@ -63,16 +63,16 @@
     },
     {
       "parameters": {
-        "resource": "sheet",
-        "operation": "read",
-        "documentId": { "__rl": true, "mode": "id", "value": "={{ $json.jobsSheetId }}" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "={{ $json.jobsSheetTabName }}" },
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.jobsSheetTabName }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
         "options": {}
       },
-      "id": "gsheet-get-jobs",
+      "id": "get-jobs-rows",
       "name": "Get Jobs Rows",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [-800, 20],
       "credentials": {
         "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
@@ -80,49 +80,42 @@
     },
     {
       "parameters": {
-        "jsCode": "const config = $('Get Client Config').item.json;\nconst rows = $input.all().map(i => i.json);\nconst completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n\nconst results = [];\nfor (const r of completed) {\n  const payload = {\n    jobId: r.jobId,\n    customerId: r.customerId,\n    customerName: r.customerName,\n    customerEmail: r.customerEmail || undefined,\n    customerPhone: r.customerPhone || undefined,\n    jobDescription: r.jobDescription,\n    jobValue: Number(r.jobValue),\n    milestoneNumber: r.milestoneNumber || null,\n    milestoneLabel: r.milestoneLabel || null,\n  };\n\n  let status, invoiceReference, invoiceNumber, errorMessage;\n  try {\n    const res = await fetch('https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify(payload),\n    });\n    const body = await res.json();\n    if (body.status === 'success') {\n      status = 'Invoiced';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = body.invoiceNumber || '';\n      errorMessage = '';\n    } else if (body.status === 'skipped') {\n      status = 'Skipped - Duplicate';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = '';\n      errorMessage = '';\n    } else if (body.status === 'rejected') {\n      status = 'Error - Rejected';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = (body.errors || []).join(', ');\n    } else {\n      status = 'Error - Unexpected Response';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = JSON.stringify(body).slice(0, 500);\n    }\n  } catch (err) {\n    status = 'Error - Request Failed';\n    invoiceReference = '';\n    invoiceNumber = '';\n    errorMessage = String((err && err.message) || err).slice(0, 500);\n  }\n\n  results.push({\n    json: {\n      row_number: r.row_number,\n      status,\n      invoiceReference,\n      invoiceNumber,\n      processedAt: new Date().toISOString(),\n      errorMessage,\n      jobsSheetId: config.jobsSheetId,\n      jobsSheetTabName: config.jobsSheetTabName,\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "const config = $('Get Client Config').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map((row, idx) => {\n  const obj = { row_number: idx + 2 };\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n\nconst results = [];\nfor (const r of completed) {\n  const payload = {\n    jobId: r.jobId,\n    customerId: r.customerId,\n    customerName: r.customerName,\n    customerEmail: r.customerEmail || undefined,\n    customerPhone: r.customerPhone || undefined,\n    jobDescription: r.jobDescription,\n    jobValue: Number(r.jobValue),\n    milestoneNumber: r.milestoneNumber || null,\n    milestoneLabel: r.milestoneLabel || null,\n  };\n\n  let status, invoiceReference, invoiceNumber, errorMessage;\n  try {\n    const body = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed',\n      body: payload,\n      json: true,\n    });\n    if (body.status === 'success') {\n      status = 'Invoiced';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = body.invoiceNumber || '';\n      errorMessage = '';\n    } else if (body.status === 'skipped') {\n      status = 'Skipped - Duplicate';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = '';\n      errorMessage = '';\n    } else if (body.status === 'rejected') {\n      status = 'Error - Rejected';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = (body.errors || []).join(', ');\n    } else {\n      status = 'Error - Unexpected Response';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = JSON.stringify(body).slice(0, 500);\n    }\n  } catch (err) {\n    status = 'Error - Request Failed';\n    invoiceReference = '';\n    invoiceNumber = '';\n    errorMessage = String((err && err.message) || err).slice(0, 500);\n  }\n\n  results.push({\n    json: {\n      jobsSheetId: config.jobsSheetId,\n      updateRange: `${config.jobsSheetTabName}!H${r.row_number}:L${r.row_number}`,\n      status,\n      invoiceReference,\n      invoiceNumber,\n      processedAt: new Date().toISOString(),\n      errorMessage,\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "code-process-rows",
       "name": "Process Complete Rows",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [-560, 20],
-      "notes": "Calls the main workflow's own already-tested webhook per qualifying row, sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Maps the response into the exact fields the Jobs sheet needs written back."
+      "notes": "Calls the main workflow's own already-tested webhook per qualifying row, sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Builds a Sheets values.update range (columns I-M: status, invoiceReference, invoiceNumber, processedAt, errorMessage) per row for the next node. Row I..M assumes the exact Jobs tab column order from the README - if that ever changes, update the column letters here."
     },
     {
       "parameters": {
-        "resource": "sheet",
-        "operation": "update",
-        "documentId": { "__rl": true, "mode": "id", "value": "={{ $json.jobsSheetId }}" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "={{ $json.jobsSheetTabName }}" },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "matchingColumns": ["row_number"],
-          "value": {
-            "row_number": "={{ $json.row_number }}",
-            "status": "={{ $json.status }}",
-            "invoiceReference": "={{ $json.invoiceReference }}",
-            "invoiceNumber": "={{ $json.invoiceNumber }}",
-            "processedAt": "={{ $json.processedAt }}",
-            "errorMessage": "={{ $json.errorMessage }}"
-          }
-        },
+        "method": "PUT",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.updateRange }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "valueInputOption", "value": "RAW" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[$json.status, $json.invoiceReference, $json.invoiceNumber, $json.processedAt, $json.errorMessage]] }) }}",
         "options": {}
       },
-      "id": "gsheet-update-row",
+      "id": "update-row",
       "name": "Update Row",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "alwaysOutputData": true,
       "position": [-320, 20],
-      "notes": "alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
+      "notes": "One PUT per qualifying row (n8n's default per-item HTTP Request behavior) - fine at the expected small volume of jobs per poll. alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
       "credentials": {
         "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
       }
     },
     {
       "parameters": {
-        "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.row_number !== undefined && r.row_number !== null);\nreturn [{ json: { rowsProcessed: processed.length, results: processed } }];"
+        "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.updateRange);\nreturn [{ json: { rowsProcessed: processed.length, results: processed } }];"
       },
       "id": "code-poll-summary",
       "name": "Build Poll Summary",

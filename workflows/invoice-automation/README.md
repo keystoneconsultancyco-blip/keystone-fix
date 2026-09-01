@@ -97,7 +97,7 @@ back to the flat default.
 |---|---|---|
 | `[Stock] Invoice Automation - Client Config` | `s2riyS1tZ0jtVuSR` | Yes |
 | `[Stock] Invoice Automation` | `MParifnFIYCIuXUs` | Yes |
-| `[Stock] Invoice Automation - Sheet Poller` | `ai7GdjmZaEOF6Ich` | Yes (but Google Sheets nodes have a placeholder credential until you provide one - see "Outstanding" below) |
+| `[Stock] Invoice Automation - Sheet Poller` | `ai7GdjmZaEOF6Ich` | Yes - wired to the real Google Sheet and credential, live-tested (see below) |
 
 Webhook: `POST https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed`
 
@@ -126,35 +126,57 @@ Wired to the existing `Xero account` credential (`4p323BIqqLPBGyHS`) and the
 in this workspace - neither duplicated. Both reconnected/created and fully
 verified live end-to-end (see below), including actual email delivery.
 
-## Outstanding: Sheet Poller + discount lookup need two things from you
+## Sheet Poller + discount lookup: live and verified
 
-Built and deployed with the same placeholder-credential pattern as
-everything else in this template, but **not yet live-tested** - both need
-things only you can set up:
+Wired to a real Google Sheet
+(`Keystone - Invoice Automation Data`, tabs `Jobs` and `Discounts`, headers
+written into row 1 of both exactly per "Google Sheet structure" above) and a
+real `Google Sheets OAuth2 API` credential in this n8n workspace. `jobsSheetId`
+is filled in on the live `Client Config` (kept as `REPLACE_WITH_GOOGLE_SHEET_ID`
+in this repo's template, per the usual convention of not committing real
+per-client values).
 
-1. **The actual Google Sheet.** Create one Sheet with two tabs named
-   exactly `Jobs` and `Discounts`, headers exactly as in "Google Sheet
-   structure" above (row 1). Send me the Sheet's ID (from its URL:
-   `https://docs.google.com/spreadsheets/d/THIS_PART/edit`).
-2. **A `Google Sheets OAuth2 API` credential in this n8n workspace** -
-   separate from the existing Google Calendar credential even though it
-   can reuse the same underlying Google Cloud OAuth app; n8n treats each
-   integration as its own credential. Share the Sheet with whichever
-   Google account you authorize that credential as (edit access).
+Live-tested end to end:
 
-Once both exist, tell me and I'll fill in `jobsSheetId` in Client Config,
-attach the credential to the four Google Sheets nodes involved (`Check
-Customer Discount` in the main workflow; `Get Jobs Rows` and `Update Row`
-in the Poller), activate the Poller, and run the same kind of live test as
-everything else: confirm a `Complete` row actually produces a real Xero
-invoice and gets written back correctly, and confirm a `Discounts` row
-actually changes the invoiced amount - cleaning up test data afterward.
+- **Jobs trigger** - added a row with `status: "Complete"`, fired the Poller
+  (via its webhook), confirmed it read the row, POSTed it to the main
+  workflow's already-tested webhook, got back a real Xero `DRAFT` invoice
+  (`INV-0015`), and wrote `Invoiced` + `invoiceReference` + `invoiceNumber` +
+  `processedAt` back into the correct row/columns - confirmed via an
+  independent raw read of the sheet afterwards, not just the Poller's own
+  reported summary ✅
+- **Discounts lookup** - added a `Discounts` row for the same customer
+  (`discountPercent: 20`), submitted a second job for that customer
+  (`jobValue: 200`), and confirmed the resulting Xero invoice (`INV-0016`)
+  totalled `160` (20% off), independently re-fetched from Xero directly (not
+  just the workflow's own response) ✅
 
-I built the Google Sheets node parameters from best-effort recollection of
-n8n's current schema for `documentId`/`sheetName`/`columns` (resource
-mapper), the same way I did for every other native node in this project -
-expect the first live run to surface parameter-shape corrections, same
-pattern as the Google Calendar and Xero nodes earlier.
+All test data (both Xero invoices, the test contact, and both sheet test
+rows) was cleaned up afterwards - see "Test results" below.
+
+### Parameter-shape fixes found during this test (as expected, same pattern as Google Calendar/Xero earlier)
+
+1. **Native `googleSheets` node abandoned.** Its `update`/`append`
+   resource-mapper behavior proved unreliable live: `update` with
+   `matchingColumns` failed outright on an empty sheet ("could not retrieve
+   column names from row 1"), and `append` connected straight to a webhook
+   silently wrote ambient webhook-request fields (`headers`, `query`, etc.)
+   into extra columns alongside the intended ones. Replaced every Google
+   Sheets read/write in both this workflow and the Poller with raw Sheets
+   REST API v4 calls (`values.get` / `values.update` / `values:clear`) via
+   `httpRequest` nodes using `predefinedCredentialType` /
+   `googleSheetsOAuth2Api` - the same pattern already proven for Xero
+   throughout this project.
+2. **`fetch` is not available in n8n Cloud's Code node.** The Poller's
+   "Process Complete Rows" node originally called the main workflow's
+   webhook with `fetch(...)`, which failed live (`"fetch is not defined"`).
+   Fixed by using n8n's built-in HTTP helper,
+   `await this.helpers.httpRequest({ method, url, body, json: true })`,
+   which also returns the parsed JSON body directly.
+3. **Column-letter fix for the write-back range.** The Poller originally
+   wrote status/reference/number/timestamp/error back to columns `I:M`;
+   the actual `Jobs` header order (`status` is column H, not I) means the
+   correct range is `H:L`. Fixed and reverified against the real sheet.
 
 ## Test results (all against the live deployed workflow, via its real webhook + the n8n executions API)
 
@@ -210,6 +232,24 @@ pattern as the Google Calendar and Xero nodes earlier.
   (`ContactStatus: ARCHIVED`) created across every test round were removed
   from the real Xero org afterwards, via temporary one-off n8n workflows
   built and torn down for that purpose, confirmed via the executions API.
+- **Sheet Poller (Jobs trigger)** - test row `SHEET-TEST-001` added to the
+  live `Jobs` tab with `status: "Complete"`. Poller fired via its webhook,
+  correctly picked up the row, called the main workflow's webhook, and got
+  back a real Xero `DRAFT` invoice (`INV-0015`, `£200`). Wrote
+  `Invoiced` / `SHEET-TEST-001` / `INV-0015` / a timestamp back into
+  columns H-L of row 2 - confirmed via an independent raw REST read of the
+  sheet afterwards ✅
+- **Discounts lookup** - test row added to `Discounts` for the same
+  customer (`discountPercent: 20`), then a second job (`SHEET-TEST-002`,
+  `jobValue: 200`) submitted for that customer. Resulting invoice
+  (`INV-0016`) totalled `£160` (20% off `£200`), confirmed via an
+  independent Xero `GET /Invoices?InvoiceNumbers=INV-0016` (not just the
+  workflow's own response) ✅
+- Sheet test data cleanup: both test invoices (`INV-0015`, `INV-0016`) set
+  to `Status: DELETED`, the test Xero contact (`Sheet Test Customer`) set
+  to `ContactStatus: ARCHIVED`, and both sheet test rows cleared - all via
+  temporary one-off n8n workflows built and torn down for that purpose,
+  confirmed via the executions API and independent re-reads.
 
 ## Contact matching logic
 
@@ -252,6 +292,8 @@ tested against live Xero + Resend API calls, including actual email
 delivery and independent re-fetches of created contacts. Nothing blocked
 there.
 
-The Sheet Poller and Discounts lookup are built and deployed but **not yet
-live-tested** - blocked on the Google Sheet + Google Sheets credential
-described in "Outstanding" above.
+The Sheet Poller and Discounts lookup are built, deployed, and now fully
+live-tested against the real Google Sheet and live Xero connection (see
+"Sheet Poller + discount lookup: live and verified" above) - a `Complete`
+Jobs row produces a real Xero draft invoice, and a `Discounts` row correctly
+changes the invoiced amount. Nothing outstanding on either feature.

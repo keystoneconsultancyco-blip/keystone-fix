@@ -132,25 +132,25 @@
     },
     {
       "parameters": {
-        "resource": "sheet",
-        "operation": "read",
-        "documentId": { "__rl": true, "mode": "id", "value": "={{ $json.jobsSheetId }}" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "={{ $json.discountsSheetTabName }}" },
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.discountsSheetTabName }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
         "options": {}
       },
       "id": "gsheet-check-discount",
       "name": "Check Customer Discount",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [-440, 160],
-      "notes": "Reads the whole Discounts tab (expected to be small - a handful of per-customer overrides). Matched against customerId in the next node, not filtered server-side.",
+      "notes": "Raw Sheets REST API call (values.get), not the native Google Sheets node - that node's column-mapping behavior proved unreliable in live testing (silently merged unrelated fields into written rows), while this raw pattern is the same proven-working approach used for Xero throughout this project. Reads the whole Discounts tab (expected small); matched against customerId in the next node.",
       "credentials": {
         "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
       }
     },
     {
       "parameters": {
-        "jsCode": "const prior = $('Merge Config + Job').item.json;\nconst rows = items.map(i => i.json);\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
+        "jsCode": "const prior = $('Merge Config + Job').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map(row => {\n  const obj = {};\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
       },
       "id": "code-match-discount",
       "name": "Match Customer Discount",
