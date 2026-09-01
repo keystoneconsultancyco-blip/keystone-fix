@@ -132,6 +132,35 @@
     },
     {
       "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": { "__rl": true, "mode": "id", "value": "={{ $json.jobsSheetId }}" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "={{ $json.discountsSheetTabName }}" },
+        "options": {}
+      },
+      "id": "gsheet-check-discount",
+      "name": "Check Customer Discount",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-440, 160],
+      "notes": "Reads the whole Discounts tab (expected to be small - a handful of per-customer overrides). Matched against customerId in the next node, not filtered server-side.",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Merge Config + Job').item.json;\nconst rows = items.map(i => i.json);\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
+      },
+      "id": "code-match-discount",
+      "name": "Match Customer Discount",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-380, 160],
+      "notes": "Falls back to Client Config's flat discountPercent if the customer has no row in the Discounts tab. discountSource is just for visibility/debugging - not used downstream."
+    },
+    {
+      "parameters": {
         "jsCode": "const d = $input.item.json;\nconst discountPercent = Number(d.discountPercent) || 0;\nconst rawValue = Number(d.jobValue) || 0;\nconst discountedValue = Math.round(rawValue * (1 - discountPercent / 100) * 100) / 100;\n\nconst useMilestone = !!(d.milestoneInvoicingEnabled && d.milestoneNumber);\nconst invoiceReference = useMilestone ? `${d.jobId}-M${d.milestoneNumber}` : `${d.jobId}`;\nconst milestoneLabelText = (useMilestone && d.milestoneLabel) ? ` (${d.milestoneLabel})` : '';\nconst lineDescription = `${d.jobDescription || 'Completed job'}${milestoneLabelText} - ${d.clientName}`;\n\nreturn [{\n  json: {\n    ...d,\n    lineAmount: discountedValue,\n    invoiceReference,\n    lineDescription,\n  }\n}];"
       },
       "id": "code-apply-branding",
@@ -546,6 +575,12 @@
       "main": [[{ "node": "Merge Config + Job", "type": "main", "index": 0 }]]
     },
     "Merge Config + Job": {
+      "main": [[{ "node": "Check Customer Discount", "type": "main", "index": 0 }]]
+    },
+    "Check Customer Discount": {
+      "main": [[{ "node": "Match Customer Discount", "type": "main", "index": 0 }]]
+    },
+    "Match Customer Discount": {
       "main": [[{ "node": "Apply Branding, Discount, Payment Options", "type": "main", "index": 0 }]]
     },
     "Apply Branding, Discount, Payment Options": {

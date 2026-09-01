@@ -8,12 +8,18 @@ credentials) to stand up a new client.
 ## Architecture
 
 ```
+Google Sheet "Jobs" tab, Status = "Complete"
+  -> Sheet Poller (02-sheet-poller.json): Schedule Trigger every 5 min
+       -> reads the Jobs tab, POSTs each qualifying row to the webhook below
+       -> writes the result back to that row's Status/invoiceReference/invoiceNumber/errorMessage
+
 Job completion data
   -> Manual Trigger + sample data (editor testing)
-  -> Webhook POST /webhook/invoice/job-completed (API testing / real system integration)
+  -> Webhook POST /webhook/invoice/job-completed (API testing / real system integration / the Sheet Poller itself)
        -> Validate Job Data (required fields, job value > 0)
             invalid -> rejected result, stop
-       -> Client Config (branding, discount, payment options, send window, Xero/email settings)
+       -> Client Config (branding, discount, payment options, send window, Xero/email/Sheets settings)
+       -> Check Customer Discount (Google Sheets "Discounts" tab lookup by customerId, falls back to Client Config's flat discountPercent)
        -> Apply Branding, Discount, Payment Options
        -> Check Send-Time Window
             outside window -> Wait node resumes at the next window start, then continues
@@ -43,6 +49,47 @@ key.
 |---|---|
 | `00-client-config.json` | Sub-workflow holding all per-client placeholders. Edit this per deployment. |
 | `01-invoice-automation.json` | The full pipeline described above. |
+| `02-sheet-poller.json` | Polls the Jobs sheet and feeds completed rows into the pipeline above via its own webhook. |
+
+## Google Sheet structure
+
+One Google Sheet, two tabs, referenced from Client Config (`jobsSheetId`,
+`jobsSheetTabName`, `discountsSheetTabName`). Row 1 of each tab must be
+exactly these headers (case-sensitive, the code reads them by name) - the
+Poller and the discount lookup both fail closed (no rows matched) rather
+than guess at a different layout.
+
+**"Jobs" tab** - the trigger source. Whoever finishes a job fills in
+columns A-H and leaves the rest blank; the Poller owns everything from
+`status` onward.
+
+| Column | Filled in by | Notes |
+|---|---|---|
+| `jobId` | staff | Must be unique - also used for Xero duplicate-invoice detection |
+| `customerId` | staff | Your internal customer ID |
+| `customerName` | staff | |
+| `customerEmail` | staff | Optional - confirmation email is skipped without it |
+| `customerPhone` | staff | Optional but recommended - the only disambiguator when an existing Xero contact has no email on file |
+| `jobDescription` | staff | Shows on the invoice line item |
+| `jobValue` | staff | Numeric, > 0 |
+| `status` | staff, then the Poller | Leave blank until the job is genuinely done, then set to exactly `Complete`. The Poller overwrites this with `Invoiced`, `Skipped - Duplicate`, or an `Error - ...` message - never set those yourself. |
+| `invoiceReference` | Poller | Written back after processing |
+| `invoiceNumber` | Poller | Written back after processing |
+| `processedAt` | Poller | Written back after processing |
+| `errorMessage` | Poller | Only populated when something went wrong - check this if a row shows an `Error - ...` status |
+
+**"Discounts" tab** - per-customer overrides, read fresh on every invoice
+run (no caching, so edits take effect on the very next job).
+
+| Column | Notes |
+|---|---|
+| `customerId` | Matched exactly against the job's `customerId` |
+| `customerName` | Reference only, not matched on - fill in for readability |
+| `discountPercent` | e.g. `10` for 10% off. A customer with no row here just gets Client Config's flat `discountPercent` (0 by default) |
+| `notes` | Optional, e.g. why they get the discount |
+
+An empty Discounts tab (header row only) is fine - every job just falls
+back to the flat default.
 
 ## Current live deployment (keystoneconsultancy.app.n8n.cloud)
 
@@ -50,6 +97,7 @@ key.
 |---|---|---|
 | `[Stock] Invoice Automation - Client Config` | `s2riyS1tZ0jtVuSR` | Yes |
 | `[Stock] Invoice Automation` | `MParifnFIYCIuXUs` | Yes |
+| `[Stock] Invoice Automation - Sheet Poller` | `ai7GdjmZaEOF6Ich` | Yes (but Google Sheets nodes have a placeholder credential until you provide one - see "Outstanding" below) |
 
 Webhook: `POST https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed`
 
@@ -77,6 +125,36 @@ Wired to the existing `Xero account` credential (`4p323BIqqLPBGyHS`) and the
 `Header Auth account 2` Resend credential (`YHY8OwE9VDR10sYO`), both already
 in this workspace - neither duplicated. Both reconnected/created and fully
 verified live end-to-end (see below), including actual email delivery.
+
+## Outstanding: Sheet Poller + discount lookup need two things from you
+
+Built and deployed with the same placeholder-credential pattern as
+everything else in this template, but **not yet live-tested** - both need
+things only you can set up:
+
+1. **The actual Google Sheet.** Create one Sheet with two tabs named
+   exactly `Jobs` and `Discounts`, headers exactly as in "Google Sheet
+   structure" above (row 1). Send me the Sheet's ID (from its URL:
+   `https://docs.google.com/spreadsheets/d/THIS_PART/edit`).
+2. **A `Google Sheets OAuth2 API` credential in this n8n workspace** -
+   separate from the existing Google Calendar credential even though it
+   can reuse the same underlying Google Cloud OAuth app; n8n treats each
+   integration as its own credential. Share the Sheet with whichever
+   Google account you authorize that credential as (edit access).
+
+Once both exist, tell me and I'll fill in `jobsSheetId` in Client Config,
+attach the credential to the four Google Sheets nodes involved (`Check
+Customer Discount` in the main workflow; `Get Jobs Rows` and `Update Row`
+in the Poller), activate the Poller, and run the same kind of live test as
+everything else: confirm a `Complete` row actually produces a real Xero
+invoice and gets written back correctly, and confirm a `Discounts` row
+actually changes the invoiced amount - cleaning up test data afterward.
+
+I built the Google Sheets node parameters from best-effort recollection of
+n8n's current schema for `documentId`/`sheetName`/`columns` (resource
+mapper), the same way I did for every other native node in this project -
+expect the first live run to surface parameter-shape corrections, same
+pattern as the Google Calendar and Xero nodes earlier.
 
 ## Test results (all against the live deployed workflow, via its real webhook + the n8n executions API)
 
@@ -166,10 +244,14 @@ The matching logic now accounts for this directly:
    since it's needed on the *existing* contact for step 2 to have
    anything to compare against on a future job.
 
-## Status: fully tested, no known gaps
+## Status
 
-Every edge case in the original spec, plus the name/email/phone
-disambiguation logic above, is verified against live Xero + Resend API
-calls, including actual email delivery and independent re-fetches of the
-created contacts to confirm they're genuinely separate records. Nothing
-further is blocked.
+The core pipeline (validation, send-window, Xero contact/duplicate/invoice
+logic including name+email/phone disambiguation, Resend email) is fully
+tested against live Xero + Resend API calls, including actual email
+delivery and independent re-fetches of created contacts. Nothing blocked
+there.
+
+The Sheet Poller and Discounts lookup are built and deployed but **not yet
+live-tested** - blocked on the Google Sheet + Google Sheets credential
+described in "Outstanding" above.
