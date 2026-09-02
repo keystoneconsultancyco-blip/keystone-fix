@@ -1,0 +1,692 @@
+{
+  "name": "[Stock] Invoice Automation - Collections Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Collections / Reminders - Stock Template\n\nDaily branch that checks Xero for outstanding (AUTHORISED, AmountDue > 0, ACCREC) invoices and escalates by days past DueDate:\n- 7+ days overdue -> Reminder 1 (gentle)\n- 14+ days overdue -> Reminder 2 (firmer)\n- 21+ days overdue -> Reminder 3 (firm) AND flagged for manual follow-up\n\nOnly the highest stage currently reached is sent per run (a missed run doesn't fire all three reminders in one go retroactively) - each invoice only ever gets one email per stage.\n\n### Credentials\nReuses the exact same Xero (`4p323BIqqLPBGyHS`) and Resend (`YHY8OwE9VDR10sYO`) credentials already wired into the main Invoice Automation workflow. No new credentials or integrations added.\n\n### Dedup / stage tracking - chosen approach: Xero Invoice History\nEach invoice's reminder progress is tracked via tagged entries on that invoice's own Xero History (`PUT /Invoices/{id}/History`, `Details: \"COLLECTIONS_STAGE=N ...\"`) - read back on every run (`GET /Invoices/{id}/History`) to compute the highest stage already sent. Chosen over a new Google Sheet or new credential specifically because the brief said to reuse only the existing Xero + Resend auth with no new setup - this keeps the tracking entirely inside Xero's own audit trail on the invoice, nothing external to stand up or share access to.\n\n### Manual follow-up flag (21+ days) - chosen approach: both\nAt stage 3, in addition to the client-facing Reminder 3 email, this: (a) writes a second tagged Xero History entry (`COLLECTIONS_FLAGGED_FOR_MANUAL_FOLLOWUP`) so it's permanently visible on the invoice's own audit trail, AND (b) sends an internal notification email via Resend to a new `collectionsNotificationEmail` Client Config field. Reasoning: a note nobody actively checks isn't really a flag - the email actively surfaces it to a person, while the History entry makes the flag itself idempotent and auditable on the invoice.\n\n### Three triggers, same as every other workflow in this project\n- Schedule Trigger: real production path, daily.\n- Manual Trigger + \"Sample Mock Invoices\": click-to-test in the editor with 5 built-in fake invoices covering all four overdue states (not due / 7+ / 14+ / 21+) plus a dedup case (still 8 days overdue, already got Reminder 1 - must NOT resend).\n- Webhook (POST /webhook/invoice/collections-check): accepts `{ testMode: true, testInvoices: [...] }` to run the exact same escalation logic against custom fake invoices via API - this is what was used for the pre-live test run (see README). `testMode: true` bypasses the real Xero invoice fetch AND skips the real Xero History write (so testing never touches real Xero data), but still sends real Resend emails so delivery is actually proven, not just simulated.\n\nSee workflows/invoice-automation/README.md for full test results and flagged parameter-shape uncertainties (Xero History HTTP method, multi-condition `where` filter, `summaryOnly=false`, daily Schedule Trigger shape) - all unverified against real Xero data, same caveat as every other native-node integration in this project on first build.",
+        "height": 900,
+        "width": 640
+      },
+      "id": "top-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-2600, -900]
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "days", "daysInterval": 1, "triggerAtHour": 8, "triggerAtMinute": 0 }] }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger (daily 08:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-2600, -460],
+      "notes": "Parameter-shape flag: the 'days' field/triggerAtHour shape here is my best-effort recollection of n8n's Schedule Trigger schema, only the 'minutes' field type has actually been proven live in this project (Sheet Poller). Verify the first scheduled run actually fires at 08:00 as expected."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { testMode: false, testInvoices: [] } }];"
+      },
+      "id": "code-production-input",
+      "name": "Production Run Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2360, -460]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-2600, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "function isoDaysAgo(n) {\n  return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);\n}\nfunction isoDaysFromNow(n) {\n  return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);\n}\n\nconst testInvoices = [\n  {\n    invoiceId: 'TEST-INV-A', invoiceNumber: 'TEST-A', contactName: 'Not Yet Due Co',\n    contactEmail: 'keystoneconsultancy.co@gmail.com', dueDate: isoDaysFromNow(10),\n    amountDue: 100, currencyCode: 'GBP', alreadySentStage: 0,\n  },\n  {\n    invoiceId: 'TEST-INV-B', invoiceNumber: 'TEST-B', contactName: 'Eight Days Overdue Co',\n    contactEmail: 'keystoneconsultancy.co@gmail.com', dueDate: isoDaysAgo(8),\n    amountDue: 200, currencyCode: 'GBP', alreadySentStage: 0,\n  },\n  {\n    invoiceId: 'TEST-INV-C', invoiceNumber: 'TEST-C', contactName: 'Fifteen Days Overdue Co',\n    contactEmail: 'keystoneconsultancy.co@gmail.com', dueDate: isoDaysAgo(15),\n    amountDue: 300, currencyCode: 'GBP', alreadySentStage: 1,\n  },\n  {\n    invoiceId: 'TEST-INV-D', invoiceNumber: 'TEST-D', contactName: 'Twenty-Five Days Overdue Co',\n    contactEmail: 'keystoneconsultancy.co@gmail.com', dueDate: isoDaysAgo(25),\n    amountDue: 400, currencyCode: 'GBP', alreadySentStage: 2,\n  },\n  {\n    invoiceId: 'TEST-INV-E', invoiceNumber: 'TEST-E', contactName: 'Already Reminded Co (dedup check)',\n    contactEmail: 'keystoneconsultancy.co@gmail.com', dueDate: isoDaysAgo(8),\n    amountDue: 150, currencyCode: 'GBP', alreadySentStage: 1,\n  },\n];\n\nreturn [{ json: { testMode: true, testInvoices } }];"
+      },
+      "id": "code-sample-mock-invoices",
+      "name": "Sample Mock Invoices (Manual Test)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2360, -200],
+      "notes": "5 fixtures covering all four overdue states plus one explicit duplicate-prevention case (invoice E: still 8 days overdue, already sent Reminder 1 - must NOT resend). Dates computed relative to 'now' so this stays valid whenever it's run."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice/collections-check",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-collections-check",
+      "name": "Collections Check Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-2600, 60],
+      "webhookId": "invoice-collections-check"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: { testMode: !!body.testMode, testInvoices: Array.isArray(body.testInvoices) ? body.testInvoices : [] } }];"
+      },
+      "id": "code-extract-webhook-input",
+      "name": "Extract Collections Check Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2360, 60]
+    },
+    {
+      "parameters": {},
+      "id": "noop-collections-check-in",
+      "name": "Collections Check In",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [-2120, -140]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CLIENT_CONFIG_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [-1900, -140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst trigger = $('Collections Check In').item.json;\nreturn [{ json: { ...config, testMode: trigger.testMode, testInvoices: trigger.testInvoices || [] } }];"
+      },
+      "id": "code-merge-config-trigger",
+      "name": "Merge Config + Trigger Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1680, -140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.testMode }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-test-mode",
+      "name": "Is Test Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-1460, -140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst invoices = config.testInvoices || [];\nreturn invoices.map(inv => ({\n  json: {\n    invoiceId: inv.invoiceId,\n    invoiceNumber: inv.invoiceNumber,\n    contactName: inv.contactName,\n    contactEmail: inv.contactEmail,\n    dueDate: inv.dueDate,\n    amountDue: Number(inv.amountDue) || 0,\n    currencyCode: inv.currencyCode || 'GBP',\n    alreadySentStage: Number(inv.alreadySentStage) || 0,\n    testMode: true,\n    source: 'test',\n    clientId: config.clientId,\n    clientName: config.clientName,\n    brandColour: config.brandColour,\n    paymentOptions: config.paymentOptions,\n    confirmationFromEmail: config.confirmationFromEmail,\n    collectionsNotificationEmail: config.collectionsNotificationEmail,\n    collectionsReminder1Days: config.collectionsReminder1Days,\n    collectionsReminder2Days: config.collectionsReminder2Days,\n    collectionsReminder3Days: config.collectionsReminder3Days,\n  }\n}));"
+      },
+      "id": "code-build-test-invoices",
+      "name": "Build Test Invoices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1240, -360]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Accept", "value": "application/json" }]
+        },
+        "options": {}
+      },
+      "id": "http-get-connections",
+      "name": "Xero - Get Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1240, 80],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Merge Config + Trigger Input').item.json;\nreturn [{ json: { ...prior, xeroTenantId: tenantId } }];"
+      },
+      "id": "code-extract-tenant",
+      "name": "Extract Tenant ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1020, 80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "where", "value": "Type==\"ACCREC\"&&Status==\"AUTHORISED\"&&AmountDue>0" },
+            { "name": "summaryOnly", "value": "false" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-get-outstanding-invoices",
+      "name": "Xero - Get Outstanding Invoices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-800, 80],
+      "notes": "Parameter-shape flag: multi-condition 'where' with && and summaryOnly=false are both my best-effort recollection of Xero's query syntax - only single-condition where clauses (Reference==, Name==) have actually been proven live in this project. Verify this returns the expected set on the first live run.",
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID').item.json;\nconst invoices = resp.Invoices || [];\nreturn invoices.map(inv => ({\n  json: {\n    invoiceId: inv.InvoiceID,\n    invoiceNumber: inv.InvoiceNumber,\n    contactId: inv.Contact ? inv.Contact.ContactID : null,\n    contactName: inv.Contact ? inv.Contact.Name : null,\n    contactEmail: inv.Contact ? (inv.Contact.EmailAddress || '') : '',\n    dueDate: (inv.DueDateString || '').slice(0, 10),\n    amountDue: inv.AmountDue,\n    currencyCode: inv.CurrencyCode,\n    testMode: false,\n    source: 'live',\n    xeroTenantId: prior.xeroTenantId,\n    clientId: prior.clientId,\n    clientName: prior.clientName,\n    brandColour: prior.brandColour,\n    paymentOptions: prior.paymentOptions,\n    confirmationFromEmail: prior.confirmationFromEmail,\n    collectionsNotificationEmail: prior.collectionsNotificationEmail,\n    collectionsReminder1Days: prior.collectionsReminder1Days,\n    collectionsReminder2Days: prior.collectionsReminder2Days,\n    collectionsReminder3Days: prior.collectionsReminder3Days,\n  }\n}));"
+      },
+      "id": "code-build-real-invoices",
+      "name": "Build Real Invoices List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-580, 80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.xero.com/api.xro/2.0/Contacts/{{ $json.contactId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-get-contact-email",
+      "name": "Xero - Get Contact Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-360, 80],
+      "notes": "The Invoices list response's embedded Contact object may not include EmailAddress even with summaryOnly=false - this fetches the full Contact record per invoice to be sure a real address is available before emailing. Flagging as unverified against real overdue invoices.",
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Build Real Invoices List').item.json;\nconst contact = (resp.Contacts || [])[0] || {};\nreturn [{ json: { ...prior, contactEmail: contact.EmailAddress || prior.contactEmail || '' } }];"
+      },
+      "id": "code-merge-contact-email",
+      "name": "Merge Contact Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-140, 80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.xero.com/api.xro/2.0/Invoices/{{ $json.invoiceId }}/History",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-get-invoice-history",
+      "name": "Xero - Get Invoice History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [80, 80],
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Merge Contact Email').item.json;\nconst records = resp.HistoryRecords || [];\nlet alreadySentStage = 0;\nfor (const rec of records) {\n  const m = String(rec.Details || '').match(/COLLECTIONS_STAGE=(\\d)/);\n  if (m) alreadySentStage = Math.max(alreadySentStage, Number(m[1]));\n}\nreturn [{ json: { ...prior, alreadySentStage } }];"
+      },
+      "id": "code-parse-already-sent-stage",
+      "name": "Parse Already-Sent Stage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst dueDateStr = String(d.dueDate || '').slice(0, 10);\nconst [dy, dm, dd] = dueDateStr.split('-').map(Number);\nconst dueUTC = Date.UTC(dy || 1970, (dm || 1) - 1, dd || 1);\nconst now = new Date();\nconst todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());\nconst daysOverdue = Math.floor((todayUTC - dueUTC) / 86400000);\n\nconst r1 = Number(d.collectionsReminder1Days) || 7;\nconst r2 = Number(d.collectionsReminder2Days) || 14;\nconst r3 = Number(d.collectionsReminder3Days) || 21;\n\nlet targetStage = 0;\nif (daysOverdue >= r3) targetStage = 3;\nelse if (daysOverdue >= r2) targetStage = 2;\nelse if (daysOverdue >= r1) targetStage = 1;\n\nconst alreadySentStage = Number(d.alreadySentStage) || 0;\nconst shouldSend = targetStage > 0 && targetStage > alreadySentStage;\n\nreturn [{ json: { ...d, daysOverdue, targetStage, shouldSend } }];"
+      },
+      "id": "code-compute-days-overdue",
+      "name": "Compute Days Overdue + Target Stage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, -140],
+      "notes": "Shared by both the test and live branches. Only sends when targetStage > alreadySentStage - so an invoice still at 8 days overdue after already receiving Reminder 1 (targetStage=1, alreadySentStage=1) correctly does NOT resend. A missed run (e.g. invoice jumps straight to 25 days overdue with nothing sent yet) sends only Reminder 3, not a backlog of 1+2+3."
+      },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.shouldSend }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-should-send",
+      "name": "Should Send Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [800, -140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst reason = d.targetStage === 0 ? 'not_yet_due' : 'already_sent_this_stage';\nreturn [{ json: { ...d, actionTaken: 'no_action', noActionReason: reason, emailSent: false, historyWritten: false, historyWriteSkipped: false } }];"
+      },
+      "id": "code-record-no-action",
+      "name": "Record No Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.targetStage }}",
+              "rightValue": 1,
+              "operator": { "type": "number", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-stage-1",
+      "name": "Is Stage 1?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1040, -140],
+      "notes": "Cascaded IF nodes (Stage 1? -> else Stage 2? -> else must be Stage 3) used instead of a Switch node - the IF node's parameter shape has already been proven working repeatedly in this project; Switch has not been used anywhere yet, so this avoids introducing an unproven node type for a 3-way branch that only needs 2 checks anyway."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.contactEmail], subject: `Friendly reminder: Invoice ${$json.invoiceNumber} from ${$json.clientName}`, text: `Hi ${$json.contactName},\\n\\nJust a friendly reminder that invoice ${$json.invoiceNumber} for ${$json.currencyCode} ${$json.amountDue} is now ${$json.daysOverdue} days past its due date.\\n\\nIf you've already paid, please disregard this message - otherwise we'd appreciate settlement at your earliest convenience.\\n\\nPayment options: ${$json.paymentOptions}\\n\\nThanks,\\n${$json.clientName}` }) }}",
+        "options": {}
+      },
+      "id": "http-send-reminder-1",
+      "name": "Send Reminder Email 1 (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1280, -380],
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential, same as the main workflow's confirmation email.",
+      "credentials": {
+        "httpHeaderAuth": { "id": "YHY8OwE9VDR10sYO", "name": "Header Auth account 2" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Is Stage 1?').item.json;\nconst resp = $input.item.json;\nreturn [{ json: { ...d, actionTaken: 'reminder_1_sent', emailSent: true, emailId: resp.id || null,\n  historyNote: `COLLECTIONS_STAGE=1 sent ${new Date().toISOString()} (${d.daysOverdue} days overdue - reminder 1 of 3, gentle)` } }];"
+      },
+      "id": "code-record-reminder-1",
+      "name": "Record Reminder 1 Sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, -380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.targetStage }}",
+              "rightValue": 2,
+              "operator": { "type": "number", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-stage-2",
+      "name": "Is Stage 2?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1280, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.contactEmail], subject: `Invoice ${$json.invoiceNumber} is now ${$json.daysOverdue} days overdue`, text: `Hi ${$json.contactName},\\n\\nInvoice ${$json.invoiceNumber} for ${$json.currencyCode} ${$json.amountDue} is now ${$json.daysOverdue} days past its due date and remains unpaid.\\n\\nPlease arrange payment as soon as possible to avoid further action.\\n\\nPayment options: ${$json.paymentOptions}\\n\\nThanks,\\n${$json.clientName}` }) }}",
+        "options": {}
+      },
+      "id": "http-send-reminder-2",
+      "name": "Send Reminder Email 2 (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, -60],
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential.",
+      "credentials": {
+        "httpHeaderAuth": { "id": "YHY8OwE9VDR10sYO", "name": "Header Auth account 2" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Is Stage 2?').item.json;\nconst resp = $input.item.json;\nreturn [{ json: { ...d, actionTaken: 'reminder_2_sent', emailSent: true, emailId: resp.id || null,\n  historyNote: `COLLECTIONS_STAGE=2 sent ${new Date().toISOString()} (${d.daysOverdue} days overdue - reminder 2 of 3, firmer)` } }];"
+      },
+      "id": "code-record-reminder-2",
+      "name": "Record Reminder 2 Sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.contactEmail], subject: `URGENT: Invoice ${$json.invoiceNumber} is significantly overdue`, text: `Hi ${$json.contactName},\\n\\nInvoice ${$json.invoiceNumber} for ${$json.currencyCode} ${$json.amountDue} is now ${$json.daysOverdue} days overdue. This is a final reminder before this account is escalated for manual follow-up.\\n\\nPlease settle this invoice immediately or contact us to discuss.\\n\\nPayment options: ${$json.paymentOptions}\\n\\n${$json.clientName}` }) }}",
+        "options": {}
+      },
+      "id": "http-send-reminder-3",
+      "name": "Send Reminder Email 3 (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 340],
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential.",
+      "credentials": {
+        "httpHeaderAuth": { "id": "YHY8OwE9VDR10sYO", "name": "Header Auth account 2" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.collectionsNotificationEmail], subject: `[Action needed] Invoice ${$json.invoiceNumber} - ${$json.daysOverdue} days overdue, flagged for follow-up`, text: `Invoice ${$json.invoiceNumber} (Xero ID ${$json.invoiceId}) for ${$json.contactName} is now ${$json.daysOverdue} days overdue (amount due: ${$json.currencyCode} ${$json.amountDue}).\\n\\nThis has crossed the ${$json.collectionsReminder3Days || 21}-day threshold and has been flagged for manual follow-up. The client-facing Reminder 3 email has already been sent to ${$json.contactEmail}.` }) }}",
+        "options": {}
+      },
+      "id": "http-send-manual-followup-notification",
+      "name": "Send Manual Follow-up Notification (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 340],
+      "notes": "Internal notification, not customer-facing - sent to Client Config's collectionsNotificationEmail. This is the 'flag for manual follow-up' requirement, paired with the COLLECTIONS_FLAGGED_FOR_MANUAL_FOLLOWUP Xero History entry written a few nodes downstream.",
+      "credentials": {
+        "httpHeaderAuth": { "id": "YHY8OwE9VDR10sYO", "name": "Header Auth account 2" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Is Stage 2?').item.json;\nconst resp = $input.item.json;\nreturn [{ json: { ...d, actionTaken: 'reminder_3_sent_and_flagged', emailSent: true, emailId: resp.id || null,\n  historyNote: `COLLECTIONS_STAGE=3 sent ${new Date().toISOString()} (${d.daysOverdue} days overdue - reminder 3 of 3, firm) | COLLECTIONS_FLAGGED_FOR_MANUAL_FOLLOWUP` } }];"
+      },
+      "id": "code-record-reminder-3-flagged",
+      "name": "Record Reminder 3 Sent + Flagged",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 340],
+      "notes": "References $('Is Stage 2?') deliberately - that's the last node before this branch that still carried the full invoice item (targetStage=2 FALSE output means 'must be stage 3', it does not mean this item's own targetStage is 2)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.testMode }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-write-history-test-mode",
+      "name": "Write History - Test Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2240, -20]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, historyWritten: false, historyWriteSkipped: true } }];"
+      },
+      "id": "code-skip-history-write",
+      "name": "Skip Xero Write (Test Mode)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, -200],
+      "notes": "Test-mode invoice IDs (TEST-INV-A etc.) don't exist in real Xero, so writing History against them would just 404 - skipped here, historyNote is preserved on the item for inspection in the test summary instead of being written anywhere."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.xero.com/api.xro/2.0/Invoices/{{ $json.invoiceId }}/History",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ HistoryRecords: [{ Details: $json.historyNote }] }) }}",
+        "options": {}
+      },
+      "id": "http-write-history-record",
+      "name": "Xero - Write History Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2480, 180],
+      "notes": "Parameter-shape flag: PUT is Xero's documented pattern for creating History/Notes entries on Invoices (same as Contacts, CreditNotes, etc.), but this exact call is unverified against real Xero data in this project - if the first live run 404s or 405s, this is the first thing to check (method PUT vs POST, and whether InvoiceID needs to be a real AUTHORISED invoice with actual history already, which it will be for any live-fetched invoice).",
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Write History - Test Mode?').item.json;\nconst resp = $input.item.json;\nconst ok = !!(resp.HistoryRecords && resp.HistoryRecords.length);\nreturn [{ json: { ...d, historyWritten: ok, historyWriteSkipped: false } }];"
+      },
+      "id": "code-confirm-history-written",
+      "name": "Confirm History Written",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2720, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  contactName: d.contactName,\n  contactEmail: d.contactEmail,\n  dueDate: d.dueDate,\n  amountDue: d.amountDue,\n  currencyCode: d.currencyCode,\n  daysOverdue: d.daysOverdue,\n  targetStage: d.targetStage,\n  alreadySentStage: d.alreadySentStage,\n  actionTaken: d.actionTaken,\n  noActionReason: d.noActionReason || null,\n  emailSent: !!d.emailSent,\n  historyNote: d.historyNote || null,\n  historyWritten: !!d.historyWritten,\n  historyWriteSkipped: !!d.historyWriteSkipped,\n  testMode: !!d.testMode,\n  source: d.source,\n} }];"
+      },
+      "id": "code-format-result",
+      "name": "Format Collections Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2960, 60]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (daily 08:00)": {
+      "main": [[{ "node": "Production Run Input", "type": "main", "index": 0 }]]
+    },
+    "Production Run Input": {
+      "main": [[{ "node": "Collections Check In", "type": "main", "index": 0 }]]
+    },
+    "Manual Trigger": {
+      "main": [[{ "node": "Sample Mock Invoices (Manual Test)", "type": "main", "index": 0 }]]
+    },
+    "Sample Mock Invoices (Manual Test)": {
+      "main": [[{ "node": "Collections Check In", "type": "main", "index": 0 }]]
+    },
+    "Collections Check Input": {
+      "main": [[{ "node": "Extract Collections Check Input", "type": "main", "index": 0 }]]
+    },
+    "Extract Collections Check Input": {
+      "main": [[{ "node": "Collections Check In", "type": "main", "index": 0 }]]
+    },
+    "Collections Check In": {
+      "main": [[{ "node": "Get Client Config", "type": "main", "index": 0 }]]
+    },
+    "Get Client Config": {
+      "main": [[{ "node": "Merge Config + Trigger Input", "type": "main", "index": 0 }]]
+    },
+    "Merge Config + Trigger Input": {
+      "main": [[{ "node": "Is Test Mode?", "type": "main", "index": 0 }]]
+    },
+    "Is Test Mode?": {
+      "main": [
+        [{ "node": "Build Test Invoices", "type": "main", "index": 0 }],
+        [{ "node": "Xero - Get Connections", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Test Invoices": {
+      "main": [[{ "node": "Compute Days Overdue + Target Stage", "type": "main", "index": 0 }]]
+    },
+    "Xero - Get Connections": {
+      "main": [[{ "node": "Extract Tenant ID", "type": "main", "index": 0 }]]
+    },
+    "Extract Tenant ID": {
+      "main": [[{ "node": "Xero - Get Outstanding Invoices", "type": "main", "index": 0 }]]
+    },
+    "Xero - Get Outstanding Invoices": {
+      "main": [[{ "node": "Build Real Invoices List", "type": "main", "index": 0 }]]
+    },
+    "Build Real Invoices List": {
+      "main": [[{ "node": "Xero - Get Contact Email", "type": "main", "index": 0 }]]
+    },
+    "Xero - Get Contact Email": {
+      "main": [[{ "node": "Merge Contact Email", "type": "main", "index": 0 }]]
+    },
+    "Merge Contact Email": {
+      "main": [[{ "node": "Xero - Get Invoice History", "type": "main", "index": 0 }]]
+    },
+    "Xero - Get Invoice History": {
+      "main": [[{ "node": "Parse Already-Sent Stage", "type": "main", "index": 0 }]]
+    },
+    "Parse Already-Sent Stage": {
+      "main": [[{ "node": "Compute Days Overdue + Target Stage", "type": "main", "index": 0 }]]
+    },
+    "Compute Days Overdue + Target Stage": {
+      "main": [[{ "node": "Should Send Reminder?", "type": "main", "index": 0 }]]
+    },
+    "Should Send Reminder?": {
+      "main": [
+        [{ "node": "Is Stage 1?", "type": "main", "index": 0 }],
+        [{ "node": "Record No Action", "type": "main", "index": 0 }]
+      ]
+    },
+    "Record No Action": {
+      "main": [[{ "node": "Format Collections Result", "type": "main", "index": 0 }]]
+    },
+    "Is Stage 1?": {
+      "main": [
+        [{ "node": "Send Reminder Email 1 (Resend)", "type": "main", "index": 0 }],
+        [{ "node": "Is Stage 2?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Reminder Email 1 (Resend)": {
+      "main": [[{ "node": "Record Reminder 1 Sent", "type": "main", "index": 0 }]]
+    },
+    "Record Reminder 1 Sent": {
+      "main": [[{ "node": "Write History - Test Mode?", "type": "main", "index": 0 }]]
+    },
+    "Is Stage 2?": {
+      "main": [
+        [{ "node": "Send Reminder Email 2 (Resend)", "type": "main", "index": 0 }],
+        [{ "node": "Send Reminder Email 3 (Resend)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Reminder Email 2 (Resend)": {
+      "main": [[{ "node": "Record Reminder 2 Sent", "type": "main", "index": 0 }]]
+    },
+    "Record Reminder 2 Sent": {
+      "main": [[{ "node": "Write History - Test Mode?", "type": "main", "index": 0 }]]
+    },
+    "Send Reminder Email 3 (Resend)": {
+      "main": [[{ "node": "Send Manual Follow-up Notification (Resend)", "type": "main", "index": 0 }]]
+    },
+    "Send Manual Follow-up Notification (Resend)": {
+      "main": [[{ "node": "Record Reminder 3 Sent + Flagged", "type": "main", "index": 0 }]]
+    },
+    "Record Reminder 3 Sent + Flagged": {
+      "main": [[{ "node": "Write History - Test Mode?", "type": "main", "index": 0 }]]
+    },
+    "Write History - Test Mode?": {
+      "main": [
+        [{ "node": "Skip Xero Write (Test Mode)", "type": "main", "index": 0 }],
+        [{ "node": "Xero - Write History Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip Xero Write (Test Mode)": {
+      "main": [[{ "node": "Format Collections Result", "type": "main", "index": 0 }]]
+    },
+    "Xero - Write History Record": {
+      "main": [[{ "node": "Confirm History Written", "type": "main", "index": 0 }]]
+    },
+    "Confirm History Written": {
+      "main": [[{ "node": "Format Collections Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": { "templateId": "keystone-invoice-automation-collections-reminders" }
+}

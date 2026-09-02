@@ -30,6 +30,15 @@ Job completion data
             no name match, or name matches but email/phone don't -> create Contact -> use new ContactID
        -> Xero: create Invoice against the resolved ContactID
        -> Resend: email confirmation if customerEmail present, else skip with a flagged reason
+
+Xero (outstanding invoices, AUTHORISED, AmountDue > 0)
+  -> Collections Reminders (03-collections-reminders.json): Schedule Trigger daily 08:00
+       -> per invoice: days overdue = today - DueDate
+       -> Xero Invoice History read -> highest reminder stage already sent (dedup)
+       -> 7+ days AND not yet sent -> Reminder 1 (gentle)
+       -> 14+ days AND not yet sent -> Reminder 2 (firmer)
+       -> 21+ days AND not yet sent -> Reminder 3 (firm) + internal "flag for manual follow-up" email
+       -> Xero Invoice History write -> records the stage just sent (and the flag, at 21+)
 ```
 
 The internal `customerId` is never passed to Xero as if it were a Xero
@@ -50,6 +59,7 @@ key.
 | `00-client-config.json` | Sub-workflow holding all per-client placeholders. Edit this per deployment. |
 | `01-invoice-automation.json` | The full pipeline described above. |
 | `02-sheet-poller.json` | Polls the Jobs sheet and feeds completed rows into the pipeline above via its own webhook. |
+| `03-collections-reminders.json` | Daily overdue-invoice escalation: reminder emails at 7/14/21 days overdue, manual-follow-up flag at 21. See "Collections / Reminders" below. |
 
 ## Google Sheet structure
 
@@ -251,6 +261,115 @@ rows) was cleaned up afterwards - see "Test results" below.
   temporary one-off n8n workflows built and torn down for that purpose,
   confirmed via the executions API and independent re-reads.
 
+## Collections / Reminders
+
+Daily branch (`03-collections-reminders.json`) that checks Xero for
+outstanding sales invoices (`Type=="ACCREC"`, `Status=="AUTHORISED"`,
+`AmountDue>0`) and escalates by days past `DueDate`:
+
+| Days overdue | Action |
+|---|---|
+| < `collectionsReminder1Days` (default 7) | No action |
+| >= 7 | Reminder Email 1 (gentle) |
+| >= 14 | Reminder Email 2 (firmer) |
+| >= 21 | Reminder Email 3 (firm) + internal "flag for manual follow-up" notification |
+
+Only the **highest stage currently reached** is sent per run - if the
+workflow hasn't run in a while and an invoice jumps straight to 25 days
+overdue with nothing sent yet, it gets Reminder 3 only, not a backdated
+burst of 1 + 2 + 3.
+
+Thresholds are configurable per client via Client Config
+(`collectionsReminder1Days` / `2Days` / `3Days`, default 7/14/21).
+
+### Dedup / reminder-stage tracking - chosen approach: Xero Invoice History
+
+Each invoice's progress is tracked with tagged entries on that invoice's
+own Xero History (`PUT /Invoices/{id}/History`, `Details:
+"COLLECTIONS_STAGE=N ..."`), read back every run (`GET
+/Invoices/{id}/History`) to compute the highest stage already sent. An
+invoice only gets a given reminder once: e.g. still at 8 days overdue
+after Reminder 1 already went out does **not** trigger a second Reminder
+1 the next day.
+
+This was chosen over standing up a new Google Sheet (or any new
+credential) specifically because the brief said to reuse only the
+existing Xero + Resend auth with no new setup - tracking lives entirely
+inside Xero's own audit trail on the invoice itself, nothing external to
+create or share access to.
+
+### Manual follow-up flag (21+ days) - chosen approach: both
+
+At stage 3, in addition to the client-facing Reminder 3 email:
+
+1. A second tagged Xero History entry
+   (`COLLECTIONS_FLAGGED_FOR_MANUAL_FOLLOWUP`) is written, so it's
+   permanently visible on the invoice's own audit trail in Xero.
+2. An internal notification email is sent via Resend to a new
+   `collectionsNotificationEmail` Client Config field.
+
+Reasoning: a note nobody actively checks isn't really a flag - the email
+actively surfaces it to a person, while the History entry makes the flag
+itself idempotent (won't re-flag on every subsequent daily run) and
+auditable directly on the invoice.
+
+### Testing approach
+
+Three triggers, same pattern as every other workflow in this project:
+
+- **Schedule Trigger** - real production path, daily at 08:00.
+- **Manual Trigger + "Sample Mock Invoices"** - click-to-test in the n8n
+  editor with 5 built-in fake invoices.
+- **Webhook** (`POST /webhook/invoice/collections-check`) - accepts
+  `{ testMode: true, testInvoices: [...] }` to run the exact same
+  escalation logic (not a separate copy of it) against custom fake
+  invoices via API.
+
+`testMode: true` bypasses the real Xero invoice fetch and skips the real
+Xero History write (so testing never touches real Xero data), but still
+sends real Resend emails so delivery is actually proven end-to-end, not
+just simulated. The 5 fixtures cover all four overdue states plus an
+explicit duplicate-prevention case:
+
+| Fixture | Due date | Already sent | Expected |
+|---|---|---|---|
+| A - Not Yet Due Co | +10 days | stage 0 | No action |
+| B - Eight Days Overdue Co | -8 days | stage 0 | Reminder 1 sent |
+| C - Fifteen Days Overdue Co | -15 days | stage 1 | Reminder 2 sent (not 1 again) |
+| D - Twenty-Five Days Overdue Co | -25 days | stage 2 | Reminder 3 sent + flagged |
+| E - Already Reminded Co | -8 days | stage 1 | No action (dedup - already got Reminder 1) |
+
+### Test results
+
+_See the top-level chat response for this session for the actual test
+run output - results are pasted here once the live n8n deployment step
+has run._
+
+### Parameter-shape uncertainty flagged (unverified against real Xero data, same caveat as Calendar/Xero/Sheets on first build)
+
+1. **Xero History HTTP method** - used `PUT /Invoices/{id}/History`,
+   matching Xero's documented pattern for History/Notes on Contacts,
+   CreditNotes, etc., but this exact call has not been exercised against
+   a real invoice. If the first live run 404s/405s on the write step,
+   this is the first thing to check.
+2. **Multi-condition `where` filter + `summaryOnly=false`** on `GET
+   /Invoices` - only single-condition `where` clauses (`Reference==`,
+   `Name==`) have actually been proven live in this project; the
+   combined `Type==...&&Status==...&&AmountDue>0` filter and
+   `summaryOnly=false` are best-effort.
+3. **Contact `EmailAddress` on the invoice list response** - may not be
+   present even with `summaryOnly=false`, which is why a dedicated `GET
+   /Contacts/{id}` fetch was added per invoice rather than relying on the
+   embedded `Contact` object.
+4. **Daily Schedule Trigger shape** (`field: "days"`,
+   `triggerAtHour`/`triggerAtMinute`) - only the `minutes` field type has
+   been proven live so far (Sheet Poller runs every 5 minutes); worth
+   confirming the first scheduled run actually fires at 08:00.
+
+None of these affect the escalation/dedup logic itself (fully covered by
+the mocked test above) - they're isolated to the real-Xero data path,
+which only runs when `testMode` is not set.
+
 ## Contact matching logic
 
 Earlier testing found that Xero enforces unique contact Names within an
@@ -297,3 +416,11 @@ live-tested against the real Google Sheet and live Xero connection (see
 "Sheet Poller + discount lookup: live and verified" above) - a `Complete`
 Jobs row produces a real Xero draft invoice, and a `Discounts` row correctly
 changes the invoiced amount. Nothing outstanding on either feature.
+
+Collections/Reminders (`03-collections-reminders.json`) is built and its
+escalation/dedup logic is mock-tested (see "Collections / Reminders" ->
+"Test results" above) - not yet deployed to the live n8n workspace. The
+live-Xero data path (real invoice fetch, Contact email lookup, History
+read/write) is untested against real data and carries the parameter-shape
+flags listed above; `collectionsNotificationEmail` also needs a real inbox
+set before running it live for real.

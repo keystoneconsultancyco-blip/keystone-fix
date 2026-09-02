@@ -11,7 +11,7 @@
     },
     {
       "parameters": {
-        "content": "## Client Config\nEdit these values per client. Every other node in the main workflow pulls from here via \"Execute Sub-Workflow\" - never hardcode client details elsewhere.\n\nxeroSalesAccountCode must match a real account code in the client's Xero chart of accounts (200 is Xero's common default demo-org \"Sales\" code - verify per client).\n\ninvoiceStatus defaults to DRAFT so nothing gets auto-sent to a real customer until you deliberately flip it to AUTHORISED for a live client.\n\ninvoiceLineAmountType defaults to \"Inclusive\" so jobValue is treated as the total the customer owes (Xero backs the account's tax rate out of it). Set to \"Exclusive\" only if jobValue should have tax added on top instead - verify which one matches what customers were actually quoted, per client.\n\njobsSheetId points at ONE Google Sheet with two tabs: \"Jobs\" (the trigger source - see workflows/invoice-automation/README.md for exact column layout) and \"Discounts\" (per-customer discount overrides). Both jobsSheetTabName/discountsSheetTabName just need to match that sheet's actual tab names.",
+        "content": "## Client Config\nEdit these values per client. Every other node in the main workflow pulls from here via \"Execute Sub-Workflow\" - never hardcode client details elsewhere.\n\nxeroSalesAccountCode must match a real account code in the client's Xero chart of accounts (200 is Xero's common default demo-org \"Sales\" code - verify per client).\n\ninvoiceStatus defaults to DRAFT so nothing gets auto-sent to a real customer until you deliberately flip it to AUTHORISED for a live client.\n\ninvoiceLineAmountType defaults to \"Inclusive\" so jobValue is treated as the total the customer owes (Xero backs the account's tax rate out of it). Set to \"Exclusive\" only if jobValue should have tax added on top instead - verify which one matches what customers were actually quoted, per client.\n\njobsSheetId points at ONE Google Sheet with two tabs: \"Jobs\" (the trigger source - see workflows/invoice-automation/README.md for exact column layout) and \"Discounts\" (per-customer discount overrides). Both jobsSheetTabName/discountsSheetTabName just need to match that sheet's actual tab names.\n\ncollectionsReminder1Days/2Days/3Days control the Collections/Reminders branch's escalation thresholds (days past DueDate) - defaults are 7/14/21. collectionsNotificationEmail is where the internal 'flagged for manual follow-up' notification goes at the 21-day stage - set this to a real inbox you check, not a placeholder, before running the Collections workflow live.",
         "height": 340,
         "width": 420
       },
@@ -42,7 +42,11 @@
             { "id": "confirmation-from-email", "name": "confirmationFromEmail", "type": "string", "value": "billing@REPLACE_WITH_CLIENT_DOMAIN.com" },
             { "id": "jobs-sheet-id", "name": "jobsSheetId", "type": "string", "value": "REPLACE_WITH_GOOGLE_SHEET_ID" },
             { "id": "jobs-sheet-tab-name", "name": "jobsSheetTabName", "type": "string", "value": "Jobs" },
-            { "id": "discounts-sheet-tab-name", "name": "discountsSheetTabName", "type": "string", "value": "Discounts" }
+            { "id": "discounts-sheet-tab-name", "name": "discountsSheetTabName", "type": "string", "value": "Discounts" },
+            { "id": "collections-reminder-1-days", "name": "collectionsReminder1Days", "type": "number", "value": 7 },
+            { "id": "collections-reminder-2-days", "name": "collectionsReminder2Days", "type": "number", "value": 14 },
+            { "id": "collections-reminder-3-days", "name": "collectionsReminder3Days", "type": "number", "value": 21 },
+            { "id": "collections-notification-email", "name": "collectionsNotificationEmail", "type": "string", "value": "collections@REPLACE_WITH_CLIENT_DOMAIN.com" }
           ]
         },
         "options": {}
