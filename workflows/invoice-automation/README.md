@@ -108,6 +108,7 @@ back to the flat default.
 | `[Stock] Invoice Automation - Client Config` | `s2riyS1tZ0jtVuSR` | Yes |
 | `[Stock] Invoice Automation` | `MParifnFIYCIuXUs` | Yes |
 | `[Stock] Invoice Automation - Sheet Poller` | `ai7GdjmZaEOF6Ich` | Yes - wired to the real Google Sheet and credential, live-tested (see below) |
+| `[Stock] Invoice Automation - Collections Reminders` | `PD8OAS7LPLoiGMkx` | **No** - deployed and mock-tested (see "Collections / Reminders" below), deliberately left inactive so its daily Schedule Trigger doesn't run against real Xero data before your own live check. Activate when ready. |
 
 Webhook: `POST https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed`
 
@@ -341,9 +342,69 @@ explicit duplicate-prevention case:
 
 ### Test results
 
-_See the top-level chat response for this session for the actual test
-run output - results are pasted here once the live n8n deployment step
-has run._
+All 5 fixtures sent in a single `testMode` webhook call, verified both via
+the webhook's own response and independently via the n8n executions API
+(full per-node item counts and outputs, not just the summary):
+
+| Fixture | daysOverdue | targetStage | alreadySentStage | actionTaken | emailSent |
+|---|---|---|---|---|---|
+| A - Not Yet Due Co | -10 | 0 | 0 | `no_action` (not_yet_due) | false |
+| B - Eight Days Overdue Co | 8 | 1 | 0 | `reminder_1_sent` | true |
+| C - Fifteen Days Overdue Co | 15 | 2 | 1 | `reminder_2_sent` | true |
+| D - Twenty-Five Days Overdue Co | 25 | 3 | 2 | `reminder_3_sent_and_flagged` | true |
+| E - Already Reminded Co | 8 | 1 | 1 | `no_action` (already_sent_this_stage) | false |
+
+All 4 expected emails (Reminder 1, 2, 3, and the internal manual-follow-up
+notification) came back with real Resend message IDs, confirming actual
+delivery attempts, not just simulated logic:
+
+```
+Reminder 1 (invoice B): 01a06431-1efb-71d8-bb51-8f9056875108
+Reminder 2 (invoice C): 01a06431-1ff2-75f9-b9fc-44d72e340645
+Reminder 3 (invoice D): 01a06431-20c0-7222-a657-8e2069d125af
+Manual follow-up notification (invoice D): 01a06431-21ab-70e6-aac5-5b7faa625a11
+```
+
+The invoice D `historyNote` correctly captured both tags in one entry:
+`COLLECTIONS_STAGE=3 sent ... (25 days overdue - reminder 3 of 3, firm) |
+COLLECTIONS_FLAGGED_FOR_MANUAL_FOLLOWUP`. All 5 items showed
+`historyWriteSkipped: true` as expected (test-mode invoice IDs don't exist
+in real Xero, so the write step is skipped rather than 404ing).
+
+**Two real bugs found and fixed by this test run:**
+
+1. **Multi-item Code nodes silently dropped 4 of 5 invoices.** Every Code
+   node downstream of the point where the batch fans out from 1 item to N
+   (one per invoice) defaults to n8n's "Run Once for All Items" mode, in
+   which `$input.item` is only a convenience alias for the *first* item -
+   not an error, just silently wrong. The first test run only processed
+   Invoice A and dropped B-E entirely with no error. Fixed by explicitly
+   setting `mode: "runOnceForEachItem"` on the 10 affected Code nodes
+   (returning `{ json: {...} }` instead of `[{ json: {...} }]` in that
+   mode). This never surfaced in any earlier workflow in this project
+   because every prior one processes exactly one entity (one job, one
+   poll's completed rows handled sequentially) per Code node execution -
+   this is the first genuinely batch-per-execution workflow here.
+2. **Manual follow-up notification email sent all-`undefined` fields.**
+   "Send Manual Follow-up Notification" read `$json.invoiceNumber` etc.,
+   but by that point `$json` was the *previous* node's output - the
+   Resend API response from the Reminder 3 email, not the invoice data
+   (caused a real `500` on the first full-batch test run: Resend rejected
+   `to: [null]`). Fixed by reading `$('Is Stage 2?').item.json.*` instead,
+   matching the pattern already used correctly in the very next node.
+
+Both fixes are live in `03-collections-reminders.json` and confirmed via a
+clean rerun (results table above).
+
+**Not tested / needs your live check:** the webhook's own HTTP response
+only reflects the last of the 5 items processed (n8n runs a downstream
+node once per incoming branch when multiple branches fan into it without
+an explicit Merge node - here that only affects the webhook's test
+response body, not the real per-invoice actions, which were independently
+confirmed correct for all 5 via the executions API above). Not fixed, to
+avoid introducing an unproven native node (Merge) for a cosmetic,
+test-only gap - happy to add it if you want a single combined JSON
+response from future test calls.
 
 ### Parameter-shape uncertainty flagged (unverified against real Xero data, same caveat as Calendar/Xero/Sheets on first build)
 
@@ -417,10 +478,15 @@ live-tested against the real Google Sheet and live Xero connection (see
 Jobs row produces a real Xero draft invoice, and a `Discounts` row correctly
 changes the invoiced amount. Nothing outstanding on either feature.
 
-Collections/Reminders (`03-collections-reminders.json`) is built and its
-escalation/dedup logic is mock-tested (see "Collections / Reminders" ->
-"Test results" above) - not yet deployed to the live n8n workspace. The
-live-Xero data path (real invoice fetch, Contact email lookup, History
-read/write) is untested against real data and carries the parameter-shape
-flags listed above; `collectionsNotificationEmail` also needs a real inbox
-set before running it live for real.
+Collections/Reminders (`03-collections-reminders.json`, live ID
+`PD8OAS7LPLoiGMkx`) is built, deployed, and its escalation/dedup logic is
+fully mock-tested against all 5 fixtures with real Resend emails sent
+(see "Collections / Reminders" -> "Test results" above), including a
+duplicate-prevention case and two real bugs found and fixed during that
+testing. **Deliberately left inactive** - the live-Xero data path (real
+invoice fetch, Contact email lookup, History read/write) is untested
+against real data and carries the parameter-shape flags listed above;
+`collectionsNotificationEmail` is currently set to
+`keystoneconsultancy.co@gmail.com` for testing and should be replaced with
+a real monitored inbox before going live. Activate the workflow in n8n
+(or ask me to) once you've done your own live check.
