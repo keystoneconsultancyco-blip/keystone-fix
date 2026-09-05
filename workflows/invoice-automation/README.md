@@ -233,13 +233,15 @@ came back `null` on a deliberately-blank test payload where it should not
 have. Fixed by pointing that reference at `$('Normalize Payment Method')`
 instead; reverified clean afterward (test #2 above).
 
-**Unrelated issue found (not caused by this change):** the Resend API key
-behind the "Header Auth account 2" credential is currently invalid/expired
-- the "Send Invoice" test's confirmation email failed with `"API key is
-invalid"`. This blocks confirmation emails on *every* job going through
-the "Send Invoice" path right now, regardless of Payment Method - worth
-fixing (rotate/regenerate the key in your Resend account and update the
-credential in n8n) independently of this feature.
+**Unrelated issue found (not caused by this change) - since resolved:** the
+Resend API key behind the "Header Auth account 2" credential was
+invalid/expired at the time of the tests above - the "Send Invoice"
+test's confirmation email failed with `"API key is invalid"`. The key was
+rotated and reverified live with a fresh test job: Resend accepted it and
+returned a real message ID (`INV-0021`, message id
+`7c32d98d-310f-4d1a-899e-ccf9b74dd8f0`), no error. Confirmation emails are
+working again as of this check; test invoice/contact cleaned up
+afterward.
 
 ## Current live deployment (keystoneconsultancy.app.n8n.cloud)
 
@@ -610,11 +612,13 @@ The core pipeline (validation, send-window, Xero contact/duplicate/invoice
 logic including name+email/phone disambiguation, Resend email) is fully
 tested against live Xero + Resend API calls, including actual email
 delivery and independent re-fetches of created contacts.
-**Update:** as of the Payment Method testing round, the Resend API key
-(`Header Auth account 2`) has since gone invalid - confirmation emails are
-currently broken for every job on the "Send Invoice" path until that key
-is rotated. Not a regression from any recent change; flagged for you to
-fix independently.
+**Update:** the Resend API key (`Header Auth account 2`) went invalid at
+one point during the Payment Method testing round, breaking confirmation
+emails - since rotated and reverified live (real test job, `INV-0021`,
+Resend accepted it and returned a real message ID,
+`7c32d98d-310f-4d1a-899e-ccf9b74dd8f0`, no error). Confirmation emails are
+working again as of this check; test invoice/contact cleaned up
+afterward.
 
 The Sheet Poller and Discounts lookup are built, deployed, and now fully
 live-tested against the real Google Sheet and live Xero connection (see
