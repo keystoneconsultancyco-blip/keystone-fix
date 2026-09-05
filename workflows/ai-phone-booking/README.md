@@ -15,8 +15,14 @@ Inbound call
             -> Vapi assistant runs the conversation
             -> mid-call, calls n8n: 02-vapi-tools for check_availability / book_appointment
                (Google Calendar placeholder - swappable per client)
+            -> mid-call, if the request doesn't match any known service/pricing/booking
+               scenario or the assistant isn't confident: says a natural line, then
+               invokes Vapi's own transferCall tool -> live transfer to managerPhoneNumber
+               (or receptionForwardNumber if that's blank) - entirely inside Vapi, no n8n
+               call in the loop for the transfer itself (see "Uncertainty transfer" below)
             -> on hangup, Vapi posts "end-of-call-report" to n8n: 03-post-call-actions
-               -> customer confirmation email + business notification email
+               -> customer confirmation email + business notification email (if booked)
+               -> separate business FYI email if the call was transferred to the manager
 ```
 
 Each of the three call-handling workflows calls `00-client-config` via
@@ -112,8 +118,101 @@ Still outstanding:
    - Add the two custom tools (`check_availability`, `book_appointment`)
      pointing at the `02-vapi-tools` webhook, matching the parameter shapes
      in `vapi-assistant-config.json`.
+   - Add the third tool, `transferCall` (see "Uncertainty transfer" below)
+     - set its destination number to Client Config's `managerPhoneNumber`,
+     or to `receptionForwardNumber` if `managerPhoneNumber` is blank for
+     this client.
 6. **Activate** all three call-handling workflows in n8n (they must be
    Active for the production webhook URLs to respond).
+
+## Uncertainty transfer (manager escalation)
+
+Separate mechanism from the SIP-failure fallback described below - that
+one handles a *technical* breakdown (the Twilio-to-Vapi dial itself
+failing to connect). This one handles the AI being *confused*: the
+caller asks for something outside any known service, pricing question,
+or booking scenario, or the assistant otherwise isn't confident it can
+help. The two triggers on completely different conditions, live in
+completely different systems (Twilio DialCallStatus callback in n8n vs.
+the Vapi assistant's own conversational judgement), and don't interact.
+
+### How it works
+
+1. The system prompt (`vapi-assistant-config.json`) instructs the
+   assistant: on genuine uncertainty, say something natural like "Let me
+   connect you with our manager who can help with that," then call the
+   `transferCall` tool.
+2. That tool is Vapi's own **native** transfer mechanism, not another
+   n8n webhook tool. A custom "function" tool (like `check_availability`)
+   can only return data to the model - it has no way to actually move a
+   live call's audio anywhere. Only Vapi's built-in `transferCall` tool
+   type can perform a real mid-call transfer, which is why this can't be
+   implemented as an n8n webhook call the way the booking tools are - n8n
+   has no way to control an in-progress Vapi/Twilio call leg once it's
+   live.
+3. Because of that, the destination number is **static config on the Vapi
+   assistant itself**, set once when the assistant is created (same as
+   the SIP trunking `vapiSipCredentialId`) - it is not fetched from n8n's
+   Client Config dynamically per call, since Vapi's SIP phone number
+   resource has one fixed assistant with fixed tools, not a per-call
+   dynamic override. `managerPhoneNumber` in `00-client-config.json` is
+   still the canonical value; it's just synced in manually at setup time
+   (see step 5 above), the same way every other Vapi-side per-client value
+   in this template already is.
+4. `03-post-call-actions.json` separately extracts `transferredToManager`
+   / `transferReason` from Vapi's end-of-call analysis (a new pair of
+   fields on the existing structured data schema - no new webhook, no new
+   credential) and, if true, sends the business a separate FYI email. This
+   is purely a post-call record: by the time it fires, the live transfer
+   already happened via Vapi directly - this workflow has no ability to
+   cause or prevent it, only to log that it occurred, since otherwise a
+   live transfer would leave no trace anywhere in this system at all.
+
+### Blank `managerPhoneNumber` - chosen default: fall back to `receptionForwardNumber`
+
+The brief allowed either fallback (reception/SIP path) or "take a message
+and email the business instead." Chose reception forwarding because the
+caller is live, on the phone, mid-conversation, already expecting to be
+connected to a person right now - "we'll email someone" is a materially
+worse outcome for someone already on a call than "you're being connected
+to reception," and reception is a real person who can actually help,
+not just relay a message. It also needs zero new infrastructure: same
+number, same `transferCall` tool, just a different destination chosen at
+setup time.
+
+Because the transfer destination is static Vapi-side config (see above),
+this fallback is also a **setup-time choice**, not a live per-call
+decision - whoever configures the assistant checks whether
+`managerPhoneNumber` is set and points the tool at that number or at
+`receptionForwardNumber` accordingly. There's no way for Vapi to make that
+check dynamically per call in this architecture without a lot of new
+infrastructure (originating calls via Vapi's `/call` API with per-call
+`assistantOverrides` instead of a static SIP phone number resource) that
+wasn't asked for and would be a much bigger change than this task.
+
+### Parameter-shape uncertainty (unverified against the real Vapi API/dashboard)
+
+The `transferCall` tool JSON in `vapi-assistant-config.json` (`type:
+"transferCall"`, `destinations[].type: "number"`, `transferPlan.mode:
+"blind-transfer"`) is my best-effort recollection of Vapi's documented
+schema for native call-transfer tools - unlike `check_availability` /
+`book_appointment` (plain custom "function" tools already verified working
+live), this exact tool type has not been created against the real Vapi
+API in this project before. If it's rejected on import/creation, Vapi's
+dashboard almost certainly also offers adding a "Transfer Call" tool
+visually - use that as the fallback source of truth for the exact field
+names over this JSON.
+
+### What's tested vs. what needs a real call
+
+Same situation as the SIP handoff below: the actual live transfer (Vapi
+executing `transferCall` and bridging the caller to the manager's number)
+can only be verified by a real call reaching that point in a real
+conversation - no amount of webhook simulation exercises Vapi's own
+in-call transfer logic. What *is* verified without a real call: the
+post-call notification path (`03-post-call-actions.json` correctly
+extracts `transferredToManager`/`transferReason` and sends the business
+FYI email) - see "Simulated end-to-end test" below for the added case.
 
 ## Google Calendar OAuth troubleshooting (`Error 401: invalid_client`)
 
@@ -255,6 +354,22 @@ that remains the one thing only a real call can answer, and it's still
 untested. Once Twilio access is restored, the test call checklist below
 is what's left.
 
+5. **Uncertainty transfer - post-call notification path.** Simulated a
+   Vapi end-of-call-report payload with
+   `analysis.structuredData.transferredToManager: true` and a
+   `transferReason` directly at the `03-post-call-actions` webhook.
+   Confirmed via the n8n executions API: `Extract Call Summary` correctly
+   parsed both new fields, `Was Transferred To Manager?` routed to the
+   alert branch, and `Email Business - Manager Transfer Alert` fired
+   against the real Resend API with a real message ID returned. Also
+   confirmed the two notification paths are genuinely independent by
+   simulating `bookingMade: true` and `transferredToManager: true`
+   together in one payload - both emails fired from the same execution
+   without either blocking the other. **Not tested and not testable this
+   way:** the actual Vapi `transferCall` tool invocation and live
+   transfer - that's a real-call-only verification, same limitation as
+   the SIP handoff itself (see "Uncertainty transfer" above).
+
 ## Test call checklist (do in order)
 
 1. Call the Twilio number. Confirm the greeting plays and Gather waits for
@@ -276,6 +391,13 @@ is what's left.
    one of them.
 8. Let a call ring through Gather without pressing anything. Confirm it
    fails gracefully (no dead air, no crash).
+9. Call again, press 2, and ask for something clearly outside booking
+   (e.g. a made-up service, or a pricing question). Confirm the assistant
+   says something like "Let me connect you with our manager" and the call
+   actually transfers to `managerPhoneNumber` (or reception, if that's
+   blank for this client) - this is the one part of the uncertainty
+   transfer that only a real call can verify. Confirm the business also
+   receives the "Call transferred to manager" FYI email afterwards.
 
 ## Compliance flag
 

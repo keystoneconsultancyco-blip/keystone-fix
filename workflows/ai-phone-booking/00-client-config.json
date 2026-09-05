@@ -14,9 +14,9 @@
     },
     {
       "parameters": {
-        "content": "## Client Config\nThis is the ONLY file you should need to edit per client.\n\nDuplicate this whole template folder per client, then edit the values below (and swap credentials in each workflow's nodes to that client's Twilio / Vapi / Google / SMTP accounts).\n\nEvery other workflow calls this one via \"Execute Sub-Workflow\" to pull these values - never hardcode client details anywhere else.",
-        "height": 260,
-        "width": 380
+        "content": "## Client Config\nThis is the ONLY file you should need to edit per client.\n\nDuplicate this whole template folder per client, then edit the values below (and swap credentials in each workflow's nodes to that client's Twilio / Vapi / Google / SMTP accounts).\n\nEvery other workflow calls this one via \"Execute Sub-Workflow\" to pull these values - never hardcode client details anywhere else.\n\nmanagerPhoneNumber (uncertainty transfer): the live number the Vapi assistant transfers a call to mid-conversation when the caller's request doesn't match any known job type/pricing/booking scenario - separate from receptionForwardNumber's existing SIP-failure fallback (technical breakdown, not confusion). This value is NOT read dynamically by Vapi at call time (the assistant's tools are static, configured once in the Vapi dashboard/API, not fetched from n8n per call) - it's the canonical source you copy into the assistant's transfer_to_manager tool destination when creating/updating the assistant, same manual-sync pattern already used for vapiSipCredentialId. Leave blank to fall back to receptionForwardNumber as that same tool's destination (see vapi-assistant-config.json and the README for why).",
+        "height": 420,
+        "width": 420
       },
       "id": "client-config-note",
       "name": "Sticky Note",
@@ -54,6 +54,12 @@
               "name": "receptionForwardNumber",
               "type": "string",
               "value": "+15550000000"
+            },
+            {
+              "id": "manager-phone-number",
+              "name": "managerPhoneNumber",
+              "type": "string",
+              "value": ""
             },
             {
               "id": "vapi-sip-credential-id",

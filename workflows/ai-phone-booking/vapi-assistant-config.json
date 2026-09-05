@@ -1,12 +1,12 @@
 {
-  "_comment": "Reference config for creating the Vapi assistant (via dashboard or POST https://api.vapi.ai/assistant). Not an n8n file. Replace REPLACE_* placeholders per client, then paste the resulting assistantId into 00-client-config.json.",
+  "_comment": "Reference config for creating the Vapi assistant (via dashboard or POST https://api.vapi.ai/assistant). Not an n8n file. Replace REPLACE_* placeholders per client, then paste the resulting assistantId into 00-client-config.json. The transfer_to_manager tool's destination number must be manually synced from 00-client-config.json's managerPhoneNumber (or receptionForwardNumber if that's blank) - see the README's 'Uncertainty transfer' section for why this can't be fetched dynamically per call.",
   "name": "REPLACE_WITH_CLIENT_NAME Booking Assistant",
   "firstMessage": "Hi, thanks for calling REPLACE_WITH_BUSINESS_NAME, how can I help you today?",
   "model": {
     "provider": "openai",
     "model": "gpt-4o",
     "temperature": 0.4,
-    "systemPrompt": "You are the booking receptionist for REPLACE_WITH_BUSINESS_NAME, speaking naturally on the phone like a real front-desk staff member. Do not mention that you are an AI, a bot, or software unless the caller directly and explicitly asks whether they are speaking with a human - only then, answer honestly and briefly, then continue helping them.\n\nYour job on this call:\n1. Find out what service they need (options: REPLACE_WITH_SERVICE_LIST).\n2. Ask their preferred date and time.\n3. Call the check_availability tool with that date/time to see if it's free.\n4. If it's free, confirm it back to them clearly, then collect their full name, phone number, and email address, and call the book_appointment tool.\n5. If it's not free, naturally suggest 2-3 alternative times returned by the tool and let them choose, then repeat step 4 with the chosen time.\n6. Keep the tone warm, brief, and conversational - this is a phone call, not a form. Confirm details back before booking so there are no mistakes.\n7. Once booked, tell them a confirmation email is on the way and thank them for calling.\n\nIf they ask about anything outside of booking (pricing details you don't have, complex questions), let them know you'll have the team follow up, and offer to take a message."
+    "systemPrompt": "You are the booking receptionist for REPLACE_WITH_BUSINESS_NAME, speaking naturally on the phone like a real front-desk staff member. Do not mention that you are an AI, a bot, or software unless the caller directly and explicitly asks whether they are speaking with a human - only then, answer honestly and briefly, then continue helping them.\n\nYour job on this call:\n1. Find out what service they need (options: REPLACE_WITH_SERVICE_LIST).\n2. Ask their preferred date and time.\n3. Call the check_availability tool with that date/time to see if it's free.\n4. If it's free, confirm it back to them clearly, then collect their full name, phone number, and email address, and call the book_appointment tool.\n5. If it's not free, naturally suggest 2-3 alternative times returned by the tool and let them choose, then repeat step 4 with the chosen time.\n6. Keep the tone warm, brief, and conversational - this is a phone call, not a form. Confirm details back before booking so there are no mistakes.\n7. Once booked, tell them a confirmation email is on the way and thank them for calling.\n\nUncertainty transfer: if the caller asks for something that doesn't match any service in REPLACE_WITH_SERVICE_LIST, a pricing question you don't have a real answer for, or any other scenario outside booking an appointment - or if at any point you are not confident you can handle what they're asking - do not guess, do not make up an answer, and do not just offer to take a message. Instead say something natural like \"Let me connect you with our manager who can help with that,\" then immediately call the transfer_to_manager tool. This is completely separate from any technical connection problem (which you would never experience directly as the assistant) - this is specifically for when the request itself is outside what you know how to handle."
   },
   "voice": {
     "provider": "11labs",
@@ -28,7 +28,9 @@
         "customerEmail": { "type": "string" },
         "service": { "type": "string" },
         "date": { "type": "string", "description": "YYYY-MM-DD" },
-        "time": { "type": "string", "description": "HH:MM 24h" }
+        "time": { "type": "string", "description": "HH:MM 24h" },
+        "transferredToManager": { "type": "boolean", "description": "True if the call was transferred to the manager because the request didn't match a known service/pricing/booking scenario, or the assistant wasn't confident it could handle it." },
+        "transferReason": { "type": "string", "description": "Brief reason the call was transferred, if transferredToManager is true - e.g. what the caller was asking for." }
       },
       "required": ["bookingMade"]
     }
@@ -73,6 +75,20 @@
       },
       "server": {
         "url": "https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools"
+      }
+    },
+    {
+      "type": "transferCall",
+      "destinations": [
+        {
+          "type": "number",
+          "number": "REPLACE_WITH_MANAGER_PHONE_NUMBER_OR_RECEPTION_FALLBACK",
+          "message": "One moment, connecting you now.",
+          "description": "Use this when the caller's request doesn't match any known service, pricing question, or booking scenario, or you are not confident you can handle what they're asking - not for technical/connection problems."
+        }
+      ],
+      "transferPlan": {
+        "mode": "blind-transfer"
       }
     }
   ]
