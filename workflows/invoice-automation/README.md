@@ -141,11 +141,15 @@ cash sale still gets a normal Xero invoice for record-keeping (the
 invoice", which this fully satisfies - see "Why Collections excludes
 these" below for the mechanism).
 
-`xeroCashAccountCode` must be a real **BANK or CASH type** account in the
-client's chart of accounts - not `xeroSalesAccountCode` (a revenue
-account), which Xero rejects a Payment against. Ships as a placeholder;
-verify per client before any `Paid Cash` row is processed live, same as
-`xeroSalesAccountCode` already requires.
+`xeroCashAccountCode` must be a real **BANK type** account in the client's
+chart of accounts (Xero's Payments API only accepts `Type: "BANK"`
+accounts - not `xeroSalesAccountCode`, a revenue account, and not a
+generic `CURRENT` asset account like a "Cash in Hand" account some charts
+have by default). Ships as a placeholder. **This Xero org currently has
+zero BANK-type accounts at all** (confirmed via `GET /Accounts?where=Type=="BANK"`
+during testing) - a real one needs to be created/connected in Xero before
+any `Paid Cash` row can be processed live; see "Test results" below for
+exactly what this blocked and what didn't.
 
 ### Blank / unrecognized paymentMethod
 
@@ -168,7 +172,74 @@ filters on `Status=="AUTHORISED"&&AmountDue>0`. A Paid Cash invoice is
 AUTHORISED but has `AmountDue: 0` the moment its Payment posts, so it
 never matches that filter and is never even fetched - there's nothing
 inside Collections' own logic that needs to know about payment method at
-all. Confirmed live - see "Test results" below.
+all. Partially confirmed live (the inclusion side - see "Test results"
+below); the exclusion side is a direct mechanical consequence of the same
+already-proven numeric filter and will be fully confirmed once a real
+Payment can post (see the BANK account gap above).
+
+### Test results
+
+All against the live deployed workflow via its real webhook, verified
+independently via the n8n executions API and direct Xero re-fetches - not
+just the webhook's own response.
+
+1. **"Send Invoice" (regression check)** - `paymentMethod: "Send Invoice"`
+   correctly normalized to `send_invoice`, routed through the unchanged
+   original path, created a real DRAFT invoice (`INV-0017`) with the
+   correct Contact/discount/branding logic untouched ✅. The confirmation
+   email step itself failed - see "Unrelated issue found" below, not a
+   regression from this change.
+2. **Blank / unrecognized `paymentMethod`** - tested with `""` and with
+   `"GARBAGE_VALUE"`; both correctly defaulted to `send_invoice` behavior
+   (invoice still created, `INV-0019`) and - after a bug fix (below) - the
+   response correctly carried a `paymentMethodWarning` string naming the
+   bad value and the `jobId` ✅.
+3. **"Paid Cash"** - `paymentMethod: "Paid Cash"` correctly normalized to
+   `paid_cash`, routed to the new branch, and created a real Xero invoice
+   (`INV-0020`) with `Status: "AUTHORISED"` and `DueDate` set to today -
+   independently confirmed via a direct Xero re-fetch ✅. No email was
+   sent (`emailSkippedReason: "paid_cash_no_email"`), and no attempt was
+   made to reach the Resend API at all for this path ✅. The actual
+   `Xero - Create Payment` call was **mocked** for this test (per your
+   choice, to avoid creating a permanent BANK account just for testing) -
+   a stub returned a realistic-shaped fake `Payments` response so the rest
+   of the pipeline (parsing, result formatting) could still be verified
+   end to end.
+4. **Collections exclusion mechanism** - ran Collections' exact
+   `Get Outstanding Invoices` query directly against the live org: the
+   unpaid test invoice (`INV-0020`, `AmountDue: 250`) correctly appeared
+   in the result set (proving the query itself works and would currently
+   chase this invoice, since no real payment exists yet) ✅. Could not
+   test the exclusion side with a real zero-balance invoice, since that
+   requires an actual Payment against a real BANK account - blocked on
+   the same gap as #3.
+5. **Cleanup** - all 4 test invoices (`INV-0017` through `INV-0020`)
+   removed from the real Xero org (`DELETED` for the 3 DRAFT ones,
+   `VOIDED` for the AUTHORISED cash one, since a voided invoice can't be
+   deleted and no real payment was ever recorded against it), and all 4
+   test contacts set to `ContactStatus: ARCHIVED` - confirmed via the
+   executions API.
+
+**One real bug found and fixed by this test round:** inserting
+"Normalize Payment Method" between "Merge Config + Job" and "Check
+Customer Discount" broke "Match Customer Discount", which still
+referenced `$('Merge Config + Job')` for its base data - silently
+dropping `effectivePaymentMethod` and `paymentMethodWarning` for every
+job. This meant `Is Paid Cash?` would always have seen `undefined` and
+always fallen through to the "Send Invoice" branch, regardless of the
+sheet's actual `paymentMethod` value - the Paid Cash path would have been
+completely unreachable in production. Caught because `paymentMethodWarning`
+came back `null` on a deliberately-blank test payload where it should not
+have. Fixed by pointing that reference at `$('Normalize Payment Method')`
+instead; reverified clean afterward (test #2 above).
+
+**Unrelated issue found (not caused by this change):** the Resend API key
+behind the "Header Auth account 2" credential is currently invalid/expired
+- the "Send Invoice" test's confirmation email failed with `"API key is
+invalid"`. This blocks confirmation emails on *every* job going through
+the "Send Invoice" path right now, regardless of Payment Method - worth
+fixing (rotate/regenerate the key in your Resend account and update the
+credential in n8n) independently of this feature.
 
 ## Current live deployment (keystoneconsultancy.app.n8n.cloud)
 
@@ -538,8 +609,12 @@ The matching logic now accounts for this directly:
 The core pipeline (validation, send-window, Xero contact/duplicate/invoice
 logic including name+email/phone disambiguation, Resend email) is fully
 tested against live Xero + Resend API calls, including actual email
-delivery and independent re-fetches of created contacts. Nothing blocked
-there.
+delivery and independent re-fetches of created contacts.
+**Update:** as of the Payment Method testing round, the Resend API key
+(`Header Auth account 2`) has since gone invalid - confirmation emails are
+currently broken for every job on the "Send Invoice" path until that key
+is rotated. Not a regression from any recent change; flagged for you to
+fix independently.
 
 The Sheet Poller and Discounts lookup are built, deployed, and now fully
 live-tested against the real Google Sheet and live Xero connection (see
@@ -559,3 +634,15 @@ against real data and carries the parameter-shape flags listed above;
 `keystoneconsultancy.co@gmail.com` for testing and should be replaced with
 a real monitored inbox before going live. Activate the workflow in n8n
 (or ask me to) once you've done your own live check.
+
+Payment Method (Send Invoice / Paid Cash) is built, deployed to the live
+main workflow, and live-tested for routing, defaulting/warning behavior,
+and real Xero invoice creation on both paths (see "Payment Method" ->
+"Test results" above) - including a real bug found and fixed
+(`effectivePaymentMethod` was being silently dropped, which would have
+made the Paid Cash branch unreachable). **Not fully tested end-to-end:**
+the actual `Xero - Create Payment` call was mocked, since this Xero org
+has no BANK-type account yet - `xeroCashAccountCode` needs a real one
+before any `Paid Cash` row is processed live, at which point that one
+call (and the Collections-exclusion mechanism it enables) should be
+re-verified for real.

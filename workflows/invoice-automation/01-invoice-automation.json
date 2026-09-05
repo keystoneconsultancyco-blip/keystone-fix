@@ -161,7 +161,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prior = $('Merge Config + Job').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map(row => {\n  const obj = {};\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
+        "jsCode": "const prior = $('Normalize Payment Method').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map(row => {\n  const obj = {};\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
       },
       "id": "code-match-discount",
       "name": "Match Customer Discount",
