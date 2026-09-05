@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Invoice Automation - Stock Template\n\nTwo triggers feed the same pipeline:\n- Manual Trigger + \"Sample Job Data\" -> click-to-test in the n8n editor.\n- Webhook \"Job Completion Input\" -> POST real (or test) job-completion JSON here; also what a real job-management system would call.\n\nFlow: validate -> Client Config -> branding/discount/payment options -> send-window check (queues via a Wait node if outside window) -> resolve Xero contact (search by AccountNumber == internal customerId; create if not found) -> duplicate check (by Reference on the invoice) -> create Xero invoice -> Resend confirmation email if we have one.\n\nWebhook responds with whatever the final node in the branch that fired produced (responseMode: lastNode), so POSTing test payloads is a full round-trip test.",
-        "height": 320,
-        "width": 480
+        "content": "## Invoice Automation - Stock Template\n\nTwo triggers feed the same pipeline:\n- Manual Trigger + \"Sample Job Data\" -> click-to-test in the n8n editor.\n- Webhook \"Job Completion Input\" -> POST real (or test) job-completion JSON here; also what a real job-management system would call.\n\nFlow: validate -> Client Config -> normalize paymentMethod -> branding/discount/payment options -> send-window check (queues via a Wait node if outside window) -> resolve Xero contact (search by AccountNumber == internal customerId; create if not found) -> duplicate check (by Reference on the invoice) -> branch on paymentMethod:\n- \"Send Invoice\" (or blank/unrecognized, defaulted with a warning) -> create Xero DRAFT invoice -> Resend confirmation email if we have one. Eligible for Collections/Reminders as normal.\n- \"Paid Cash\" -> create Xero AUTHORISED invoice -> record a full Xero Payment against it (xeroCashAccountCode) -> no email. AmountDue becomes 0, so Collections/Reminders' own where-filter (AmountDue>0) naturally excludes it - nothing else needed to keep it out of the chase.\n\nWebhook responds with whatever the final node in the branch that fired produced (responseMode: lastNode), so POSTing test payloads is a full round-trip test.",
+        "height": 400,
+        "width": 560
       },
       "id": "top-note",
       "name": "Sticky Note",
@@ -23,7 +23,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: {\n  jobId: 'JOB-1001',\n  customerId: 'CUST-001',\n  customerName: 'Jane Doe',\n  customerEmail: 'jane@example.com',\n  jobDescription: 'Boiler service and safety check',\n  jobValue: 250.00,\n  milestoneNumber: null,\n  milestoneLabel: null,\n  jobCompletedAt: new Date().toISOString(),\n} }];"
+        "jsCode": "return [{ json: {\n  jobId: 'JOB-1001',\n  customerId: 'CUST-001',\n  customerName: 'Jane Doe',\n  customerEmail: 'jane@example.com',\n  jobDescription: 'Boiler service and safety check',\n  jobValue: 250.00,\n  paymentMethod: 'Send Invoice',\n  milestoneNumber: null,\n  milestoneLabel: null,\n  jobCompletedAt: new Date().toISOString(),\n} }];"
       },
       "id": "code-sample-job",
       "name": "Sample Job Data (Manual Test)",
@@ -129,6 +129,17 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [-560, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst raw = (d.paymentMethod || '').toString().trim();\n\nlet effectivePaymentMethod;\nlet paymentMethodWarning = null;\n\nif (raw === 'Send Invoice') {\n  effectivePaymentMethod = 'send_invoice';\n} else if (raw === 'Paid Cash') {\n  effectivePaymentMethod = 'paid_cash';\n} else {\n  effectivePaymentMethod = 'send_invoice';\n  paymentMethodWarning = `Blank or unrecognized paymentMethod (\"${raw}\") for jobId ${d.jobId} - defaulted to \"Send Invoice\". Check the Jobs sheet row.`;\n}\n\nif (paymentMethodWarning) {\n  try {\n    this.logger.warn(paymentMethodWarning);\n  } catch (e) {\n    // this.logger may not be available on every n8n version - non-fatal, the warning is still carried on the item below.\n  }\n}\n\nreturn [{ json: { ...d, paymentMethod: raw, effectivePaymentMethod, paymentMethodWarning } }];"
+      },
+      "id": "code-normalize-payment-method",
+      "name": "Normalize Payment Method",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-500, 160],
+      "notes": "Blank/unrecognized paymentMethod defaults to 'Send Invoice' behavior (not a validation failure - the job still gets invoiced) but is flagged via paymentMethodWarning, which flows through to the final result so it's visible in the response/execution, plus a best-effort this.logger.warn() call. Parameter-shape flag: this.logger's availability inside a Code node is unverified on this n8n version - wrapped in try/catch so it can never break the run either way."
     },
     {
       "parameters": {
@@ -445,6 +456,114 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.effectivePaymentMethod }}",
+              "rightValue": "paid_cash",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-paid-cash",
+      "name": "Is Paid Cash?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3520, 280],
+      "notes": "Both branches share every node up to here (discount, branding, send-window, duplicate check by Reference, contact resolution) - only invoice creation and what happens after it differ. TRUE (Paid Cash): creates an AUTHORISED invoice + a Payment against xeroCashAccountCode, no email. FALSE (Send Invoice, or blank/unrecognized defaulted by 'Normalize Payment Method'): the original unchanged flow - DRAFT invoice (per invoiceStatus config) + Resend confirmation."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: 'AUTHORISED', DueDate: new Date().toISOString().slice(0,10) }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-invoice-cash",
+      "name": "Xero - Create Invoice (Cash Sale)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3760, 460],
+      "notes": "Status is hardcoded to AUTHORISED here regardless of the invoiceStatus Client Config value - a Payment cannot be applied to a DRAFT invoice in Xero. DueDate is today (already paid), not invoiceDueDays out.",
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Is Paid Cash?').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+      },
+      "id": "code-parse-invoice-cash",
+      "name": "Parse Cash Invoice Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4000, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Payments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" },
+            { "name": "xero-tenant-id", "value": "={{ $json.xeroTenantId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoice: { InvoiceID: $json.invoiceId }, Account: { Code: $json.xeroCashAccountCode }, Date: new Date().toISOString().slice(0,10), Amount: $json.lineAmount }) }}",
+        "options": {}
+      },
+      "id": "http-create-payment",
+      "name": "Xero - Create Payment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4240, 460],
+      "notes": "Parameter-shape flag: this is a new Xero object type for this project (Payments, not Invoices/Contacts/History). Account.Code must be a real BANK or CASH type account in the client's chart of accounts (xeroCashAccountCode in Client Config) - posting against a REVENUE account (like xeroSalesAccountCode) is rejected by Xero. Unverified against real client chart-of-accounts data.",
+      "credentials": {
+        "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Parse Cash Invoice Result').item.json;\nconst payment = (resp.Payments || [])[0] || {};\nreturn [{ json: { ...prior, paymentId: payment.PaymentID || null, paymentStatus: payment.Status || null } }];"
+      },
+      "id": "code-parse-payment",
+      "name": "Parse Payment Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4480, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'paid_cash',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  paymentId: d.paymentId,\n  paymentRecorded: !!d.paymentId,\n  emailSent: false,\n  emailSkippedReason: 'paid_cash_no_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+      },
+      "id": "code-success-cash",
+      "name": "Build Success Result (Cash Sale)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4720, 460]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://api.xero.com/api.xro/2.0/Invoices",
         "authentication": "predefinedCredentialType",
@@ -527,7 +646,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const d = $('Parse Invoice Result').item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: true,\n} }];"
+        "jsCode": "const d = $('Parse Invoice Result').item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: true,\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
       },
       "id": "code-success-emailed",
       "name": "Build Success Result (Email Sent)",
@@ -537,7 +656,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: false,\n  emailSkippedReason: 'missing_customer_email',\n} }];"
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: false,\n  emailSkippedReason: 'missing_customer_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
       },
       "id": "code-success-no-email",
       "name": "Build Success Result (Email Skipped)",
@@ -575,6 +694,9 @@
       "main": [[{ "node": "Merge Config + Job", "type": "main", "index": 0 }]]
     },
     "Merge Config + Job": {
+      "main": [[{ "node": "Normalize Payment Method", "type": "main", "index": 0 }]]
+    },
+    "Normalize Payment Method": {
       "main": [[{ "node": "Check Customer Discount", "type": "main", "index": 0 }]]
     },
     "Check Customer Discount": {
@@ -641,7 +763,25 @@
       "main": [[{ "node": "Contact Resolved", "type": "main", "index": 0 }]]
     },
     "Contact Resolved": {
-      "main": [[{ "node": "Xero - Create Invoice", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Is Paid Cash?", "type": "main", "index": 0 }]]
+    },
+    "Is Paid Cash?": {
+      "main": [
+        [{ "node": "Xero - Create Invoice (Cash Sale)", "type": "main", "index": 0 }],
+        [{ "node": "Xero - Create Invoice", "type": "main", "index": 0 }]
+      ]
+    },
+    "Xero - Create Invoice (Cash Sale)": {
+      "main": [[{ "node": "Parse Cash Invoice Result", "type": "main", "index": 0 }]]
+    },
+    "Parse Cash Invoice Result": {
+      "main": [[{ "node": "Xero - Create Payment", "type": "main", "index": 0 }]]
+    },
+    "Xero - Create Payment": {
+      "main": [[{ "node": "Parse Payment Result", "type": "main", "index": 0 }]]
+    },
+    "Parse Payment Result": {
+      "main": [[{ "node": "Build Success Result (Cash Sale)", "type": "main", "index": 0 }]]
     },
     "Xero - Create Invoice": {
       "main": [[{ "node": "Parse Invoice Result", "type": "main", "index": 0 }]]

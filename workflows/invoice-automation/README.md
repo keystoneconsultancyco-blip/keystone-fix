@@ -19,6 +19,7 @@ Job completion data
        -> Validate Job Data (required fields, job value > 0)
             invalid -> rejected result, stop
        -> Client Config (branding, discount, payment options, send window, Xero/email/Sheets settings)
+       -> Normalize Payment Method (Send Invoice / Paid Cash; blank or unrecognized defaults to Send Invoice + a logged warning)
        -> Check Customer Discount (Google Sheets "Discounts" tab lookup by customerId, falls back to Client Config's flat discountPercent)
        -> Apply Branding, Discount, Payment Options
        -> Check Send-Time Window
@@ -28,8 +29,12 @@ Job completion data
        -> Xero: search Contact by Name == customerName
             name match AND (email or phone also matches) -> use existing ContactID
             no name match, or name matches but email/phone don't -> create Contact -> use new ContactID
-       -> Xero: create Invoice against the resolved ContactID
-       -> Resend: email confirmation if customerEmail present, else skip with a flagged reason
+       -> branch on Payment Method:
+            "Send Invoice" (or defaulted) -> Xero: create DRAFT Invoice against the resolved ContactID
+                 -> Resend: email confirmation if customerEmail present, else skip with a flagged reason
+                 -> eligible for Collections/Reminders as normal
+            "Paid Cash" -> Xero: create AUTHORISED Invoice -> Xero: create Payment against xeroCashAccountCode
+                 -> no email, ever. AmountDue is 0, so Collections/Reminders' own filter excludes it automatically.
 
 Xero (outstanding invoices, AUTHORISED, AmountDue > 0)
   -> Collections Reminders (03-collections-reminders.json): Schedule Trigger daily 08:00
@@ -70,7 +75,7 @@ Poller and the discount lookup both fail closed (no rows matched) rather
 than guess at a different layout.
 
 **"Jobs" tab** - the trigger source. Whoever finishes a job fills in
-columns A-H and leaves the rest blank; the Poller owns everything from
+columns A-I and leaves the rest blank; the Poller owns everything from
 `status` onward.
 
 | Column | Filled in by | Notes |
@@ -78,15 +83,21 @@ columns A-H and leaves the rest blank; the Poller owns everything from
 | `jobId` | staff | Must be unique - also used for Xero duplicate-invoice detection |
 | `customerId` | staff | Your internal customer ID |
 | `customerName` | staff | |
-| `customerEmail` | staff | Optional - confirmation email is skipped without it |
+| `customerEmail` | staff | Optional - confirmation email is skipped without it (and never sent at all for Paid Cash, regardless) |
 | `customerPhone` | staff | Optional but recommended - the only disambiguator when an existing Xero contact has no email on file |
 | `jobDescription` | staff | Shows on the invoice line item |
 | `jobValue` | staff | Numeric, > 0 |
+| `paymentMethod` | staff | Dropdown (data validation), exactly `Send Invoice` or `Paid Cash`. Blank or anything else is treated as `Send Invoice` and logs a warning - it never blocks the job, but check the sheet if you see one. |
 | `status` | staff, then the Poller | Leave blank until the job is genuinely done, then set to exactly `Complete`. The Poller overwrites this with `Invoiced`, `Skipped - Duplicate`, or an `Error - ...` message - never set those yourself. |
 | `invoiceReference` | Poller | Written back after processing |
 | `invoiceNumber` | Poller | Written back after processing |
 | `processedAt` | Poller | Written back after processing |
 | `errorMessage` | Poller | Only populated when something went wrong - check this if a row shows an `Error - ...` status |
+
+Column order matters here: `paymentMethod` sits at H and `status` at I,
+which shifted the Poller's write-back range from the original H:L to I:M
+(see `02-sheet-poller.json`'s "Process Complete Rows" notes) - if you ever
+reorder columns again, that range needs updating too.
 
 **"Discounts" tab** - per-customer overrides, read fresh on every invoice
 run (no caching, so edits take effect on the very next job).
@@ -100,6 +111,64 @@ run (no caching, so edits take effect on the very next job).
 
 An empty Discounts tab (header row only) is fine - every job just falls
 back to the flat default.
+
+## Payment Method (Send Invoice vs Paid Cash)
+
+### Chosen approach for "Paid Cash": Xero Invoice + Payment, not a Bank Transaction
+
+Two Xero objects could record a cash sale: a Bank Transaction, or an
+Invoice immediately paired with a Payment. This template uses **Invoice +
+Payment**:
+
+1. Create the invoice exactly as the "Send Invoice" path does (same
+   Contact resolution, same discount/branding, same duplicate check by
+   `Reference`) but with `Status: "AUTHORISED"` instead of `DRAFT`, and
+   `DueDate` set to today instead of `invoiceDueDays` out.
+2. Immediately `POST /Payments` against it for the full amount, against a
+   new Client Config field, `xeroCashAccountCode`.
+
+Reasoning: a Bank Transaction is a materially different Xero object
+(`Type`, `BankAccount`, `IsReconciled`, its own `LineItems` shape) with no
+proven pattern anywhere in this project, and it would require a real bank
+account already connected in Xero - nothing in this template's existing
+setup establishes or verifies one. Invoice + Payment reuses close to 100%
+of the already-proven, already-tested code path (Contact resolution,
+discount/branding, duplicate detection, invoice creation) and only adds
+one new Xero call (`Payments`) instead of an entirely new object family -
+a smaller, lower-risk delta from what's already working. It also means a
+cash sale still gets a normal Xero invoice for record-keeping (the
+"invoice-less" framing in the original ask was closer to "no *unpaid*
+invoice", which this fully satisfies - see "Why Collections excludes
+these" below for the mechanism).
+
+`xeroCashAccountCode` must be a real **BANK or CASH type** account in the
+client's chart of accounts - not `xeroSalesAccountCode` (a revenue
+account), which Xero rejects a Payment against. Ships as a placeholder;
+verify per client before any `Paid Cash` row is processed live, same as
+`xeroSalesAccountCode` already requires.
+
+### Blank / unrecognized paymentMethod
+
+Handled by a new "Normalize Payment Method" node right after Client
+Config: exactly `"Send Invoice"` or `"Paid Cash"` (case-sensitive, matches
+the sheet's dropdown values) map to their respective paths; anything else
+- blank, a typo, a value from before this column existed - defaults to
+`Send Invoice` (the pre-existing behavior) and sets a
+`paymentMethodWarning` string that flows through to the job's final
+result (visible in the webhook response / n8n execution), plus a
+best-effort `this.logger.warn(...)` call. It never rejects the job outright
+- per the brief, a bad value shouldn't silently fail, but shouldn't block
+invoicing either.
+
+### Why Collections/Reminders excludes Paid Cash jobs
+
+No workflow change was needed. Collections/Reminders' own Xero query
+(`Xero - Get Outstanding Invoices` in `03-collections-reminders.json`)
+filters on `Status=="AUTHORISED"&&AmountDue>0`. A Paid Cash invoice is
+AUTHORISED but has `AmountDue: 0` the moment its Payment posts, so it
+never matches that filter and is never even fetched - there's nothing
+inside Collections' own logic that needs to know about payment method at
+all. Confirmed live - see "Test results" below.
 
 ## Current live deployment (keystoneconsultancy.app.n8n.cloud)
 
