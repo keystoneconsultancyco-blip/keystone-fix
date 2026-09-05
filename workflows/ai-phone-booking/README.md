@@ -354,21 +354,41 @@ that remains the one thing only a real call can answer, and it's still
 untested. Once Twilio access is restored, the test call checklist below
 is what's left.
 
-5. **Uncertainty transfer - post-call notification path.** Simulated a
-   Vapi end-of-call-report payload with
-   `analysis.structuredData.transferredToManager: true` and a
-   `transferReason` directly at the `03-post-call-actions` webhook.
-   Confirmed via the n8n executions API: `Extract Call Summary` correctly
-   parsed both new fields, `Was Transferred To Manager?` routed to the
-   alert branch, and `Email Business - Manager Transfer Alert` fired
-   against the real Resend API with a real message ID returned. Also
-   confirmed the two notification paths are genuinely independent by
-   simulating `bookingMade: true` and `transferredToManager: true`
-   together in one payload - both emails fired from the same execution
-   without either blocking the other. **Not tested and not testable this
-   way:** the actual Vapi `transferCall` tool invocation and live
-   transfer - that's a real-call-only verification, same limitation as
-   the SIP handoff itself (see "Uncertainty transfer" above).
+5. **Uncertainty transfer - post-call notification path.** Simulated
+   three Vapi end-of-call-report payloads directly at the live
+   `03-post-call-actions` webhook, verified via the n8n executions API
+   (not just the webhook's own ack response):
+   - `transferredToManager: true`, no booking - `Extract Call Summary`
+     correctly parsed `transferReason`/`transferredToManager`, `Was
+     Transferred To Manager?` routed to the alert branch, and `Email
+     Business - Manager Transfer Alert` fired against the real Resend API
+     with a real message ID. The alert's body also correctly showed the
+     destination as `receptionForwardNumber` (confirming the
+     `managerPhoneNumber || receptionForwardNumber` fallback expression
+     resolves correctly when `managerPhoneNumber` is blank) ✅
+   - `bookingMade: true` AND `transferredToManager: true` together (one
+     call, booked something, then separately got confused about something
+     else) - all three emails (customer confirmation, business booking
+     notification, manager-transfer alert) fired independently in the same
+     execution, each with a real Resend message ID, none blocking the
+     others ✅
+   - `bookingMade: true` only (regression check) - booking emails fired
+     as before; the transfer-alert node correctly did not run at all ✅
+
+   Initial run surfaced the same known, already-documented limitation as
+   everywhere else in this template: Resend rejected the placeholder
+   `confirmationFromEmail`/`businessNotificationEmail` (422, invalid
+   `from`/domain not verified) - not a new bug, just this stock
+   deployment's placeholders being placeholders. Temporarily pointed both
+   at a real test sender/inbox to get a clean pass on the Resend call
+   itself, then reverted Client Config back to its generic placeholder
+   values afterward so this deployment stays "not yet a real client
+   instance" as documented above.
+
+   **Not tested and not testable this way:** the actual Vapi
+   `transferCall` tool invocation and live transfer - that's a
+   real-call-only verification, same limitation as the SIP handoff itself
+   (see "Uncertainty transfer" above).
 
 ## Test call checklist (do in order)
 
