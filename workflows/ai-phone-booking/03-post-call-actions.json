@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time, transferredToManager (bool), transferReason (string). This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification, both via the Resend HTTP API (NOT SMTP - Railway blocks outbound SMTP, so these are plain HTTPS calls instead). Requires a \"Resend API\" Header Auth credential in n8n with header 'Authorization: Bearer <resend-api-key>', same pattern as the Vapi credential.\n\nIndependently, if transferredToManager is true: sends the business a separate FYI email about the transfer. This is purely a post-call record - by the time this webhook fires, the live transfer (Vapi's transferCall tool, mid-conversation) has already happened; this workflow has no way to trigger or affect that transfer itself, only to log it afterwards. Not the same mechanism as the SIP-failure fallback in 01-inbound-ivr (that's a Twilio DialCallStatus callback for a technical connection failure, this is the AI's own uncertainty about the request) - the two are completely independent and can both exist without interacting.",
-        "height": 440,
-        "width": 480
+        "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time, transferredToManager (bool), transferReason (string). This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification, both via the Resend HTTP API (NOT SMTP - Railway blocks outbound SMTP, so these are plain HTTPS calls instead). Requires a \"Resend API\" Header Auth credential in n8n with header 'Authorization: Bearer <resend-api-key>', same pattern as the Vapi credential.\n\nIndependently, if transferredToManager is true: sends the business a separate FYI email about the transfer. This is purely a post-call record - by the time this webhook fires, the live transfer (Vapi's transferCall tool, mid-conversation) has already happened; this workflow has no way to trigger or affect that transfer itself, only to log it afterwards. Not the same mechanism as the SIP-failure fallback in 01-inbound-ivr (that's a Twilio DialCallStatus callback for a technical connection failure, this is the AI's own uncertainty about the request) - the two are completely independent and can both exist without interacting.\n\nA third, always-on branch (\"Log Call To CallLog\") writes one row per call - regardless of outcome - to this client's own reportingSheetId (Client Config). Added so workflows/monthly-reporting has a real historical record of call volume/bookings to read - previously this workflow only ever sent emails and kept no log of its own at all.",
+        "height": 560,
+        "width": 520
       },
       "id": "postcall-note",
       "name": "Sticky Note",
@@ -232,6 +232,38 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.callLogTabName }}:append",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "valueInputOption", "value": "RAW" },
+            { "name": "insertDataOption", "value": "INSERT_ROWS" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $('Extract Call Summary').item.json.customerPhone || '', $('Extract Call Summary').item.json.bookingMade, $('Extract Call Summary').item.json.transferredToManager, $('Extract Call Summary').item.json.service || '', $('Extract Call Summary').item.json.bookingDate || '', $('Extract Call Summary').item.json.bookingTime || '' ]] }) }}",
+        "options": {}
+      },
+      "id": "log-call-to-sheet",
+      "name": "Log Call To CallLog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -140,
+        640
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Raw Sheets REST API - values:append (POST, not the values.get/update/clear verbs used elsewhere in this project so far - this is the first use of the append verb here). Logs every call regardless of outcome, since this is the only historical record of call volume at all - Monthly Reporting reads this sheet for 'calls answered'/'bookings made'. Requires reportingSheetId to be set in Client Config to a real sheet with a CallLog tab whose row 1 has headers matching this row's order (timestamp, clientId, callerNumber, bookingMade, transferredToManager, service, date, time) - see workflows/monthly-reporting/README.md. onError: continueRegularOutput so a logging failure (e.g. blank/placeholder reportingSheetId) can never block Acknowledge or the other notification branches.",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
+      }
+    },
+    {
+      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -324,6 +356,22 @@
           },
           {
             "node": "Was Transferred To Manager?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Call To CallLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Call To CallLog": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
             "type": "main",
             "index": 0
           }
