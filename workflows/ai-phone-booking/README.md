@@ -13,8 +13,10 @@ Inbound call
        Press 1 -> <Dial> straight to reception (plain Twilio forwarding, no AI)
        Press 2 -> <Dial><Sip> handoff to the Vapi assistant (SIP trunking)
             -> Vapi assistant runs the conversation
-            -> mid-call, calls n8n: 02-vapi-tools for check_availability / book_appointment
-               (Google Calendar placeholder - swappable per client)
+            -> mid-call, calls n8n: 02-vapi-tools for check_availability / book_appointment /
+               get_quote (Google Calendar placeholder for availability/booking - swappable
+               per client; get_quote is a config lookup against quoteConfig in Client Config,
+               never an AI-invented price - see the Quoting Engine section below)
             -> mid-call, if the request doesn't match any known service/pricing/booking
                scenario or the assistant isn't confident: says a natural line, then
                invokes Vapi's own transferCall tool -> live transfer to managerPhoneNumber
@@ -36,7 +38,7 @@ service menu, notification emails, Vapi/SIP IDs).
 |---|---|
 | `00-client-config.json` | Sub-workflow holding all per-client placeholders. Edit this per deployment. |
 | `01-inbound-ivr.json` | Twilio inbound webhook, Press 1/2 menu, routes to reception or Vapi. |
-| `02-vapi-tools.json` | Webhook Vapi calls mid-conversation for availability + booking. |
+| `02-vapi-tools.json` | Webhook Vapi calls mid-conversation for availability, booking, and quoting (`get_quote` - see "Quoting Engine" below). |
 | `03-post-call-actions.json` | Webhook Vapi calls after hangup; sends confirmation + notification emails. |
 | `vapi-assistant-config.json` | Reference payload for creating the Vapi assistant (system prompt, tools, analysis schema). Not an n8n file. |
 
@@ -57,6 +59,7 @@ real client instance.
 Credential wiring confirmed live (via the n8n API):
 - Google Calendar nodes in `2. Vapi Tools` ("Get Day's Events", "Book Slot") -> attached, per user confirmation.
 - Resend HTTP nodes in `3. Post-Call Actions` and the new SIP-failure notification node in `1. Inbound IVR` -> attached to `Header Auth account 2`.
+- `Log Call To CallLog` (`3. Post-Call Actions`) and `Log Quote To QuoteLog` (`2. Vapi Tools`) -> both attached to `Google Sheets account`.
 - Twilio and Vapi have no node in this build that calls out to their APIs (both call *into* n8n via webhook), so there is nothing to wire for them here - see the architecture diagram above.
 
 Still outstanding:
@@ -213,6 +216,162 @@ in-call transfer logic. What *is* verified without a real call: the
 post-call notification path (`03-post-call-actions.json` correctly
 extracts `transferredToManager`/`transferReason` and sends the business
 FYI email) - see "Simulated end-to-end test" below for the added case.
+
+## Quoting Engine (`get_quote`)
+
+A third mid-call custom tool in `02-vapi-tools.json`, alongside
+`check_availability`/`book_appointment`. Lets the assistant quote a price
+for a job the caller describes, using each client's own pricing rules
+(`quoteConfig` in `00-client-config.json`) - never an AI-invented number.
+
+**Input:** `{ jobDescription, isEmergency }`. `jobDescription` is the
+caller's own words for the problem; `isEmergency` is the assistant's own
+read of whether the caller said it's urgent/an emergency or it's clearly
+outside business hours - the system prompt in `vapi-assistant-config.json`
+tells it when to set this. This flag is the sole source of truth for
+whether the emergency multiplier applies (see "What changed during
+testing" below for why).
+
+**`quoteConfig` shape** (see `00-client-config.json`'s sticky note and the
+baked-in example - a fictional UK plumbing/heating business, "Ridgeline
+Plumbing & Heating"):
+```
+{
+  calloutFee, calloutFeeWaivedIfBooked, hourlyRateOutsideStandardJobs,
+  emergencyMultiplier, emergencyHours: { afterHour, beforeHour, weekendsIncluded },
+  jobTypes: [ { name, keywords: [...], priceMin, priceMax, materialsNote } ]
+}
+```
+`hourlyRateOutsideStandardJobs` is stored for the business's own reference
+only - the fallback logic below deliberately never uses it to invent a
+price for an unmatched job.
+
+**Matching logic (`Compute Quote`, a Code node):** scores every
+`jobTypes` entry by how many of its `keywords` appear as a substring of
+`jobDescription` (case-insensitive) and keeps the highest-scoring match.
+A description that matches none of them (score 0 across the board) is a
+deliberate non-match, not an error. This is a real limitation worth
+naming: it's substring/keyword matching, not NLP-based intent
+classification, so keyword lists need to include short, common words
+("tap", "drain", "boiler") and not just full phrases a caller is unlikely
+to say verbatim - the baked-in example was tuned this way after testing
+exposed the gap (see below).
+
+**Pricing:** on a match, `priceMin`/`priceMax` are multiplied by
+`emergencyMultiplier` if `isEmergencyApplied` is true, then rounded to the
+nearest pound. The callout fee and any `materialsNote` are stated
+separately, unmodified by the multiplier (realistic: out-of-hours loading
+applies to labour, not the flat callout or materials).
+
+**Fallback (no match):** returns a fixed "that needs a proper look, I can
+book you a free assessment visit and the engineer will confirm the price
+on-site" response, and never falls through to a guessed number - per the
+system prompt, the assistant then proceeds straight to `book_appointment`
+for an assessment visit instead of dead-ending the call.
+
+**Logging:** every quote given - matched or fallback - is appended to a
+`QuoteLog` tab in the client's `reportingSheetId` (same sheet as
+`CallLog`, different tab; see `quoteLogTabName` in Client Config), using
+the same raw Sheets `values:append` pattern as `03-post-call-actions`'s
+`Log Call To CallLog`. Chose this over any new logging mechanism because
+it's the same sheet/credential every other part of this project's
+reporting already reads, and it naturally becomes Monthly Reporting's
+future source for its currently-mocked `quotesGiven` stat without
+duplicating any logic. Wired as a parallel side-branch off a `Quote
+Result Built` NoOp convergence node (not inline before the tool responds)
+so the Sheets API's own response can never overwrite the quote text the
+caller is about to hear - see the sticky note on that section of
+`02-vapi-tools.json` for the exact bug class this avoids (the same one
+found and fixed in Monthly Reporting's `Build Client Result` node).
+
+### What changed during testing
+
+The first version also OR'd in an independent server-side check of the
+current time (in the client's timezone) against `quoteConfig.emergencyHours`,
+so a genuinely out-of-hours call would get the surcharge even if the
+assistant forgot to flag it. Live-testing this immediately surfaced a
+problem: at whatever time this workflow happens to be tested (in this
+case, ~2am UK time), the server-side check fired unconditionally,
+overriding an explicit `isEmergency: false` test input and making the
+standard-hours pricing path impossible to demonstrate. Dropped the
+server-side check entirely in favour of trusting only the caller/AI-
+supplied flag - simpler, matches the task's literal input contract
+(`jobDescription` + `isEmergency` as input, not "the workflow decides"),
+and testable on demand regardless of what time it happens to be.
+`emergencyHours` is still stored in config as the business's stated rule,
+for the assistant's own system-prompt reference - it's just not enforced
+server-side today.
+
+The first test of a "no known job type" case (a blocked-drain description
+phrased naturally: "our drain is completely blocked and water is backing
+up") unexpectedly fell back, because the keyword list only had full
+phrases like `"blocked drain"` and `"drain backing up"`, which don't
+appear as exact substrings in natural phrasing with different word order.
+Fixed by adding short, common single words ("drain", "blocked", "tap",
+"leak", "boiler", etc.) to each job type's keyword list alongside the
+fuller phrases - documented above as a real limitation of substring
+matching, not something fully solved.
+
+### Test results (simulated via n8n's live webhook, mock Quote Config)
+
+Temporarily pointed the live Client Config at a mock client ("Ridgeline
+Plumbing & Heating", `clientId: MOCK-RIDGELINE`) and a temporary real
+Google Sheet with a `QuoteLog` tab, deployed the updated `02-vapi-tools`
+and `00-client-config` workflows, and POSTed three simulated Vapi
+tool-call payloads directly at the live
+`https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools` webhook -
+not just the webhook's ack, verified via reading the QuoteLog rows back
+independently afterward.
+
+1. **Clear standard-hours match** - `jobDescription: "my kitchen tap is
+   leaking and it wont stop dripping"`, `isEmergency: false`. Matched
+   "Leaking tap" and returned: *"For leaking tap, our standard price is
+   £70 to £110. There's also a £45 callout fee, which is waived if you
+   book the appointment with us today. Would you like me to book that in
+   for you?"* No emergency wording, correct base range ✅
+
+2. **Clear match during emergency/out-of-hours conditions** -
+   `jobDescription: "our drain is completely blocked and water is
+   backing up into the kitchen, its urgent"`, `isEmergency: true`.
+   Matched "Blocked drain" (base £90-£150) and returned: *"For blocked
+   drain, our standard price is £135 to £225. There's also a £45 callout
+   fee, which is waived if you book the appointment with us today. As
+   this is outside our normal hours, an out-of-hours charge is already
+   included in that price. If the blockage needs drain rodding or
+   jetting beyond the first 10 metres, that's an extra £8 per metre.
+   Would you like me to book that in for you?"* Confirms the 1.5x
+   multiplier applied correctly (£90→£135, £150→£225) and the materials
+   note surfaced alongside it ✅
+
+3. **No matching job type** - `jobDescription: "I want a full bathroom
+   renovation with a new walk-in shower and underfloor heating"`,
+   `isEmergency: false`. No job type scored above zero, returned: *"That
+   sounds like it needs a proper look before I can give you an exact
+   price. I can book you in for a free assessment visit, and the
+   engineer will confirm the price on-site. Would you like me to book
+   that in for you?"* - no guessed price, routes toward booking an
+   assessment rather than dead-ending, exactly per requirement 4 ✅
+
+Read the `QuoteLog` sheet back independently after all three runs and
+confirmed each row logged correctly (job description, matched job type or
+blank, `wasFallback`, price range or blank, `isEmergencyApplied`) -
+including the two earlier attempts that surfaced the emergency-detection
+and keyword-matching issues above, which is exactly how those were
+caught. Cleaned up afterward: temporary QuoteLog sheet deleted, temporary
+verification workflows deleted, and the live Client Config reverted to
+its generic placeholder values (`clientId`, `businessName`,
+`reportingSheetId`) - `quoteConfig` and `quoteLogTabName` stay as the
+baked-in stock example/default, same treatment as `serviceMenu`.
+
+**Not tested / left as designed-but-unverified:**
+- The assistant actually deciding to call `get_quote` mid-conversation
+  and reading the result back naturally - that's real-call-only
+  verification, same limitation as everywhere else in this file marked
+  as such. The system prompt update in `vapi-assistant-config.json` is
+  untested against the real Vapi runtime.
+- Keyword-substring matching against a much larger, more varied set of
+  real caller phrasings than the handful tried here - the two-job real
+  test above is not exhaustive.
 
 ## Google Calendar OAuth troubleshooting (`Error 401: invalid_client`)
 

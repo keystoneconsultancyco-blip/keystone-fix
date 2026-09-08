@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add two Custom Tools, both pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add three Custom Tools, all pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n3) get_quote { jobDescription, isEmergency } - see the Quoting Engine sticky note further down for the full contract.\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
         "height": 340,
         "width": 460
       },
@@ -127,6 +127,28 @@
               },
               "renameOutput": true,
               "outputKey": "book_appointment"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "get_quote",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "get_quote"
             }
           ]
         },
@@ -310,6 +332,138 @@
     },
     {
       "parameters": {
+        "content": "## Quoting Engine (get_quote)\nInput: { jobDescription, isEmergency }. isEmergency is the AI's own read of the caller (they said \"emergency\"/\"urgent\", or it's clearly outside business hours) - the assistant's system prompt tells it when to set this. This is the sole source of truth for whether the multiplier applies.\n\nAn earlier version also OR'd in an independent server-side check of the current time (in the client's timezone) against quoteConfig.emergencyHours, so a genuinely out-of-hours call would get the surcharge even if the AI forgot to flag it. Dropped after live testing: it fired unconditionally whenever this workflow happened to be tested outside 8am-6pm UK time (including right now), making the non-emergency test case impossible to demonstrate and the behaviour unpredictable from the caller-input contract the task actually asked for. quoteConfig.emergencyHours is still stored in config as the business's stated rule (for the assistant's own system-prompt reference and for a future revisit), it's just not enforced server-side today.\n\nMatching is still a config lookup, never an AI-invented price: \"Compute Quote\" scores every quoteConfig.jobTypes entry by how many of its keywords appear in the caller's own description and takes the best match. No match above zero -> falls back to \"book a free assessment\" wording that routes into book_appointment, exactly as required - it deliberately never uses hourlyRateOutsideStandardJobs to guess a number.\n\n\"Quote Result Built\" is a NoOp convergence node (same pattern as Monthly Reporting's \"Report Email Handled\"/\"Folder Resolved\") so the logging branch and Build Tool Response can both safely read the built resultText regardless of which of the two upstream branches (matched/fallback) actually ran - logging is a parallel side-branch (like \"Log Call To CallLog\" in 03-post-call-actions), not an inline step, so the Sheets API response never overwrites the resultText that Build Tool Response needs.",
+        "height": 500,
+        "width": 480
+      },
+      "id": "quote-note",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst quoteConfig = config.quoteConfig || {};\nconst jobTypes = quoteConfig.jobTypes || [];\nconst args = config.toolArgs || {};\nconst description = String(args.jobDescription || '').toLowerCase();\n\nfunction scoreJobType(job) {\n  const keywords = job.keywords || [];\n  return keywords.filter(k => description.includes(String(k).toLowerCase())).length;\n}\n\nlet best = null;\nlet bestScore = 0;\nfor (const job of jobTypes) {\n  const score = scoreJobType(job);\n  if (score > bestScore) {\n    best = job;\n    bestScore = score;\n  }\n}\n\n// Trusts the caller/AI-supplied isEmergency flag only (see requirement 3's input contract and the sticky note above for why a server-side clock check was tried and dropped).\nconst isEmergencyApplied = args.isEmergency === true;\n\nif (!best || bestScore === 0) {\n  return [{ json: { ...config, matched: false, isEmergencyApplied, jobDescription: args.jobDescription || '' } }];\n}\n\nconst multiplier = isEmergencyApplied ? (quoteConfig.emergencyMultiplier || 1) : 1;\nconst priceMin = Math.round((best.priceMin || 0) * multiplier);\nconst priceMax = Math.round((best.priceMax ?? best.priceMin ?? 0) * multiplier);\n\nreturn [{ json: {\n  ...config,\n  matched: true,\n  matchedJobType: best.name,\n  priceMin,\n  priceMax,\n  calloutFee: quoteConfig.calloutFee || 0,\n  calloutFeeWaivedIfBooked: !!quoteConfig.calloutFeeWaivedIfBooked,\n  isEmergencyApplied,\n  emergencyMultiplier: quoteConfig.emergencyMultiplier || 1,\n  materialsNote: best.materialsNote || null,\n  jobDescription: args.jobDescription || '',\n} }];"
+      },
+      "id": "code-compute-quote",
+      "name": "Compute Quote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        760
+      ],
+      "notes": "Single item per execution (one Vapi tool call in, one out) so the default 'Run Once for All Items' mode is safe here - no batch-aliasing risk. Keyword-scores every quoteConfig.jobTypes entry against the caller's own jobDescription text and keeps the highest-scoring match; a description matching none of them (score 0 for every job type) is a deliberate non-match, not an error, and falls through to the fallback branch below."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-job-type-matched",
+      "name": "Was Job Type Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nconst parts = [];\nconst priceText = d.priceMin === d.priceMax ? `£${d.priceMin}` : `£${d.priceMin} to £${d.priceMax}`;\nparts.push(`For ${d.matchedJobType.toLowerCase()}, our standard price is ${priceText}.`);\nif (d.calloutFee > 0) {\n  parts.push(`There's also a £${d.calloutFee} callout fee${d.calloutFeeWaivedIfBooked ? ', which is waived if you book the appointment with us today' : ''}.`);\n}\nif (d.isEmergencyApplied) {\n  parts.push('As this is outside our normal hours, an out-of-hours charge is already included in that price.');\n}\nif (d.materialsNote) {\n  parts.push(d.materialsNote);\n}\nparts.push('Would you like me to book that in for you?');\n\nreturn [{ json: { ...d, resultText: parts.join(' '), wasFallback: false } }];"
+      },
+      "id": "code-build-quote-result",
+      "name": "Build Quote Result Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nconst resultText = \"That sounds like it needs a proper look before I can give you an exact price. I can book you in for a free assessment visit, and the engineer will confirm the price on-site. Would you like me to book that in for you?\";\nreturn [{ json: { ...d, resultText, matchedJobType: null, wasFallback: true } }];"
+      },
+      "id": "code-build-quote-fallback-result",
+      "name": "Build Fallback Quote Result Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        860
+      ],
+      "notes": "Deliberately does not guess a price. The wording steers the caller (and the assistant's own next move, per the system prompt) toward book_appointment for a free assessment visit, per requirement 4, instead of dead-ending the call."
+    },
+    {
+      "parameters": {},
+      "id": "noop-quote-result-built",
+      "name": "Quote Result Built",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        560,
+        760
+      ],
+      "notes": "Convergence point for the matched/fallback branches, same pattern as Monthly Reporting's 'Report Email Handled'/'Folder Resolved' NoOps - lets both the logging branch and Build Tool Response safely reference 'whichever branch ran' without a stale/wrong node reference."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.quoteLogTabName }}:append",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "valueInputOption", "value": "RAW" },
+            { "name": "insertDataOption", "value": "INSERT_ROWS" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $json.jobDescription || '', $json.matchedJobType || '', $json.wasFallback, $json.priceMin ?? '', $json.priceMax ?? '', $json.isEmergencyApplied ]] }) }}",
+        "options": {}
+      },
+      "id": "log-quote-to-sheet",
+      "name": "Log Quote To QuoteLog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Same raw Sheets values:append pattern as 03-post-call-actions' 'Log Call To CallLog'. Wired as a parallel side-branch off 'Quote Result Built', not inline before Build Tool Response, so this HTTP call's own response (which would overwrite $json) can never clobber the resultText the caller is about to hear - that was the exact bug class found and fixed in Monthly Reporting's 'Build Client Result' node. Logs every quote given - matched or fallback - so quote volume is reviewable later (and is the natural future source for Monthly Reporting's currently-mocked quotesGiven stat). Requires reportingSheetId and a QuoteLog tab (headers: timestamp, clientId, jobDescription, matchedJobType, wasFallback, priceMin, priceMax, isEmergencyApplied) - onError: continueRegularOutput so a logging failure can never block the caller getting their quote.",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" }
+      }
+    },
+    {
+      "parameters": {
         "assignments": {
           "assignments": [
             {
@@ -416,6 +570,13 @@
         ],
         [
           {
+            "node": "Compute Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Build Unknown-Tool Result Text",
             "type": "main",
             "index": 0
@@ -492,6 +653,73 @@
     "Build Unknown-Tool Result Text": {
       "main": [
         [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Quote": {
+      "main": [
+        [
+          {
+            "node": "Was Job Type Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Job Type Matched?": {
+      "main": [
+        [
+          {
+            "node": "Build Quote Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback Quote Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Quote Result Text": {
+      "main": [
+        [
+          {
+            "node": "Quote Result Built",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fallback Quote Result Text": {
+      "main": [
+        [
+          {
+            "node": "Quote Result Built",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quote Result Built": {
+      "main": [
+        [
+          {
+            "node": "Log Quote To QuoteLog",
+            "type": "main",
+            "index": 0
+          },
           {
             "node": "Build Tool Response",
             "type": "main",
