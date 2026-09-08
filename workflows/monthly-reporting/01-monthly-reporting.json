@@ -11,26 +11,46 @@
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-3000, -1000]
+      "position": [
+        -3000,
+        -1000
+      ]
     },
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "months", "monthsInterval": 1, "triggerAtDayOfMonth": 1, "triggerAtHour": 8 }] }
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
       },
       "id": "schedule-trigger",
       "name": "Schedule Trigger (1st of month 08:00)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-3000, -560],
+      "position": [
+        -3000,
+        -560
+      ],
       "notes": "Parameter-shape flag: the 'months'/triggerAtDayOfMonth field shape here is best-effort - only 'minutes' (Sheet Poller) and 'days'/triggerAtHour (Collections) have been proven live in this project so far. Verify the first scheduled run actually fires on the 1st."
     },
     {
-      "parameters": { "jsCode": "return [{ json: { testMode: false, mockClients: [] } }];" },
+      "parameters": {
+        "jsCode": "return [{ json: { testMode: false, mockClients: [] } }];"
+      },
       "id": "code-production-input",
       "name": "Production Run Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-2760, -560]
+      "position": [
+        -2760,
+        -560
+      ]
     },
     {
       "parameters": {},
@@ -38,7 +58,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-3000, -280]
+      "position": [
+        -3000,
+        -280
+      ]
     },
     {
       "parameters": {
@@ -48,7 +71,10 @@
       "name": "Sample Mock Clients (Manual Test)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-2760, -280],
+      "position": [
+        -2760,
+        -280
+      ],
       "notes": "Two fixtures: Ridgeline uses every service with plausible mixed numbers (proves the normal case and graceful non-zero wording); Bright Spark uses only Invoice Automation with zero activity (proves both the 'skip unused service section entirely' rule AND the 'graceful zero wording for a used-but-quiet service' rule in one pass)."
     },
     {
@@ -62,7 +88,10 @@
       "name": "Reporting Check Input",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-3000, 0],
+      "position": [
+        -3000,
+        0
+      ],
       "webhookId": "reporting-monthly-check"
     },
     {
@@ -73,7 +102,10 @@
       "name": "Extract Reporting Check Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-2760, 0]
+      "position": [
+        -2760,
+        0
+      ]
     },
     {
       "parameters": {},
@@ -81,27 +113,41 @@
       "name": "Reporting Run In",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [-2520, -280]
+      "position": [
+        -2520,
+        -280
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.item.json;\nconst now = new Date();\n\nconst firstOfThisMonthUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);\nconst firstOfLastMonth = new Date(firstOfThisMonthUTC);\nfirstOfLastMonth.setUTCMonth(firstOfLastMonth.getUTCMonth() - 1);\nconst lastOfLastMonth = new Date(firstOfThisMonthUTC - 86400000);\n\nfunction ymd(d) { return d.toISOString().slice(0, 10); }\n\nconst monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(firstOfLastMonth);\n\nreturn [{ json: {\n  ...input,\n  reportPeriodStart: ymd(firstOfLastMonth),\n  reportPeriodEnd: ymd(lastOfLastMonth),\n  monthLabel,\n} }];"
+        "jsCode": "const input = $input.item.json;\nconst now = new Date();\n\nconst firstOfThisMonthUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);\nconst firstOfLastMonth = new Date(firstOfThisMonthUTC);\nfirstOfLastMonth.setUTCMonth(firstOfLastMonth.getUTCMonth() - 1);\nconst lastOfLastMonth = new Date(firstOfThisMonthUTC - 86400000);\n\nfunction ymd(d) { return d.toISOString().slice(0, 10); }\n\nconst monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(firstOfLastMonth);\n\nreturn [{ json: {\n  ...input,\n  reportPeriodStart: ymd(firstOfLastMonth),\n  reportPeriodEnd: ymd(lastOfLastMonth),\n  monthLabel,\n  reportingRegistrySheetId: 'REPLACE_WITH_REPORTING_REGISTRY_SHEET_ID',\n  clientsTabName: 'Clients',\n  driveRootFolderId: 'REPLACE_WITH_DRIVE_ROOT_FOLDER_ID',\n  reportsFromEmail: 'reports@REPLACE_WITH_KEYSTONE_DOMAIN.com',\n} }];"
       },
       "id": "code-compute-period",
       "name": "Compute Report Period",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-2280, -280]
+      "position": [
+        -2280,
+        -280
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.testMode }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
           "combinator": "and"
@@ -112,17 +158,23 @@
       "name": "Is Test Mode?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-2040, -280]
+      "position": [
+        -2040,
+        -280
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.item.json;\nconst mockClients = input.mockClients || [];\n\nreturn mockClients.map(c => ({ json: {\n  clientId: c.clientId,\n  clientName: c.clientName,\n  contactEmail: c.contactEmail,\n  usesPhoneBooking: !!c.usesPhoneBooking,\n  usesInvoiceAutomation: !!c.usesInvoiceAutomation,\n  usesCollections: !!c.usesCollections,\n  usesQuoting: !!c.usesQuoting,\n  callsAnswered: Number(c.callsAnswered) || 0,\n  bookingsMade: Number(c.bookingsMade) || 0,\n  quotesGiven: Number(c.quotesGiven) || 0,\n  invoicesSent: Number(c.invoicesSent) || 0,\n  invoicesChased: Number(c.invoicesChased) || 0,\n  invoicesPaid: Number(c.invoicesPaid) || 0,\n  cashJobs: Number(c.cashJobs) || 0,\n  monthLabel: input.monthLabel,\n  reportPeriodStart: input.reportPeriodStart,\n  reportPeriodEnd: input.reportPeriodEnd,\n  testMode: true,\n} }));"
+        "jsCode": "const input = $input.item.json;\nconst mockClients = input.mockClients || [];\n\nreturn mockClients.map(c => ({ json: {\n  clientId: c.clientId,\n  clientName: c.clientName,\n  contactEmail: c.contactEmail,\n  usesPhoneBooking: !!c.usesPhoneBooking,\n  usesInvoiceAutomation: !!c.usesInvoiceAutomation,\n  usesCollections: !!c.usesCollections,\n  usesQuoting: !!c.usesQuoting,\n  callsAnswered: Number(c.callsAnswered) || 0,\n  bookingsMade: Number(c.bookingsMade) || 0,\n  quotesGiven: Number(c.quotesGiven) || 0,\n  invoicesSent: Number(c.invoicesSent) || 0,\n  invoicesChased: Number(c.invoicesChased) || 0,\n  invoicesPaid: Number(c.invoicesPaid) || 0,\n  cashJobs: Number(c.cashJobs) || 0,\n  monthLabel: input.monthLabel,\n  reportPeriodStart: input.reportPeriodStart,\n  reportPeriodEnd: input.reportPeriodEnd,\n  testMode: true,\n  driveRootFolderId: input.driveRootFolderId,\n  reportsFromEmail: input.reportsFromEmail,\n} }));"
       },
       "id": "code-build-mock-clients",
       "name": "Build Mock Clients",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1800, -420],
+      "position": [
+        -1800,
+        -420
+      ],
       "notes": "Mock clients already carry their own fully-formed stats (no Sheets/Xero calls at all in test mode) - explodes the mockClients array into one item per client, same shape the real path produces, so both paths share the same downstream report-formatting/email/Drive logic."
     },
     {
@@ -132,25 +184,43 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "xeroOAuth2Api",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/json" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "http-get-connections",
       "name": "Xero - Get Connections",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-1800, -140],
-      "credentials": { "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" } }
+      "position": [
+        -1800,
+        -140
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Compute Report Period').item.json;\nreturn [{ json: {\n  ...prior,\n  xeroTenantId: tenantId,\n  reportingRegistrySheetId: 'REPLACE_WITH_REPORTING_REGISTRY_SHEET_ID',\n  clientsTabName: 'Clients',\n  driveRootFolderId: 'REPLACE_WITH_DRIVE_ROOT_FOLDER_ID',\n  reportsFromEmail: 'reports@REPLACE_WITH_KEYSTONE_DOMAIN.com',\n} }];"
+        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Compute Report Period').item.json;\nreturn [{ json: {\n  ...prior,\n  xeroTenantId: tenantId,\n} }];"
       },
       "id": "code-extract-tenant",
       "name": "Extract Tenant ID + Reporting Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1560, -140],
+      "position": [
+        -1560,
+        -140
+      ],
       "notes": "Reporting Config values (reportingRegistrySheetId, driveRootFolderId, reportsFromEmail) are hardcoded here rather than pulled from a per-client Client Config sub-workflow, since this workflow serves ALL clients at once, not one - there's no single 'client' context to Execute Workflow against. Fill these in once, directly on the live deployment (same REPLACE_WITH_* convention as everywhere else)."
     },
     {
@@ -165,8 +235,16 @@
       "name": "Get Clients Registry",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-1320, -140],
-      "credentials": { "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" } }
+      "position": [
+        -1320,
+        -140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
     },
     {
       "parameters": {
@@ -176,7 +254,10 @@
       "name": "Parse Active Clients",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1080, -140],
+      "position": [
+        -1080,
+        -140
+      ],
       "notes": "Explodes the Clients Registry response into one item per ACTIVE client. jobsSheetId/reportingSheetId are read directly from the Registry (a synced copy of the values already in each client's own Invoice Automation / Phone Booking Client Config) rather than fetched live via Execute Workflow per client - see README for why (avoids two unproven n8n mechanisms: dynamic per-item sub-workflow IDs, and Execute Workflow's own per-item batch behavior, neither of which has been exercised anywhere in this project)."
     },
     {
@@ -188,8 +269,16 @@
       "name": "Compile Phone/Invoice Sheet Stats",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-840, -140],
-      "credentials": { "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME" } },
+      "position": [
+        -840,
+        -140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets - REPLACE_WITH_CLIENT_NAME"
+        }
+      },
       "notes": "Parameter-shape flag: this.helpers.httpRequestWithAuthentication('googleSheetsOAuth2Api', ...) called from inside a Code node - unlike every other Code-node HTTP call in this project (Sheet Poller, Collections), which called n8n's own unauthenticated webhook, this needs a REAL OAuth2-authenticated external call from within Code. Never done anywhere else in this project. Also requires this Code node to have a googleSheetsOAuth2Api credential attached (also new - Code nodes have never carried a credential before). Unverified until a live test proves both the credential-attachment and the helper method signature."
     },
     {
@@ -201,8 +290,16 @@
       "name": "Compile Collections Stats",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-600, -140],
-      "credentials": { "xeroOAuth2Api": { "id": "4p323BIqqLPBGyHS", "name": "Xero account" } },
+      "position": [
+        -600,
+        -140
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      },
       "notes": "Same this.helpers.httpRequestWithAuthentication uncertainty as the previous node, here with the xeroOAuth2Api credential type instead. One Xero call pair (Invoices by Reference + that invoice's History) per invoiced job last month - reuses the exact GET shapes already proven in 01-invoice-automation.json and 03-collections-reminders.json, just invoked from a Code node instead of a native httpRequest node."
     },
     {
@@ -214,18 +311,28 @@
       "name": "Format Client Report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-360, -280],
+      "position": [
+        -360,
+        -280
+      ],
       "notes": "Gating rule: a service flag OFF (usesPhoneBooking/usesInvoiceAutomation/usesCollections/usesQuoting) omits that whole section - never shown as zero. A service ON but genuinely zero this month still shows, worded gracefully (\"We didn't send any invoices this month.\") rather than a bare 0. cashJobs specifically is only mentioned when > 0 (a supplementary detail, not a headline metric) - the one deliberate exception to that rule, documented here since it's a judgement call."
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.contactEmail }}",
               "rightValue": "",
-              "operator": { "type": "string", "operation": "notEquals" }
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
             }
           ],
           "combinator": "and"
@@ -236,7 +343,10 @@
       "name": "Has Contact Email?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-120, -280]
+      "position": [
+        -120,
+        -280
+      ]
     },
     {
       "parameters": {
@@ -253,9 +363,17 @@
       "name": "Send Report Email (Resend)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [120, -380],
+      "position": [
+        120,
+        -380
+      ],
       "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential, same as every other Resend call in this project. reportsFromEmail is Keystone's own sending address (Reporting Config), not the client's confirmationFromEmail - this email is FROM Keystone TO the client, not the client's own outbound mail.",
-      "credentials": { "httpHeaderAuth": { "id": "YHY8OwE9VDR10sYO", "name": "Header Auth account 2" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YHY8OwE9VDR10sYO",
+          "name": "Header Auth account 2"
+        }
+      }
     },
     {
       "parameters": {
@@ -266,7 +384,10 @@
       "name": "Mark Email Sent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [360, -380],
+      "position": [
+        360,
+        -380
+      ],
       "notes": "References $('Has Contact Email?') for the report data, not $input - by this point $input.item.json is the Resend API response, not the client/report fields (they'd otherwise be silently wiped)."
     },
     {
@@ -278,7 +399,10 @@
       "name": "Mark Email Skipped",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [120, -140]
+      "position": [
+        120,
+        -140
+      ]
     },
     {
       "parameters": {},
@@ -286,7 +410,10 @@
       "name": "Report Email Handled",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [600, -280],
+      "position": [
+        600,
+        -280
+      ],
       "notes": "Convergence point for the email-sent/email-skipped branches, same purpose as 'Folder Resolved' below - lets 'Parse Folder Search Result' safely reference one guaranteed-to-have-run node (with emailSent already set) instead of 'Has Contact Email?' (which predates emailSent) or either branch-specific node directly (only one of which ran)."
     },
     {
@@ -298,8 +425,14 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "q", "value": "=name='{{ $json.clientName.replace(/'/g, \"\\\\'\") }}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{{ $json.driveRootFolderId }}' in parents" },
-            { "name": "fields", "value": "files(id,name)" }
+            {
+              "name": "q",
+              "value": "=name='{{ $json.clientName.replace(/'/g, \"\\\\'\") }}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{{ $json.driveRootFolderId }}' in parents"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
           ]
         },
         "options": {}
@@ -308,9 +441,17 @@
       "name": "Find Client Drive Folder",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, -280],
+      "position": [
+        600,
+        -280
+      ],
       "notes": "Parameter-shape flag: first Google Drive API call anywhere in this project (only Calendar and Sheets have been used from Google so far). Needs a 'Google Drive OAuth2 API' credential in n8n - per the brief this should already exist alongside the Sheets/Calendar credentials, but that's unverified; if it doesn't exist, this needs the SAME underlying Google OAuth client granted Drive scope, or a separate Drive-scoped credential connecting the same Google account (still 'reusing existing auth', not a new provider).",
-      "credentials": { "googleDriveOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID", "name": "Google Drive - REPLACE_WITH_CLIENT_NAME" } }
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
     },
     {
       "parameters": {
@@ -321,18 +462,28 @@
       "name": "Parse Folder Search Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [840, -280],
+      "position": [
+        840,
+        -280
+      ],
       "notes": "References $('Has Contact Email?') for the base client/report data - that's the last node before the email/Drive fan-out that still carried the full item unchanged (both the email-sent and email-skipped branches passed through it without altering the fields this needs)."
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.existingFolderId }}",
               "rightValue": "",
-              "operator": { "type": "string", "operation": "notEquals" }
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
             }
           ],
           "combinator": "and"
@@ -343,7 +494,10 @@
       "name": "Folder Already Exists?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1080, -280]
+      "position": [
+        1080,
+        -280
+      ]
     },
     {
       "parameters": {
@@ -360,8 +514,16 @@
       "name": "Create Client Drive Folder",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1320, -140],
-      "credentials": { "googleDriveOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID", "name": "Google Drive - REPLACE_WITH_CLIENT_NAME" } }
+      "position": [
+        1320,
+        -140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
     },
     {
       "parameters": {
@@ -372,7 +534,10 @@
       "name": "Extract New Folder ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1560, -140]
+      "position": [
+        1560,
+        -140
+      ]
     },
     {
       "parameters": {
@@ -383,7 +548,10 @@
       "name": "Use Existing Folder ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, -380]
+      "position": [
+        1320,
+        -380
+      ]
     },
     {
       "parameters": {},
@@ -391,7 +559,10 @@
       "name": "Folder Resolved",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1800, -280],
+      "position": [
+        1800,
+        -280
+      ],
       "notes": "Convergence point for the two folder-resolution branches (existing vs. just-created), same pattern as 'Contact Resolved' in 01-invoice-automation.json - lets downstream nodes safely reference $('Folder Resolved') regardless of which branch actually ran, instead of referencing one specific branch's node that might not have executed."
     },
     {
@@ -409,9 +580,17 @@
       "name": "Create Report File (metadata)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2040, -280],
+      "position": [
+        2040,
+        -280
+      ],
       "notes": "Two-step Drive upload (create metadata, then PATCH content below) rather than a single multipart/related upload call - n8n's httpRequest node doesn't have a built-in body type for Drive's specific multipart/related format, so this avoids hand-building that encoding.",
-      "credentials": { "googleDriveOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID", "name": "Google Drive - REPLACE_WITH_CLIENT_NAME" } }
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
     },
     {
       "parameters": {
@@ -422,7 +601,10 @@
       "name": "Parse New File ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2280, -280],
+      "position": [
+        2280,
+        -280
+      ],
       "notes": "References $('Folder Resolved') - the shared convergence point - rather than either branch-specific node directly, since only one of those two ever actually runs per item."
     },
     {
@@ -432,82 +614,428 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "googleDriveOAuth2Api",
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "uploadType", "value": "media" }] },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "uploadType",
+              "value": "media"
+            }
+          ]
+        },
         "sendBody": true,
-        "specifyBody": "raw",
         "rawContentType": "text/plain",
         "body": "={{ `=== INTERNAL REFERENCE (not sent to client) ===\\nClient: ${$json.clientName} (${$json.clientId})\\nPeriod: ${$json.monthLabel} (${$json.reportPeriodStart} to ${$json.reportPeriodEnd})\\nCalls answered: ${$json.callsAnswered} | Bookings made: ${$json.bookingsMade} | Quotes given: ${$json.quotesGiven}\\nInvoices sent: ${$json.invoicesSent} | Chased: ${$json.invoicesChased} | Paid via chase: ${$json.invoicesPaid} | Cash jobs: ${$json.cashJobs}\\nReport emailed to: ${$json.contactEmail || '(none on file)'} | Email sent: ${$json.emailSent}\\n\\n=== CLIENT-FACING REPORT (as sent) ===\\nSubject: ${$json.reportSubject}\\n\\n${$json.reportBodyText}` }}",
-        "options": {}
+        "options": {},
+        "contentType": "raw"
       },
       "id": "http-upload-report-content",
       "name": "Upload Report Content",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2280, -280],
-      "notes": "Parameter-shape flag: 'specifyBody: raw' + 'rawContentType' is best-effort recollection of the httpRequest node's raw-body option names - unverified, this exact combination hasn't been used anywhere else in this project (every prior httpRequest body has been specifyBody: json).",
-      "credentials": { "googleDriveOAuth2Api": { "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID", "name": "Google Drive - REPLACE_WITH_CLIENT_NAME" } }
+      "position": [
+        2280,
+        -280
+      ],
+      "notes": "Raw-body upload confirmed live: the selector key is 'contentType: \"raw\"' (not 'specifyBody', which is only for the json/other body modes used elsewhere in this project) - 'rawContentType' + 'body' work as expected alongside it. Found via a live test after the first deploy silently uploaded a zero-byte file (no error, wrong parameter shape) - see README test results.",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive - REPLACE_WITH_CLIENT_NAME"
+        }
+      }
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const d = $input.item.json;\nreturn { json: {\n  clientId: d.clientId,\n  clientName: d.clientName,\n  monthLabel: d.monthLabel,\n  usesPhoneBooking: d.usesPhoneBooking,\n  usesInvoiceAutomation: d.usesInvoiceAutomation,\n  usesCollections: d.usesCollections,\n  usesQuoting: d.usesQuoting,\n  callsAnswered: d.callsAnswered,\n  bookingsMade: d.bookingsMade,\n  quotesGiven: d.quotesGiven,\n  invoicesSent: d.invoicesSent,\n  invoicesChased: d.invoicesChased,\n  invoicesPaid: d.invoicesPaid,\n  cashJobs: d.cashJobs,\n  reportSubject: d.reportSubject,\n  reportBodyText: d.reportBodyText,\n  emailSent: !!d.emailSent,\n  emailSkippedReason: d.emailSkippedReason || null,\n  archivedFolderId: d.resolvedFolderId,\n  archivedFileId: d.reportFileId,\n  testMode: !!d.testMode,\n} };"
+        "jsCode": "const d = $('Parse New File ID').item.json;\nreturn { json: {\n  clientId: d.clientId,\n  clientName: d.clientName,\n  monthLabel: d.monthLabel,\n  usesPhoneBooking: d.usesPhoneBooking,\n  usesInvoiceAutomation: d.usesInvoiceAutomation,\n  usesCollections: d.usesCollections,\n  usesQuoting: d.usesQuoting,\n  callsAnswered: d.callsAnswered,\n  bookingsMade: d.bookingsMade,\n  quotesGiven: d.quotesGiven,\n  invoicesSent: d.invoicesSent,\n  invoicesChased: d.invoicesChased,\n  invoicesPaid: d.invoicesPaid,\n  cashJobs: d.cashJobs,\n  reportSubject: d.reportSubject,\n  reportBodyText: d.reportBodyText,\n  emailSent: !!d.emailSent,\n  emailSkippedReason: d.emailSkippedReason || null,\n  archivedFolderId: d.resolvedFolderId,\n  archivedFileId: d.reportFileId,\n  testMode: !!d.testMode,\n} };"
       },
       "id": "code-build-client-result",
       "name": "Build Client Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2520, -280]
+      "position": [
+        2520,
+        -280
+      ]
     }
   ],
   "connections": {
-    "Schedule Trigger (1st of month 08:00)": { "main": [[{ "node": "Production Run Input", "type": "main", "index": 0 }]] },
-    "Production Run Input": { "main": [[{ "node": "Reporting Run In", "type": "main", "index": 0 }]] },
-    "Manual Trigger": { "main": [[{ "node": "Sample Mock Clients (Manual Test)", "type": "main", "index": 0 }]] },
-    "Sample Mock Clients (Manual Test)": { "main": [[{ "node": "Reporting Run In", "type": "main", "index": 0 }]] },
-    "Reporting Check Input": { "main": [[{ "node": "Extract Reporting Check Input", "type": "main", "index": 0 }]] },
-    "Extract Reporting Check Input": { "main": [[{ "node": "Reporting Run In", "type": "main", "index": 0 }]] },
-    "Reporting Run In": { "main": [[{ "node": "Compute Report Period", "type": "main", "index": 0 }]] },
-    "Compute Report Period": { "main": [[{ "node": "Is Test Mode?", "type": "main", "index": 0 }]] },
+    "Schedule Trigger (1st of month 08:00)": {
+      "main": [
+        [
+          {
+            "node": "Production Run Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Production Run Input": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Sample Mock Clients (Manual Test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample Mock Clients (Manual Test)": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporting Check Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Reporting Check Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Reporting Check Input": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporting Run In": {
+      "main": [
+        [
+          {
+            "node": "Compute Report Period",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Report Period": {
+      "main": [
+        [
+          {
+            "node": "Is Test Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Is Test Mode?": {
       "main": [
-        [{ "node": "Build Mock Clients", "type": "main", "index": 0 }],
-        [{ "node": "Xero - Get Connections", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Build Mock Clients",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Xero - Get Connections",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Build Mock Clients": { "main": [[{ "node": "Format Client Report", "type": "main", "index": 0 }]] },
-    "Xero - Get Connections": { "main": [[{ "node": "Extract Tenant ID + Reporting Config", "type": "main", "index": 0 }]] },
-    "Extract Tenant ID + Reporting Config": { "main": [[{ "node": "Get Clients Registry", "type": "main", "index": 0 }]] },
-    "Get Clients Registry": { "main": [[{ "node": "Parse Active Clients", "type": "main", "index": 0 }]] },
-    "Parse Active Clients": { "main": [[{ "node": "Compile Phone/Invoice Sheet Stats", "type": "main", "index": 0 }]] },
-    "Compile Phone/Invoice Sheet Stats": { "main": [[{ "node": "Compile Collections Stats", "type": "main", "index": 0 }]] },
-    "Compile Collections Stats": { "main": [[{ "node": "Format Client Report", "type": "main", "index": 0 }]] },
-    "Format Client Report": { "main": [[{ "node": "Has Contact Email?", "type": "main", "index": 0 }]] },
+    "Build Mock Clients": {
+      "main": [
+        [
+          {
+            "node": "Format Client Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Get Connections": {
+      "main": [
+        [
+          {
+            "node": "Extract Tenant ID + Reporting Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tenant ID + Reporting Config": {
+      "main": [
+        [
+          {
+            "node": "Get Clients Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Clients Registry": {
+      "main": [
+        [
+          {
+            "node": "Parse Active Clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Active Clients": {
+      "main": [
+        [
+          {
+            "node": "Compile Phone/Invoice Sheet Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Phone/Invoice Sheet Stats": {
+      "main": [
+        [
+          {
+            "node": "Compile Collections Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Collections Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Client Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Client Report": {
+      "main": [
+        [
+          {
+            "node": "Has Contact Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Has Contact Email?": {
       "main": [
-        [{ "node": "Send Report Email (Resend)", "type": "main", "index": 0 }],
-        [{ "node": "Mark Email Skipped", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Send Report Email (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Email Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Send Report Email (Resend)": { "main": [[{ "node": "Mark Email Sent", "type": "main", "index": 0 }]] },
-    "Mark Email Sent": { "main": [[{ "node": "Report Email Handled", "type": "main", "index": 0 }]] },
-    "Mark Email Skipped": { "main": [[{ "node": "Report Email Handled", "type": "main", "index": 0 }]] },
-    "Report Email Handled": { "main": [[{ "node": "Find Client Drive Folder", "type": "main", "index": 0 }]] },
-    "Find Client Drive Folder": { "main": [[{ "node": "Parse Folder Search Result", "type": "main", "index": 0 }]] },
-    "Parse Folder Search Result": { "main": [[{ "node": "Folder Already Exists?", "type": "main", "index": 0 }]] },
+    "Send Report Email (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Mark Email Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Email Sent": {
+      "main": [
+        [
+          {
+            "node": "Report Email Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Email Skipped": {
+      "main": [
+        [
+          {
+            "node": "Report Email Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Email Handled": {
+      "main": [
+        [
+          {
+            "node": "Find Client Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Client Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Parse Folder Search Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Folder Search Result": {
+      "main": [
+        [
+          {
+            "node": "Folder Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Folder Already Exists?": {
       "main": [
-        [{ "node": "Use Existing Folder ID", "type": "main", "index": 0 }],
-        [{ "node": "Create Client Drive Folder", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Use Existing Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Client Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Create Client Drive Folder": { "main": [[{ "node": "Extract New Folder ID", "type": "main", "index": 0 }]] },
-    "Use Existing Folder ID": { "main": [[{ "node": "Folder Resolved", "type": "main", "index": 0 }]] },
-    "Extract New Folder ID": { "main": [[{ "node": "Folder Resolved", "type": "main", "index": 0 }]] },
-    "Folder Resolved": { "main": [[{ "node": "Create Report File (metadata)", "type": "main", "index": 0 }]] },
-    "Create Report File (metadata)": { "main": [[{ "node": "Parse New File ID", "type": "main", "index": 0 }]] },
-    "Parse New File ID": { "main": [[{ "node": "Upload Report Content", "type": "main", "index": 0 }]] },
-    "Upload Report Content": { "main": [[{ "node": "Build Client Result", "type": "main", "index": 0 }]] }
+    "Create Client Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Extract New Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Folder ID": {
+      "main": [
+        [
+          {
+            "node": "Folder Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract New Folder ID": {
+      "main": [
+        [
+          {
+            "node": "Folder Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Resolved": {
+      "main": [
+        [
+          {
+            "node": "Create Report File (metadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Report File (metadata)": {
+      "main": [
+        [
+          {
+            "node": "Parse New File ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse New File ID": {
+      "main": [
+        [
+          {
+            "node": "Upload Report Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Report Content": {
+      "main": [
+        [
+          {
+            "node": "Build Client Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "pinData": {},
-  "meta": { "templateId": "keystone-monthly-reporting" }
+  "meta": {
+    "templateId": "keystone-monthly-reporting"
+  }
 }

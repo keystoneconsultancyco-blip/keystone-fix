@@ -390,6 +390,29 @@ is what's left.
    real-call-only verification, same limitation as the SIP handoff itself
    (see "Uncertainty transfer" above).
 
+6. **CallLog write (prerequisite for the Monthly Reporting workflow).**
+   `03-post-call-actions` now always writes a row to each client's
+   `CallLogTabName` sheet (`clientId`'s `reportingSheetId`) via a new
+   "Log Call To CallLog" node, in parallel with the booking/transfer
+   branches, so Monthly Reporting can later compile calls-answered and
+   bookings-made stats without duplicating this workflow's logic. Smoke
+   tested live: created a temporary real Google Sheet with a `CallLog` tab
+   (`timestamp, clientId, callerNumber, bookingMade, transferredToManager,
+   service, bookingDate, bookingTime`), pointed a temporary Client Config's
+   `reportingSheetId` at it, deployed this workflow, and fired a simulated
+   end-of-call-report webhook. Verified via a follow-up read (not just the
+   append call's own response) that exactly the expected row was written:
+   `["<timestamp>", "REPLACE_WITH_CLIENT_ID", "+15559990099", "TRUE",
+   "FALSE", "General Consultation", "2026-09-08", "11:00"]` ✅. The
+   Sheets `values:append` verb (`POST .../values/{tab}:append
+   ?valueInputOption=RAW&insertDataOption=INSERT_ROWS`) worked on the
+   first try with no parameter-shape surprises. Cleaned up afterward: test
+   row cleared, temporary sheet and workflows deleted, and this
+   deployment's live Client Config `reportingSheetId` reverted back to a
+   blank placeholder so it stays "not yet a real client instance" as
+   documented above - the "Log Call To CallLog" node itself remains
+   deployed and live for future real use.
+
 ## Test call checklist (do in order)
 
 1. Call the Twilio number. Confirm the greeting plays and Gather waits for
