@@ -34,13 +34,37 @@ html { background: var(--ink); }
 
 .cinematic-spot {
   position: absolute;
-  top: -35%;
+  top: -8%;
   left: 50%;
   width: 1700px;
   height: 1700px;
-  transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(201, 169, 97, 0.1) 0%, rgba(201, 169, 97, 0.035) 35%, rgba(0, 0, 0, 0) 65%);
+  margin-left: -850px;
+  background: radial-gradient(circle, rgba(201, 169, 97, 0.16) 0%, rgba(201, 169, 97, 0.05) 35%, rgba(0, 0, 0, 0) 65%);
   filter: blur(20px);
+  animation: spotBreathe 16s ease-in-out infinite;
+  transform-origin: 50% 30%;
+}
+
+.cinematic-spot::after {
+  content: "";
+  position: absolute;
+  bottom: -10%;
+  left: 50%;
+  width: 1400px;
+  height: 1400px;
+  margin-left: -700px;
+  background: radial-gradient(circle, rgba(232, 230, 224, 0.05) 0%, rgba(232, 230, 224, 0) 60%);
+  animation: spotDrift 22s ease-in-out infinite;
+}
+
+@keyframes spotBreathe {
+  0%, 100% { transform: scale(1) translate(0, 0); opacity: 0.85; }
+  50% { transform: scale(1.12) translate(2%, 3%); opacity: 1; }
+}
+
+@keyframes spotDrift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-4%, -6%); }
 }
 
 .cinematic-vignette {
@@ -56,8 +80,25 @@ html { background: var(--ink); }
   height: 140%;
   background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxODAnIGhlaWdodD0nMTgwJz48ZmlsdGVyIGlkPSduJz48ZmVUdXJidWxlbmNlIHR5cGU9J2ZyYWN0YWxOb2lzZScgYmFzZUZyZXF1ZW5jeT0nMC44NScgbnVtT2N0YXZlcz0nMicgc3RpdGNoVGlsZXM9J3N0aXRjaCcvPjxmZUNvbG9yTWF0cml4IHR5cGU9J3NhdHVyYXRlJyB2YWx1ZXM9JzAnLz48L2ZpbHRlcj48cmVjdCB3aWR0aD0nMTAwJScgaGVpZ2h0PScxMDAlJyBmaWx0ZXI9J3VybCgjbiknLz48L3N2Zz4K");
   background-repeat: repeat;
-  opacity: 0.035;
+  opacity: 0.05;
   mix-blend-mode: overlay;
+  animation: grainFlicker 0.6s steps(4) infinite;
+}
+
+@keyframes grainFlicker {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-2%, 1%); }
+  50% { transform: translate(1%, -2%); }
+  75% { transform: translate(-1%, 2%); }
+  100% { transform: translate(0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cinematic-spot,
+  .cinematic-spot::after,
+  .cinematic-grain {
+    animation: none !important;
+  }
 }
 
 /* ---------- Ambient background ---------- */
@@ -114,7 +155,6 @@ html { background: var(--ink); }
 
 body {
   margin: 0;
-  background: var(--ink);
   color: var(--bone);
   font-family: var(--font-sans);
   font-size: 16px;
