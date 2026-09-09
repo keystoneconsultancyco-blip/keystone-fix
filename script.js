@@ -100,49 +100,52 @@
     if (!section) return;
 
     var rail = section.querySelector(".rail");
-    var nodes = section.querySelectorAll(".rail-node");
-    if (!rail || !nodes.length) return;
+    var fill = section.querySelector(".rail-fill");
+    var pulse = section.querySelector(".rail-pulse");
+    var nodes = Array.prototype.slice.call(section.querySelectorAll(".rail-node"));
+    if (!rail || !fill || !nodes.length) return;
 
-    function play() {
-      if (reduceMotion) {
-        rail.classList.add("is-armed");
-        nodes.forEach(function (n) { n.classList.add("is-locked"); });
-        return;
-      }
-
-      rail.classList.add("is-armed");
-
-      window.setTimeout(function () {
-        nodes.forEach(function (n, i) {
-          window.setTimeout(function () {
-            n.classList.add("is-locked");
-          }, i * 130);
-        });
-
-        window.setTimeout(function () {
-          rail.classList.add("is-connected");
-        }, nodes.length * 130 + 500);
-      }, 500);
-    }
-
-    if (!("IntersectionObserver" in window)) {
-      play();
+    if (reduceMotion) {
+      fill.style.width = "100%";
+      nodes.forEach(function (n) { n.classList.add("is-locked"); });
       return;
     }
 
-    var observer = new IntersectionObserver(
-      function (entries) {
-        entries.forEach(function (entry) {
-          if (entry.isIntersecting) {
-            play();
-            observer.disconnect();
-          }
-        });
-      },
-      { threshold: 0.4 }
-    );
+    var n = nodes.length;
+    var ticking = false;
 
-    observer.observe(section);
+    function update() {
+      ticking = false;
+      var rect = section.getBoundingClientRect();
+      var vh = window.innerHeight;
+      var total = rect.height + vh;
+      var scrolled = vh - rect.top;
+      var progress = Math.min(Math.max(scrolled / total, 0), 1);
+
+      fill.style.width = (progress * 100).toFixed(1) + "%";
+      pulse.style.left = (progress * 100).toFixed(1) + "%";
+      rail.classList.toggle("is-progressing", progress > 0.01 && progress < 0.995);
+
+      nodes.forEach(function (node, i) {
+        var start = i / n;
+        var end = (i + 0.65) / n;
+        var local = (progress - start) / (end - start);
+        local = Math.min(Math.max(local, 0), 1);
+        node.style.setProperty("--lock", local.toFixed(3));
+        node.classList.toggle("is-locked", local > 0.5);
+      });
+    }
+
+    function onScroll() {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+    }
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    update();
   }
 
   function init() {
