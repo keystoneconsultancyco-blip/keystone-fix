@@ -148,9 +148,50 @@
     update();
   }
 
+  function initHeroOrbit() {
+    var host = document.querySelector(".hero-orbit");
+    var stage = document.querySelector(".orbit-stage");
+    if (!host || !stage || reduceMotion) return;
+
+    host.addEventListener("pointermove", function (e) {
+      var r = host.getBoundingClientRect();
+      var px = (e.clientX - r.left) / r.width - 0.5;
+      var py = (e.clientY - r.top) / r.height - 0.5;
+      stage.style.setProperty("--tx", (py * -16 - 10) + "deg");
+      stage.style.setProperty("--ty", (px * 22) + "deg");
+    });
+
+    host.addEventListener("pointerleave", function () {
+      stage.style.setProperty("--tx", "-10deg");
+      stage.style.setProperty("--ty", "0deg");
+    });
+  }
+
+  function initTiltCards() {
+    if (reduceMotion) return;
+    var cards = document.querySelectorAll(".pillar");
+    cards.forEach(function (card) {
+      card.addEventListener("pointermove", function (e) {
+        var r = card.getBoundingClientRect();
+        var px = (e.clientX - r.left) / r.width;
+        var py = (e.clientY - r.top) / r.height;
+        card.style.setProperty("--mx", (px * 100) + "%");
+        card.style.setProperty("--my", (py * 100) + "%");
+        card.style.setProperty("--rx", ((py - 0.5) * -8) + "deg");
+        card.style.setProperty("--ry", ((px - 0.5) * 8) + "deg");
+      });
+      card.addEventListener("pointerleave", function () {
+        card.style.setProperty("--rx", "0deg");
+        card.style.setProperty("--ry", "0deg");
+      });
+    });
+  }
+
   function init() {
     runIntro(runCapture);
     runAssembly();
+    initHeroOrbit();
+    initTiltCards();
   }
 
   if (document.readyState === "loading") {
