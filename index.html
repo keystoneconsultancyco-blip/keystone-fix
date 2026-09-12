@@ -20,7 +20,14 @@
 <body>
 
   <div class="intro-overlay" aria-hidden="true">
-    <img class="intro-logo" src="assets/keystone-logo.jpg" alt="" width="370" height="295" />
+    <div class="intro-logo-stage">
+      <svg viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <polyline class="ambient-comet" points="20,410 120,370 200,380 280,300 360,320 440,220 520,240 580,120" style="stroke-width:4; stroke-dasharray:130 900;">
+          <animate attributeName="stroke-dashoffset" values="1030;0" dur="2.6s" fill="freeze" />
+        </polyline>
+      </svg>
+      <img class="intro-logo" src="assets/keystone-logo.jpg" alt="" width="370" height="295" />
+    </div>
   </div>
 
   <div class="cinematic" aria-hidden="true">
@@ -73,7 +80,26 @@
 
   <main>
     <section class="hero">
-      <canvas id="growth-canvas" aria-hidden="true"></canvas>
+      <div class="hero-chart" aria-hidden="true">
+        <svg viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="heroGrowthGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#8A7440" stop-opacity="0" />
+              <stop offset="45%" stop-color="#C9A961" stop-opacity="0.9" />
+              <stop offset="100%" stop-color="#F6E9C4" stop-opacity="1" />
+            </linearGradient>
+            <linearGradient id="heroGrowthFill" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#C9A961" stop-opacity="0.5" />
+              <stop offset="100%" stop-color="#C9A961" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon class="hero-chart-fill" fill="url(#heroGrowthFill)" points="300,700 300,560 460,500 610,540 760,400 910,430 1060,260 1220,300 1220,700" />
+          <polyline class="hero-chart-line" points="300,560 460,500 610,540 760,400 910,430 1060,260 1220,300" />
+          <polyline class="hero-chart-comet" points="300,560 460,500 610,540 760,400 910,430 1060,260 1220,300" style="stroke-dasharray:220 2400;">
+            <animate attributeName="stroke-dashoffset" values="2620;0" dur="10s" repeatCount="indefinite" />
+          </polyline>
+        </svg>
+      </div>
       <div class="hero-scrim" aria-hidden="true"></div>
       <div class="wrap hero-stack">
         <p class="eyebrow">Software systems engineered for growth</p>
@@ -134,7 +160,7 @@
       <div class="wrap cta-band-inner">
         <h2>Begin the Conversation</h2>
         <div class="cta-band-actions">
-          <a class="cta-email" href="mailto:hello@keystoneops.co.uk">hello@keystoneops.co.uk</a>
+          <a class="cta-email" href="mailto:keystoneconsultancy.co@gmail.com">keystoneconsultancy.co@gmail.com</a>
           <span class="cta-note">For a complete overview of our work, visit our <a href="services.html" style="color: var(--bone); border-bottom: 1px solid var(--hairline);">Services</a> page.</span>
         </div>
       </div>
@@ -151,47 +177,11 @@
       <div class="footer-links">
         <a href="index.html">Home</a>
         <a href="services.html">Services</a>
-        <a href="mailto:hello@keystoneops.co.uk">Contact</a>
+        <a href="mailto:keystoneconsultancy.co@gmail.com">Contact</a>
       </div>
     </div>
   </footer>
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "./vendor/three/build/three.module.js",
-      "three/addons/": "./vendor/three/"
-    }
-  }
-  </script>
-  <script>
-    (function () {
-      "use strict";
-      var canvas = document.getElementById("growth-canvas");
-      if (!canvas) return;
-
-      var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      var isNarrow = window.matchMedia("(max-width: 900px)").matches;
-
-      function hasWebGL() {
-        try {
-          var c = document.createElement("canvas");
-          return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
-        } catch (e) {
-          return false;
-        }
-      }
-
-      if (reduceMotion || isNarrow || !hasWebGL()) {
-        if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-        return;
-      }
-
-      import("./growth-scene.js").catch(function () {
-        if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-      });
-    })();
-  </script>
   <script src="script.js"></script>
 </body>
 </html>

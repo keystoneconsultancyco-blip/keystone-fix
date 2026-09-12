@@ -17,7 +17,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="page-services">
 
   <div class="cinematic" aria-hidden="true">
     <div class="cinematic-aurora">
@@ -103,6 +103,42 @@
               <p>For example: 18% of inbound calls go unanswered after 5pm; the average invoice remains unpaid for 34 days; quotes take 3.2 days to reach the customer. The result is a prioritised, evidence-based plan of action, ranked by financial impact.</p>
             </div>
           </div>
+
+          <div class="svc-quote" data-quote="audit">
+            <button type="button" class="quote-toggle" aria-expanded="false">
+              <span>Check if the Audit is a fit for your business</span>
+              <span class="quote-toggle-arrow" aria-hidden="true"></span>
+            </button>
+            <div class="quote-panel-wrap">
+              <div class="quote-panel-inner">
+                <div class="quote-panel">
+                  <div class="quote-question">
+                    <span class="quote-question-label">What's costing you the most time or money right now?</span>
+                    <div class="quote-options" data-group="pain">
+                      <button type="button" class="qopt" data-value="calls">Missed calls</button>
+                      <button type="button" class="qopt" data-value="invoices">Unpaid invoices</button>
+                      <button type="button" class="qopt" data-value="admin">Too much admin</button>
+                      <button type="button" class="qopt" data-value="unsure">Not sure</button>
+                    </div>
+                  </div>
+                  <div class="quote-question">
+                    <span class="quote-question-label">Roughly how many staff do you have?</span>
+                    <div class="quote-options" data-group="scale">
+                      <button type="button" class="qopt" data-value="justme">Just me</button>
+                      <button type="button" class="qopt" data-value="2-10">2-10</button>
+                      <button type="button" class="qopt" data-value="11-50">11-50</button>
+                      <button type="button" class="qopt" data-value="50plus">50+</button>
+                    </div>
+                  </div>
+                  <div class="quote-submit-row">
+                    <button type="button" class="quote-submit" data-quote-submit>Check if we're a fit</button>
+                    <span class="quote-hint" data-quote-hint hidden>Please answer both questions.</span>
+                  </div>
+                  <div class="quote-result" data-quote-result></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </article>
 
         <article class="service-row">
@@ -127,6 +163,53 @@
               <span class="col-label">WHAT CHANGES</span>
               <span class="stat">100% of calls answered</span>
               <p>Invoices are issued the same day, rather than five to seven days later. Quotes are delivered within the hour, rather than two to three days later. On average, 10 to 15 administrative hours are returned to the business each week.</p>
+            </div>
+          </div>
+
+          <div class="svc-quote" data-quote="setup">
+            <button type="button" class="quote-toggle" aria-expanded="false">
+              <span>Get an instant estimate for your build</span>
+              <span class="quote-toggle-arrow" aria-hidden="true"></span>
+            </button>
+            <div class="quote-panel-wrap">
+              <div class="quote-panel-inner">
+                <div class="quote-panel">
+                  <div class="quote-question">
+                    <span class="quote-question-label">Which systems are you interested in?</span>
+                    <div class="quote-options" data-group="systems" data-multi="true">
+                      <button type="button" class="qopt" data-value="invoicing">Invoicing</button>
+                      <button type="button" class="qopt" data-value="collections">Collections</button>
+                      <button type="button" class="qopt" data-value="phone">Phone Booking</button>
+                      <button type="button" class="qopt" data-value="quoting">Quoting</button>
+                      <button type="button" class="qopt" data-value="reporting">Reporting</button>
+                    </div>
+                  </div>
+                  <div class="quote-question">
+                    <span class="quote-question-label">Roughly how many staff do you have?</span>
+                    <div class="quote-options" data-group="scale">
+                      <button type="button" class="qopt" data-value="justme">Just me</button>
+                      <button type="button" class="qopt" data-value="2-10">2-10</button>
+                      <button type="button" class="qopt" data-value="11-50">11-50</button>
+                      <button type="button" class="qopt" data-value="50plus">50+</button>
+                    </div>
+                  </div>
+                  <div class="quote-question">
+                    <span class="quote-question-label">What's your approximate annual revenue?</span>
+                    <div class="quote-options" data-group="revenue">
+                      <button type="button" class="qopt" data-value="under500k">Under £500K</button>
+                      <button type="button" class="qopt" data-value="500k-2m">£500K-£2M</button>
+                      <button type="button" class="qopt" data-value="2m-5m">£2M-£5M</button>
+                      <button type="button" class="qopt" data-value="5m-10m">£5M-£10M</button>
+                      <button type="button" class="qopt" data-value="10mplus">£10M+</button>
+                    </div>
+                  </div>
+                  <div class="quote-submit-row">
+                    <button type="button" class="quote-submit" data-quote-submit>Get my estimate</button>
+                    <span class="quote-hint" data-quote-hint hidden>Please select at least one system and answer both questions.</span>
+                  </div>
+                  <div class="quote-result" data-quote-result></div>
+                </div>
+              </div>
             </div>
           </div>
         </article>
@@ -155,6 +238,163 @@
               <p>Average days to payment held under 14. Missed call rate held under 2%. A single monthly report provides complete visibility of cash position and administrative performance, with no surprises at month end.</p>
             </div>
           </div>
+
+          <div class="retainer-options">
+            <div class="retainer-tile">
+              <h4>Invoice + Collections</h4>
+              <p class="retainer-base">Ongoing retainer</p>
+              <div class="svc-quote" data-quote="invoicing">
+                <button type="button" class="quote-toggle" aria-expanded="false">
+                  <span>Get an instant estimate</span>
+                  <span class="quote-toggle-arrow" aria-hidden="true"></span>
+                </button>
+                <div class="quote-panel-wrap">
+                  <div class="quote-panel-inner">
+                    <div class="quote-panel">
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many invoices do you send per month?</span>
+                        <div class="quote-options" data-group="volume">
+                          <button type="button" class="qopt" data-value="under20">Under 20</button>
+                          <button type="button" class="qopt" data-value="20-50">20-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many staff do you have?</span>
+                        <div class="quote-options" data-group="scale">
+                          <button type="button" class="qopt" data-value="justme">Just me</button>
+                          <button type="button" class="qopt" data-value="2-10">2-10</button>
+                          <button type="button" class="qopt" data-value="11-50">11-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">What's your approximate annual revenue?</span>
+                        <div class="quote-options" data-group="revenue">
+                          <button type="button" class="qopt" data-value="under500k">Under £500K</button>
+                          <button type="button" class="qopt" data-value="500k-2m">£500K-£2M</button>
+                          <button type="button" class="qopt" data-value="2m-5m">£2M-£5M</button>
+                          <button type="button" class="qopt" data-value="5m-10m">£5M-£10M</button>
+                          <button type="button" class="qopt" data-value="10mplus">£10M+</button>
+                        </div>
+                      </div>
+                      <div class="quote-submit-row">
+                        <button type="button" class="quote-submit" data-quote-submit>Get my estimate</button>
+                        <span class="quote-hint" data-quote-hint hidden>Please answer all three questions.</span>
+                      </div>
+                      <div class="quote-result" data-quote-result></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="retainer-tile">
+              <h4>Phone Booking</h4>
+              <p class="retainer-base">Ongoing retainer</p>
+              <div class="svc-quote" data-quote="phone">
+                <button type="button" class="quote-toggle" aria-expanded="false">
+                  <span>Get an instant estimate</span>
+                  <span class="quote-toggle-arrow" aria-hidden="true"></span>
+                </button>
+                <div class="quote-panel-wrap">
+                  <div class="quote-panel-inner">
+                    <div class="quote-panel">
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many calls do you get per week?</span>
+                        <div class="quote-options" data-group="volume">
+                          <button type="button" class="qopt" data-value="under20">Under 20</button>
+                          <button type="button" class="qopt" data-value="20-50">20-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many staff do you have?</span>
+                        <div class="quote-options" data-group="scale">
+                          <button type="button" class="qopt" data-value="justme">Just me</button>
+                          <button type="button" class="qopt" data-value="2-10">2-10</button>
+                          <button type="button" class="qopt" data-value="11-50">11-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">What's your approximate annual revenue?</span>
+                        <div class="quote-options" data-group="revenue">
+                          <button type="button" class="qopt" data-value="under500k">Under £500K</button>
+                          <button type="button" class="qopt" data-value="500k-2m">£500K-£2M</button>
+                          <button type="button" class="qopt" data-value="2m-5m">£2M-£5M</button>
+                          <button type="button" class="qopt" data-value="5m-10m">£5M-£10M</button>
+                          <button type="button" class="qopt" data-value="10mplus">£10M+</button>
+                        </div>
+                      </div>
+                      <div class="quote-submit-row">
+                        <button type="button" class="quote-submit" data-quote-submit>Get my estimate</button>
+                        <span class="quote-hint" data-quote-hint hidden>Please answer all three questions.</span>
+                      </div>
+                      <div class="quote-result" data-quote-result></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="retainer-tile">
+              <h4>Full Bundle</h4>
+              <p class="retainer-base">Ongoing retainer</p>
+              <div class="svc-quote" data-quote="bundle">
+                <button type="button" class="quote-toggle" aria-expanded="false">
+                  <span>Get an instant estimate</span>
+                  <span class="quote-toggle-arrow" aria-hidden="true"></span>
+                </button>
+                <div class="quote-panel-wrap">
+                  <div class="quote-panel-inner">
+                    <div class="quote-panel">
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many calls do you get per week?</span>
+                        <div class="quote-options" data-group="calls">
+                          <button type="button" class="qopt" data-value="under20">Under 20</button>
+                          <button type="button" class="qopt" data-value="20-50">20-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many invoices do you send per month?</span>
+                        <div class="quote-options" data-group="invoices">
+                          <button type="button" class="qopt" data-value="under20">Under 20</button>
+                          <button type="button" class="qopt" data-value="20-50">20-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">Roughly how many staff do you have?</span>
+                        <div class="quote-options" data-group="scale">
+                          <button type="button" class="qopt" data-value="justme">Just me</button>
+                          <button type="button" class="qopt" data-value="2-10">2-10</button>
+                          <button type="button" class="qopt" data-value="11-50">11-50</button>
+                          <button type="button" class="qopt" data-value="50plus">50+</button>
+                        </div>
+                      </div>
+                      <div class="quote-question">
+                        <span class="quote-question-label">What's your approximate annual revenue?</span>
+                        <div class="quote-options" data-group="revenue">
+                          <button type="button" class="qopt" data-value="under500k">Under £500K</button>
+                          <button type="button" class="qopt" data-value="500k-2m">£500K-£2M</button>
+                          <button type="button" class="qopt" data-value="2m-5m">£2M-£5M</button>
+                          <button type="button" class="qopt" data-value="5m-10m">£5M-£10M</button>
+                          <button type="button" class="qopt" data-value="10mplus">£10M+</button>
+                        </div>
+                      </div>
+                      <div class="quote-submit-row">
+                        <button type="button" class="quote-submit" data-quote-submit>Get my estimate</button>
+                        <span class="quote-hint" data-quote-hint hidden>Please answer all four questions.</span>
+                      </div>
+                      <div class="quote-result" data-quote-result></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </article>
 
       </div>
@@ -164,7 +404,7 @@
       <div class="wrap cta-band-inner">
         <h2>Begin the Conversation</h2>
         <div class="cta-band-actions">
-          <a class="cta-email" href="mailto:hello@keystoneops.co.uk">hello@keystoneops.co.uk</a>
+          <a class="cta-email" href="mailto:keystoneconsultancy.co@gmail.com">keystoneconsultancy.co@gmail.com</a>
           <span class="cta-note">Begin with the audit. It confirms, for both parties, whether the engagement is worth pursuing.</span>
         </div>
       </div>
@@ -181,7 +421,7 @@
       <div class="footer-links">
         <a href="index.html">Home</a>
         <a href="services.html">Services</a>
-        <a href="mailto:hello@keystoneops.co.uk">Contact</a>
+        <a href="mailto:keystoneconsultancy.co@gmail.com">Contact</a>
       </div>
     </div>
   </footer>
