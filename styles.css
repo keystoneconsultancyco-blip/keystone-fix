@@ -264,6 +264,8 @@ body {
 
 img, svg { display: block; max-width: 100%; }
 
+body.quote-modal-locked { overflow: hidden; }
+
 a { color: inherit; text-decoration: none; }
 
 a:focus-visible,
@@ -853,55 +855,107 @@ section { position: relative; }
 
 /* ---------- Instant quote widget ---------- */
 
-.svc-quote {
+.quote-trigger {
   margin-top: 28px;
-  border: 1px solid var(--hairline);
-  background: rgba(20, 23, 26, 0.55);
-}
-
-.quote-toggle {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 16px 20px;
-  background: transparent;
-  border: none;
+  background: rgba(20, 23, 26, 0.55);
+  border: 1px solid var(--hairline);
   color: var(--bone);
   font-family: var(--font-mono);
   font-size: 13.5px;
   cursor: pointer;
   text-align: left;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.quote-toggle:hover { color: var(--signal); }
+.quote-trigger:hover {
+  color: var(--signal);
+  border-color: var(--signal-dim);
+}
 
-.quote-toggle-arrow {
-  width: 9px;
-  height: 9px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg);
-  transition: transform 0.3s ease;
+.quote-trigger-arrow {
   flex-shrink: 0;
+  transition: transform 0.2s ease;
 }
 
-.svc-quote.is-open .quote-toggle-arrow { transform: rotate(-135deg); }
+.quote-trigger:hover .quote-trigger-arrow { transform: translateX(4px); }
 
-.quote-panel-wrap {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+/* ---------- Quote modal ---------- */
+
+.quote-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(5, 6, 7, 0.72);
+  opacity: 0;
+  transition: opacity 0.25s ease;
 }
 
-.svc-quote.is-open .quote-panel-wrap { grid-template-rows: 1fr; }
+.quote-modal-overlay[hidden] { display: none; }
 
-.quote-panel-inner { overflow: hidden; }
+.quote-modal-overlay.is-open { opacity: 1; }
 
-.quote-panel {
-  padding: 4px 20px 28px;
-  border-top: 1px solid var(--hairline-soft);
+.quote-modal {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: clamp(28px, 4vw, 40px);
+  background: linear-gradient(160deg, rgba(23, 27, 30, 0.98), rgba(14, 16, 18, 0.99));
+  border: 1px solid var(--hairline);
+  box-shadow: 0 46px 80px -32px rgba(0, 0, 0, 0.8);
+  transform: scale(0.94) translateY(10px);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.quote-modal-overlay.is-open .quote-modal { transform: scale(1) translateY(0); }
+
+.quote-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--slate);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.quote-modal-close:hover { color: var(--bone); border-color: var(--slate); }
+
+.quote-modal-title {
+  font-size: clamp(19px, 2.2vw, 23px);
+  font-weight: 600;
+  margin: 0 0 4px;
+  padding-right: 32px;
+}
+
+.quote-modal-subtitle {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--slate-dim);
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quote-modal-overlay, .quote-modal { transition: none !important; }
 }
 
 .quote-question { margin: 22px 0 0; }

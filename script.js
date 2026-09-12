@@ -281,59 +281,205 @@
     }).catch(function () {});
   }
 
-  function initQuoteWidgets() {
-    var widgets = document.querySelectorAll(".svc-quote");
-    if (!widgets.length) return;
+  var SCALE_OPTIONS = [
+    { value: "justme", label: "Just me" },
+    { value: "2-10", label: "2-10" },
+    { value: "11-50", label: "11-50" },
+    { value: "50plus", label: "50+" },
+  ];
+  var REVENUE_OPTIONS = [
+    { value: "under500k", label: "Under £500K" },
+    { value: "500k-2m", label: "£500K-£2M" },
+    { value: "2m-5m", label: "£2M-£5M" },
+    { value: "5m-10m", label: "£5M-£10M" },
+    { value: "10mplus", label: "£10M+" },
+  ];
+  var VOLUME_OPTIONS = [
+    { value: "under20", label: "Under 20" },
+    { value: "20-50", label: "20-50" },
+    { value: "50plus", label: "50+" },
+  ];
 
-    Array.prototype.forEach.call(widgets, function (widget) {
-      var type = widget.getAttribute("data-quote");
-      var toggle = widget.querySelector(".quote-toggle");
-      var submit = widget.querySelector("[data-quote-submit]");
-      var hint = widget.querySelector("[data-quote-hint]");
-      var resultEl = widget.querySelector("[data-quote-result]");
+  var QUOTE_CONFIGS = {
+    audit: {
+      title: "Finance Ops Audit",
+      subtitle: "Two-week engagement",
+      submitLabel: "Check if we're a fit",
+      incompleteHint: "Please answer both questions.",
+      questions: [
+        {
+          group: "pain",
+          label: "What's costing you the most time or money right now?",
+          options: [
+            { value: "calls", label: "Missed calls" },
+            { value: "invoices", label: "Unpaid invoices" },
+            { value: "admin", label: "Too much admin" },
+            { value: "unsure", label: "Not sure" },
+          ],
+        },
+        { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
+      ],
+    },
+    setup: {
+      title: "System Setup",
+      subtitle: "Four-to-eight-week build",
+      submitLabel: "Get my estimate",
+      incompleteHint: "Please select at least one system and answer both questions.",
+      questions: [
+        {
+          group: "systems",
+          label: "Which systems are you interested in?",
+          multi: true,
+          options: [
+            { value: "invoicing", label: "Invoicing" },
+            { value: "collections", label: "Collections" },
+            { value: "phone", label: "Phone Booking" },
+            { value: "quoting", label: "Quoting" },
+            { value: "reporting", label: "Reporting" },
+          ],
+        },
+        { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
+        { group: "revenue", label: "What's your approximate annual revenue?", options: REVENUE_OPTIONS },
+      ],
+    },
+    invoicing: {
+      title: "Invoice + Collections",
+      subtitle: "Ongoing retainer",
+      submitLabel: "Get my estimate",
+      incompleteHint: "Please answer all three questions.",
+      questions: [
+        { group: "volume", label: "Roughly how many invoices do you send per month?", options: VOLUME_OPTIONS },
+        { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
+        { group: "revenue", label: "What's your approximate annual revenue?", options: REVENUE_OPTIONS },
+      ],
+    },
+    phone: {
+      title: "Phone Booking",
+      subtitle: "Ongoing retainer",
+      submitLabel: "Get my estimate",
+      incompleteHint: "Please answer all three questions.",
+      questions: [
+        { group: "volume", label: "Roughly how many calls do you get per week?", options: VOLUME_OPTIONS },
+        { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
+        { group: "revenue", label: "What's your approximate annual revenue?", options: REVENUE_OPTIONS },
+      ],
+    },
+    bundle: {
+      title: "Full Bundle",
+      subtitle: "Ongoing retainer",
+      submitLabel: "Get my estimate",
+      incompleteHint: "Please answer all four questions.",
+      questions: [
+        { group: "calls", label: "Roughly how many calls do you get per week?", options: VOLUME_OPTIONS },
+        { group: "invoices", label: "Roughly how many invoices do you send per month?", options: VOLUME_OPTIONS },
+        { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
+        { group: "revenue", label: "What's your approximate annual revenue?", options: REVENUE_OPTIONS },
+      ],
+    },
+  };
 
-      toggle.addEventListener("click", function () {
-        var isOpen = widget.classList.toggle("is-open");
-        toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  function renderQuoteModalBody(config) {
+    var html = '<h3 class="quote-modal-title">' + config.title + "</h3>";
+    html += '<p class="quote-modal-subtitle">' + config.subtitle + "</p>";
+    config.questions.forEach(function (q) {
+      html += '<div class="quote-question"><span class="quote-question-label">' + q.label + '</span>';
+      html += '<div class="quote-options" data-group="' + q.group + '"' + (q.multi ? ' data-multi="true"' : "") + ">";
+      q.options.forEach(function (opt) {
+        html += '<button type="button" class="qopt" data-value="' + opt.value + '">' + opt.label + "</button>";
       });
+      html += "</div></div>";
+    });
+    html += '<div class="quote-submit-row"><button type="button" class="quote-submit" data-quote-submit>' + config.submitLabel + "</button>";
+    html += '<span class="quote-hint" data-quote-hint hidden>' + config.incompleteHint + "</span></div>";
+    html += '<div class="quote-result" data-quote-result></div>';
+    return html;
+  }
 
-      Array.prototype.forEach.call(widget.querySelectorAll(".quote-options"), function (group) {
-        var multi = group.getAttribute("data-multi") === "true";
-        group.addEventListener("click", function (e) {
-          var btn = e.target.closest ? e.target.closest(".qopt") : null;
-          if (!btn || !group.contains(btn)) return;
-          if (multi) {
-            btn.classList.toggle("is-selected");
-          } else {
-            Array.prototype.forEach.call(group.querySelectorAll(".qopt"), function (o) {
-              o.classList.remove("is-selected");
-            });
-            btn.classList.add("is-selected");
-          }
-          if (hint) hint.hidden = true;
-        });
-      });
+  function wireQuoteModalBody(root, type) {
+    var submit = root.querySelector("[data-quote-submit]");
+    var hint = root.querySelector("[data-quote-hint]");
+    var resultEl = root.querySelector("[data-quote-result]");
 
-      function getVals(group) {
-        var els = widget.querySelectorAll('.quote-options[data-group="' + group + '"] .qopt.is-selected');
-        return Array.prototype.map.call(els, function (el) { return el.getAttribute("data-value"); });
-      }
-
-      submit.addEventListener("click", function () {
-        var required = QUOTE_REQUIRED[type] || [];
-        var complete = required.every(function (g) { return getVals(g).length > 0; });
-        if (!complete) {
-          if (hint) hint.hidden = false;
-          return;
+    Array.prototype.forEach.call(root.querySelectorAll(".quote-options"), function (group) {
+      var multi = group.getAttribute("data-multi") === "true";
+      group.addEventListener("click", function (e) {
+        var btn = e.target.closest ? e.target.closest(".qopt") : null;
+        if (!btn || !group.contains(btn)) return;
+        if (multi) {
+          btn.classList.toggle("is-selected");
+        } else {
+          Array.prototype.forEach.call(group.querySelectorAll(".qopt"), function (o) {
+            o.classList.remove("is-selected");
+          });
+          btn.classList.add("is-selected");
         }
         if (hint) hint.hidden = true;
-
-        var handler = QUOTE_HANDLERS[type];
-        if (!handler) return;
-        var result = handler(getVals);
-        renderQuoteResult(resultEl, result);
-        logQuoteSubmission(type, required, getVals, result);
       });
+    });
+
+    function getVals(group) {
+      var els = root.querySelectorAll('.quote-options[data-group="' + group + '"] .qopt.is-selected');
+      return Array.prototype.map.call(els, function (el) { return el.getAttribute("data-value"); });
+    }
+
+    submit.addEventListener("click", function () {
+      var required = QUOTE_REQUIRED[type] || [];
+      var complete = required.every(function (g) { return getVals(g).length > 0; });
+      if (!complete) {
+        if (hint) hint.hidden = false;
+        return;
+      }
+      if (hint) hint.hidden = true;
+
+      var handler = QUOTE_HANDLERS[type];
+      if (!handler) return;
+      var result = handler(getVals);
+      renderQuoteResult(resultEl, result);
+      logQuoteSubmission(type, required, getVals, result);
+    });
+  }
+
+  function initQuoteModal() {
+    var overlay = document.querySelector("[data-quote-modal]");
+    var triggers = document.querySelectorAll("[data-quote-open]");
+    if (!overlay || !triggers.length) return;
+
+    var body = overlay.querySelector("[data-quote-body]");
+    var closeBtn = overlay.querySelector("[data-quote-close]");
+
+    function openModal(type) {
+      var config = QUOTE_CONFIGS[type];
+      if (!config) return;
+      body.innerHTML = renderQuoteModalBody(config);
+      wireQuoteModalBody(body, type);
+      overlay.hidden = false;
+      document.body.classList.add("quote-modal-locked");
+      requestAnimationFrame(function () {
+        overlay.classList.add("is-open");
+      });
+    }
+
+    function closeModal() {
+      overlay.classList.remove("is-open");
+      document.body.classList.remove("quote-modal-locked");
+      window.setTimeout(function () {
+        overlay.hidden = true;
+        body.innerHTML = "";
+      }, reduceMotion ? 0 : 280);
+    }
+
+    Array.prototype.forEach.call(triggers, function (trigger) {
+      trigger.addEventListener("click", function () {
+        openModal(trigger.getAttribute("data-quote-open"));
+      });
+    });
+
+    closeBtn.addEventListener("click", closeModal);
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) closeModal();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && overlay.classList.contains("is-open")) closeModal();
     });
   }
 
@@ -341,7 +487,7 @@
     runLogoIntro(revealHero);
     initPopupTilt();
     runAssembly();
-    initQuoteWidgets();
+    initQuoteModal();
   }
 
   if (document.readyState === "loading") {
