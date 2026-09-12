@@ -11,6 +11,7 @@
   --slate-dim: #5C6167;
   --signal: #C9A961;
   --signal-dim: #8A7440;
+  --charcoal: #2A2B2E;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -145,10 +146,11 @@ html { background: var(--ink); }
   }
 }
 
-/* Services page reads as near-pure black so the white copy stays crisp */
-.page-services .aurora-blob { opacity: 0.22; }
+/* Services page blends into a dark charcoal grey backdrop */
+html.page-services { background: var(--charcoal); }
+.page-services .aurora-blob { opacity: 0.18; }
 .page-services .cinematic-vignette {
-  background: radial-gradient(ellipse 90% 70% at 50% 22%, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.88) 100%);
+  background: radial-gradient(ellipse 90% 70% at 50% 22%, rgba(42, 43, 46, 0) 0%, rgba(20, 21, 23, 0.6) 100%);
 }
 
 /* ---------- Ambient background ---------- */
@@ -163,61 +165,38 @@ html { background: var(--ink); }
 
 .ambient svg {
   position: absolute;
-  width: 140%;
-  height: 140%;
-  top: -20%;
-  left: -20%;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+
+.ambient-fill {
+  opacity: 0.5;
 }
 
 .ambient-line {
   fill: none;
-  stroke: var(--hairline);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.22;
-}
-
-.line-b {
   stroke: var(--signal-dim);
-  opacity: 0.16;
-}
-
-.line-a { animation: driftA 130s ease-in-out infinite; }
-.line-b { animation: driftB 165s ease-in-out infinite; }
-.line-c { animation: driftC 110s ease-in-out infinite; }
-
-@keyframes driftA {
-  0%, 100% { transform: translate(0, 0); }
-  50% { transform: translate(-30px, 18px); }
-}
-@keyframes driftB {
-  0%, 100% { transform: translate(0, 0); }
-  50% { transform: translate(26px, -16px); }
-}
-@keyframes driftC {
-  0%, 100% { transform: translate(0, 0); }
-  50% { transform: translate(-18px, -22px); }
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
 }
 
 .ambient-comet {
   fill: none;
   stroke: url(#growthGrad);
-  stroke-width: 3.2;
+  stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
-  stroke-dasharray: 170 3200;
-  opacity: 0.95;
-  filter: drop-shadow(0 0 5px rgba(201, 169, 97, 0.85)) drop-shadow(0 0 16px rgba(201, 169, 97, 0.45));
+  stroke-dasharray: 220 2400;
+  opacity: 1;
+  filter: drop-shadow(0 0 8px rgba(201, 169, 97, 0.9)) drop-shadow(0 0 26px rgba(201, 169, 97, 0.5));
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ambient-line { animation: none !important; }
   .ambient-comet { display: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ambient-line { animation: none !important; }
 }
 
 /* ---------- Logo intro splash ---------- */
@@ -241,28 +220,6 @@ html { background: var(--ink); }
 .intro-overlay.is-hidden {
   opacity: 0;
   pointer-events: none;
-}
-
-.intro-logo-stage {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: min(80vw, 620px);
-  height: min(80vw, 460px);
-}
-
-.intro-logo-stage svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  transition: opacity 1.4s ease 0.15s;
-}
-
-.intro-overlay.is-visible .intro-logo-stage svg {
-  opacity: 0.9;
 }
 
 .intro-logo {
@@ -289,8 +246,7 @@ html { background: var(--ink); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .intro-logo,
-  .intro-logo-stage svg {
+  .intro-logo {
     transition: none !important;
     filter: none !important;
     transform: none !important;
@@ -438,49 +394,6 @@ section { position: relative; }
   position: relative;
   padding: clamp(72px, 12vw, 148px) 0 clamp(80px, 11vw, 140px);
   overflow: hidden;
-}
-
-.hero-chart {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  overflow: visible;
-}
-
-.hero-chart svg {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  top: 0;
-  left: 0;
-}
-
-.hero-chart-line {
-  fill: none;
-  stroke: var(--signal-dim);
-  stroke-width: 2.4;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.4;
-}
-
-.hero-chart-fill {
-  opacity: 0.14;
-}
-
-.hero-chart-comet {
-  fill: none;
-  stroke: url(#heroGrowthGrad);
-  stroke-width: 5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 10px rgba(201, 169, 97, 0.9)) drop-shadow(0 0 30px rgba(201, 169, 97, 0.5));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-chart-comet { display: none; }
 }
 
 .hero-scrim {

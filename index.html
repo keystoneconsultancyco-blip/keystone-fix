@@ -20,14 +20,7 @@
 <body>
 
   <div class="intro-overlay" aria-hidden="true">
-    <div class="intro-logo-stage">
-      <svg viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-        <polyline class="ambient-comet" points="20,410 120,370 200,380 280,300 360,320 440,220 520,240 580,120" style="stroke-width:4; stroke-dasharray:130 900;">
-          <animate attributeName="stroke-dashoffset" values="1030;0" dur="2.6s" fill="freeze" />
-        </polyline>
-      </svg>
-      <img class="intro-logo" src="assets/keystone-logo.jpg" alt="" width="370" height="295" />
-    </div>
+    <img class="intro-logo" src="assets/keystone-logo.jpg" alt="" width="370" height="295" />
   </div>
 
   <div class="cinematic" aria-hidden="true">
@@ -42,27 +35,23 @@
   </div>
 
   <div class="ambient" aria-hidden="true">
-    <svg viewBox="0 0 1200 800" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 1600 700" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="growthGrad" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="#8A7440" stop-opacity="0" />
           <stop offset="45%" stop-color="#C9A961" stop-opacity="0.85" />
           <stop offset="100%" stop-color="#F6E9C4" stop-opacity="1" />
         </linearGradient>
+        <linearGradient id="growthFill" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#C9A961" stop-opacity="0.5" />
+          <stop offset="100%" stop-color="#C9A961" stop-opacity="0" />
+        </linearGradient>
       </defs>
 
-      <polyline class="ambient-line line-a" points="-100,650 150,600 320,610 480,480 650,500 820,340 1000,360 1180,180 1350,150" />
-      <polyline class="ambient-line line-b" points="-100,750 200,720 400,680 600,600 800,610 980,470 1180,430 1400,320" />
-      <polyline class="ambient-line line-c" points="-100,500 180,470 380,420 560,430 760,320 940,300 1120,220 1350,190" />
-
-      <polyline class="ambient-comet" points="-100,650 150,600 320,610 480,480 650,500 820,340 1000,360 1180,180 1350,150">
-        <animate attributeName="stroke-dashoffset" values="3370;0" dur="12s" repeatCount="indefinite" />
-      </polyline>
-      <polyline class="ambient-comet" points="-100,750 200,720 400,680 600,600 800,610 980,470 1180,430 1400,320">
-        <animate attributeName="stroke-dashoffset" values="3670;0" dur="16s" begin="-4s" repeatCount="indefinite" />
-      </polyline>
-      <polyline class="ambient-comet" points="-100,500 180,470 380,420 560,430 760,320 940,300 1120,220 1350,190">
-        <animate attributeName="stroke-dashoffset" values="3220;0" dur="14s" begin="-8s" repeatCount="indefinite" />
+      <polygon class="ambient-fill" fill="url(#growthFill)" points="0,650 250,600 450,620 650,480 850,500 1050,320 1250,350 1600,120 1600,700 0,700" />
+      <polyline class="ambient-line" points="0,650 250,600 450,620 650,480 850,500 1050,320 1250,350 1600,120" />
+      <polyline class="ambient-comet" points="0,650 250,600 450,620 650,480 850,500 1050,320 1250,350 1600,120">
+        <animate attributeName="stroke-dashoffset" values="2620;0" dur="9s" repeatCount="indefinite" />
       </polyline>
     </svg>
   </div>
@@ -80,26 +69,6 @@
 
   <main>
     <section class="hero">
-      <div class="hero-chart" aria-hidden="true">
-        <svg viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="heroGrowthGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#8A7440" stop-opacity="0" />
-              <stop offset="45%" stop-color="#C9A961" stop-opacity="0.9" />
-              <stop offset="100%" stop-color="#F6E9C4" stop-opacity="1" />
-            </linearGradient>
-            <linearGradient id="heroGrowthFill" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="#C9A961" stop-opacity="0.5" />
-              <stop offset="100%" stop-color="#C9A961" stop-opacity="0" />
-            </linearGradient>
-          </defs>
-          <polygon class="hero-chart-fill" fill="url(#heroGrowthFill)" points="300,700 300,560 460,500 610,540 760,400 910,430 1060,260 1220,300 1220,700" />
-          <polyline class="hero-chart-line" points="300,560 460,500 610,540 760,400 910,430 1060,260 1220,300" />
-          <polyline class="hero-chart-comet" points="300,560 460,500 610,540 760,400 910,430 1060,260 1220,300" style="stroke-dasharray:220 2400;">
-            <animate attributeName="stroke-dashoffset" values="2620;0" dur="10s" repeatCount="indefinite" />
-          </polyline>
-        </svg>
-      </div>
       <div class="hero-scrim" aria-hidden="true"></div>
       <div class="wrap hero-stack">
         <p class="eyebrow">Software systems engineered for growth</p>
