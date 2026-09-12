@@ -77,57 +77,31 @@
     }, settleDelay);
   }
 
-  function runAssembly() {
-    var section = document.querySelector(".assembly");
-    if (!section) return;
+  function runServiceReveal() {
+    var cards = Array.prototype.slice.call(document.querySelectorAll(".svc-card-h"));
+    if (!cards.length) return;
 
-    var rail = section.querySelector(".rail");
-    var fill = section.querySelector(".rail-fill");
-    var pulse = section.querySelector(".rail-pulse");
-    var nodes = Array.prototype.slice.call(section.querySelectorAll(".rail-node"));
-    if (!rail || !fill || !nodes.length) return;
-
-    if (reduceMotion) {
-      fill.style.width = "100%";
-      nodes.forEach(function (n) { n.classList.add("is-locked"); });
+    if (reduceMotion || !window.IntersectionObserver) {
+      cards.forEach(function (c) { c.classList.add("is-in"); });
       return;
     }
 
-    var n = nodes.length;
-    var ticking = false;
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-in");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15, rootMargin: "0px 0px -60px 0px" }
+    );
 
-    function update() {
-      ticking = false;
-      var rect = section.getBoundingClientRect();
-      var vh = window.innerHeight;
-      var total = rect.height + vh;
-      var scrolled = vh - rect.top;
-      var progress = Math.min(Math.max(scrolled / total, 0), 1);
-
-      fill.style.width = (progress * 100).toFixed(1) + "%";
-      pulse.style.left = (progress * 100).toFixed(1) + "%";
-      rail.classList.toggle("is-progressing", progress > 0.01 && progress < 0.995);
-
-      nodes.forEach(function (node, i) {
-        var start = i / n;
-        var end = (i + 0.65) / n;
-        var local = (progress - start) / (end - start);
-        local = Math.min(Math.max(local, 0), 1);
-        node.style.setProperty("--lock", local.toFixed(3));
-        node.classList.toggle("is-locked", local > 0.5);
-      });
-    }
-
-    function onScroll() {
-      if (!ticking) {
-        ticking = true;
-        requestAnimationFrame(update);
-      }
-    }
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    update();
+    cards.forEach(function (card, i) {
+      card.style.transitionDelay = Math.min(i * 90, 270) + "ms";
+      observer.observe(card);
+    });
   }
 
   // Set this to your Apps Script/Zapier endpoint to log quote leads to a Google Sheet.
@@ -486,7 +460,7 @@
   function init() {
     runLogoIntro(revealHero);
     initPopupTilt();
-    runAssembly();
+    runServiceReveal();
     initQuoteModal();
   }
 
