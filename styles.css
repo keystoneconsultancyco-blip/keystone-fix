@@ -168,12 +168,12 @@ html { background: var(--ink); }
   stroke: var(--hairline);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
-  opacity: 0.07;
+  opacity: 0.22;
 }
 
 .line-b {
   stroke: var(--signal-dim);
-  opacity: 0.05;
+  opacity: 0.16;
 }
 
 .line-a { animation: driftA 130s ease-in-out infinite; }
@@ -193,8 +193,64 @@ html { background: var(--ink); }
   50% { transform: translate(-18px, -22px); }
 }
 
+.ambient-comet {
+  fill: none;
+  stroke: url(#growthGrad);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 170 3200;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 5px rgba(201, 169, 97, 0.85)) drop-shadow(0 0 16px rgba(201, 169, 97, 0.45));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ambient-line { animation: none !important; }
+  .ambient-comet { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-line { animation: none !important; }
+}
+
+/* ---------- Logo intro splash ---------- */
+
+.intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.intro-overlay.is-visible {
+  opacity: 1;
+}
+
+.intro-overlay.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.intro-logo {
+  width: clamp(190px, 24vw, 320px);
+  height: auto;
+  display: block;
+  opacity: 0;
+  filter: blur(16px);
+  transform: scale(0.86);
+  transition: opacity 1.15s ease, transform 1.15s cubic-bezier(0.19, 1, 0.22, 1), filter 1.15s ease;
+}
+
+.intro-overlay.is-visible .intro-logo {
+  opacity: 1;
+  filter: blur(0px);
+  transform: scale(1);
 }
 
 body {

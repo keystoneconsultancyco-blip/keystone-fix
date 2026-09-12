@@ -19,6 +19,10 @@
 </head>
 <body>
 
+  <div class="intro-overlay" aria-hidden="true">
+    <img class="intro-logo" src="assets/keystone-logo.jpg" alt="" width="370" height="295" />
+  </div>
+
   <div class="cinematic" aria-hidden="true">
     <div class="cinematic-aurora">
       <div class="aurora-blob a"></div>
@@ -32,9 +36,27 @@
 
   <div class="ambient" aria-hidden="true">
     <svg viewBox="0 0 1200 800" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="growthGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#8A7440" stop-opacity="0" />
+          <stop offset="45%" stop-color="#C9A961" stop-opacity="0.85" />
+          <stop offset="100%" stop-color="#F6E9C4" stop-opacity="1" />
+        </linearGradient>
+      </defs>
+
       <polyline class="ambient-line line-a" points="-100,650 150,600 320,610 480,480 650,500 820,340 1000,360 1180,180 1350,150" />
       <polyline class="ambient-line line-b" points="-100,750 200,720 400,680 600,600 800,610 980,470 1180,430 1400,320" />
       <polyline class="ambient-line line-c" points="-100,500 180,470 380,420 560,430 760,320 940,300 1120,220 1350,190" />
+
+      <polyline class="ambient-comet" points="-100,650 150,600 320,610 480,480 650,500 820,340 1000,360 1180,180 1350,150">
+        <animate attributeName="stroke-dashoffset" values="3370;0" dur="12s" repeatCount="indefinite" />
+      </polyline>
+      <polyline class="ambient-comet" points="-100,750 200,720 400,680 600,600 800,610 980,470 1180,430 1400,320">
+        <animate attributeName="stroke-dashoffset" values="3670;0" dur="16s" begin="-4s" repeatCount="indefinite" />
+      </polyline>
+      <polyline class="ambient-comet" points="-100,500 180,470 380,420 560,430 760,320 940,300 1120,220 1350,190">
+        <animate attributeName="stroke-dashoffset" values="3220;0" dur="14s" begin="-8s" repeatCount="indefinite" />
+      </polyline>
     </svg>
   </div>
 
@@ -142,7 +164,34 @@
     }
   }
   </script>
-  <script type="module" src="growth-scene.js"></script>
+  <script>
+    (function () {
+      "use strict";
+      var canvas = document.getElementById("growth-canvas");
+      if (!canvas) return;
+
+      var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var isNarrow = window.matchMedia("(max-width: 900px)").matches;
+
+      function hasWebGL() {
+        try {
+          var c = document.createElement("canvas");
+          return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
+        } catch (e) {
+          return false;
+        }
+      }
+
+      if (reduceMotion || isNarrow || !hasWebGL()) {
+        if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+        return;
+      }
+
+      import("./growth-scene.js").catch(function () {
+        if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      });
+    })();
+  </script>
   <script src="script.js"></script>
 </body>
 </html>

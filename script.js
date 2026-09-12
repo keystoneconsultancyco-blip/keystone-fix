@@ -2,26 +2,13 @@
   "use strict";
 
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var LOGO_HANDOFF_MS = 1800;
+  var LOGO_REMOVE_MS = 2500;
 
-  function runIntro() {
+  function revealHero() {
     var heading = document.querySelector(".hero-name");
     var popup = document.querySelector(".popup-card");
     if (!heading) return;
-
-    var alreadyPlayed = false;
-    try {
-      alreadyPlayed = sessionStorage.getItem("keystoneIntroPlayed") === "1";
-    } catch (e) {}
-
-    if (reduceMotion || alreadyPlayed) {
-      heading.classList.add("is-in");
-      if (popup) popup.classList.add("is-in");
-      return;
-    }
-
-    try {
-      sessionStorage.setItem("keystoneIntroPlayed", "1");
-    } catch (e) {}
 
     requestAnimationFrame(function () {
       heading.classList.add("is-in");
@@ -32,9 +19,47 @@
     }, 550);
   }
 
+  function runLogoIntro(onDone) {
+    var overlay = document.querySelector(".intro-overlay");
+
+    var alreadyPlayed = false;
+    try {
+      alreadyPlayed = sessionStorage.getItem("keystoneIntroPlayed") === "1";
+    } catch (e) {}
+
+    if (!overlay || reduceMotion || alreadyPlayed) {
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      onDone();
+      return;
+    }
+
+    try {
+      sessionStorage.setItem("keystoneIntroPlayed", "1");
+    } catch (e) {}
+
+    requestAnimationFrame(function () {
+      overlay.classList.add("is-visible");
+    });
+
+    window.setTimeout(function () {
+      overlay.classList.add("is-hidden");
+      onDone();
+    }, LOGO_HANDOFF_MS);
+
+    window.setTimeout(function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }, LOGO_REMOVE_MS);
+  }
+
   function initPopupTilt() {
     var card = document.querySelector(".popup-card");
     if (!card || reduceMotion) return;
+
+    var alreadyPlayed = false;
+    try {
+      alreadyPlayed = sessionStorage.getItem("keystoneIntroPlayed") === "1";
+    } catch (e) {}
+    var settleDelay = alreadyPlayed ? 100 : LOGO_HANDOFF_MS + 550 + 900;
 
     window.setTimeout(function () {
       card.style.transition = "transform 0.2s ease, box-shadow 0.3s ease";
@@ -49,7 +74,7 @@
         card.style.setProperty("--rx", "0deg");
         card.style.setProperty("--ry", "0deg");
       });
-    }, 1450);
+    }, settleDelay);
   }
 
   function runAssembly() {
@@ -106,7 +131,7 @@
   }
 
   function init() {
-    runIntro();
+    runLogoIntro(revealHero);
     initPopupTilt();
     runAssembly();
   }

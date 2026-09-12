@@ -11,23 +11,6 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
   var canvas = document.getElementById("growth-canvas");
   if (!container || !canvas) return;
 
-  var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var isNarrow = window.matchMedia("(max-width: 900px)").matches;
-
-  function hasWebGL() {
-    try {
-      var c = document.createElement("canvas");
-      return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
-    } catch (e) {
-      return false;
-    }
-  }
-
-  if (reduceMotion || isNarrow || !hasWebGL()) {
-    if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-    return;
-  }
-
   var INK = 0x0b0d0f;
   var GOLD = new THREE.Color(0xc9a961);
   var GREEN = new THREE.Color(0x3ecf8e);
