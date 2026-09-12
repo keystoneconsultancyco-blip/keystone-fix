@@ -113,7 +113,7 @@
   var CALL_VOL_MULT = { under20: 0.85, "20-50": 1.0, "50plus": 1.35 };
 
   var QUOTE_REQUIRED = {
-    audit: ["pain", "scale"],
+    audit: ["scale"],
     setup: ["systems", "scale", "revenue"],
     invoicing: ["volume", "scale", "revenue"],
     phone: ["volume", "scale", "revenue"],
@@ -279,18 +279,8 @@
       title: "Finance Ops Audit",
       subtitle: "Two-week engagement",
       submitLabel: "Check if we're a fit",
-      incompleteHint: "Please answer both questions.",
+      incompleteHint: "Please answer this question.",
       questions: [
-        {
-          group: "pain",
-          label: "What's costing you the most time or money right now?",
-          options: [
-            { value: "calls", label: "Missed calls" },
-            { value: "invoices", label: "Unpaid invoices" },
-            { value: "admin", label: "Too much admin" },
-            { value: "unsure", label: "Not sure" },
-          ],
-        },
         { group: "scale", label: "Roughly how many staff do you have?", options: SCALE_OPTIONS },
       ],
     },
