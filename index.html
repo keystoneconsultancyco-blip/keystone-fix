@@ -51,6 +51,8 @@
 
   <main>
     <section class="hero">
+      <canvas id="growth-canvas" aria-hidden="true"></canvas>
+      <div class="hero-scrim" aria-hidden="true"></div>
       <div class="wrap hero-stack">
         <p class="eyebrow">Software systems engineered for growth</p>
 
@@ -58,6 +60,8 @@
           <span class="word"><span class="word-inner">Keystone</span></span>
           <span class="word"><span class="word-inner">Consultancy</span></span>
         </h1>
+
+        <p class="hero-tagline">Empowering businesses to grow, scale and succeed.</p>
 
         <div class="popup-stage">
           <div class="popup-card">
@@ -130,6 +134,15 @@
     </div>
   </footer>
 
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/build/three.module.js",
+      "three/addons/": "./vendor/three/"
+    }
+  }
+  </script>
+  <script type="module" src="growth-scene.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
