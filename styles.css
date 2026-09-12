@@ -12,6 +12,10 @@
   --signal: #C9A961;
   --signal-dim: #8A7440;
   --charcoal: #2A2B2E;
+  --navy-deep: #0A1526;
+  --navy: #1C3459;
+  --navy-bright: #4E85C9;
+  --navy-pale: #A9C8ED;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -54,7 +58,7 @@ html { background: var(--ink); }
   height: 62vw;
   max-width: 980px;
   max-height: 980px;
-  background: radial-gradient(circle, rgba(201, 169, 97, 0.55) 0%, rgba(201, 169, 97, 0) 70%);
+  background: radial-gradient(circle, rgba(28, 52, 89, 0.6) 0%, rgba(28, 52, 89, 0) 70%);
   animation: auroraA 28s ease-in-out infinite;
 }
 
@@ -65,7 +69,7 @@ html { background: var(--ink); }
   height: 54vw;
   max-width: 860px;
   max-height: 860px;
-  background: radial-gradient(circle, rgba(232, 230, 224, 0.28) 0%, rgba(232, 230, 224, 0) 70%);
+  background: radial-gradient(circle, rgba(78, 133, 201, 0.22) 0%, rgba(78, 133, 201, 0) 70%);
   animation: auroraB 34s ease-in-out infinite;
 }
 
@@ -76,7 +80,7 @@ html { background: var(--ink); }
   height: 66vw;
   max-width: 1080px;
   max-height: 1080px;
-  background: radial-gradient(circle, rgba(138, 116, 64, 0.5) 0%, rgba(138, 116, 64, 0) 70%);
+  background: radial-gradient(circle, rgba(10, 21, 38, 0.7) 0%, rgba(10, 21, 38, 0) 70%);
   animation: auroraC 40s ease-in-out infinite;
 }
 
@@ -87,7 +91,7 @@ html { background: var(--ink); }
   height: 40vw;
   max-width: 640px;
   max-height: 640px;
-  background: radial-gradient(circle, rgba(201, 169, 97, 0.32) 0%, rgba(201, 169, 97, 0) 70%);
+  background: radial-gradient(circle, rgba(28, 52, 89, 0.4) 0%, rgba(28, 52, 89, 0) 70%);
   animation: auroraD 24s ease-in-out infinite;
 }
 
@@ -146,12 +150,8 @@ html { background: var(--ink); }
   }
 }
 
-/* Services page blends into a dark charcoal grey backdrop */
+/* Services page has no live animation: a plain dark charcoal grey backdrop */
 html.page-services { background: var(--charcoal); }
-.page-services .aurora-blob { opacity: 0.18; }
-.page-services .cinematic-vignette {
-  background: radial-gradient(ellipse 90% 70% at 50% 22%, rgba(42, 43, 46, 0) 0%, rgba(20, 21, 23, 0.6) 100%);
-}
 
 /* ---------- Ambient background ---------- */
 
@@ -177,10 +177,10 @@ html.page-services { background: var(--charcoal); }
 
 .ambient-line {
   fill: none;
-  stroke: var(--signal-dim);
+  stroke: var(--navy);
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
-  opacity: 0.55;
+  opacity: 0.6;
 }
 
 .ambient-comet {
@@ -192,7 +192,7 @@ html.page-services { background: var(--charcoal); }
   vector-effect: non-scaling-stroke;
   stroke-dasharray: 220 2400;
   opacity: 1;
-  filter: drop-shadow(0 0 8px rgba(201, 169, 97, 0.9)) drop-shadow(0 0 26px rgba(201, 169, 97, 0.5));
+  filter: drop-shadow(0 0 8px rgba(78, 133, 201, 0.9)) drop-shadow(0 0 26px rgba(78, 133, 201, 0.5));
 }
 
 @media (prefers-reduced-motion: reduce) {
