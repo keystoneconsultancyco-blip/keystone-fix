@@ -26,6 +26,19 @@ http.createServer(async (req, res) => {
   if (schema) {
     const obj = fromSchema(schema);
     if (sys.includes("Telegram messages")) Object.assign(obj, { intent: "add_task", title: "Buy textbook", when: "2026-11-02T10:00", end: "", day_offset: 0, reply: "" });
+    if (sys.includes("early-careers finance opportunities")) {
+      const link = (prompt.match(/-> (http[^\s"\\]+apply[^\s"\\]*)/) || [])[1] || "http://localhost:8082/jobs/apply";
+      obj.opportunities = [{ title: "Private Equity Spring Week 2027", company: "Fake Capital", url: link, kind: "spring_week", location: "London", deadline: "2026-12-15", opens: "", summary: "Spring week for first-year students in PE." }];
+    }
+    if (sys.includes("Score fit")) {
+      const ids = [...prompt.matchAll(/\\"id\\":(\d+)/g)].map((m) => Number(m[1]));
+      obj.scores = ids.map((id) => ({ id, score: 88, reason: "First-year spring week in private equity in London." }));
+    }
+    if (sys.includes("draft early-careers finance applications")) {
+      obj.answers = [{ question: "Why are you interested in this programme?", answer: "Because I run Keystone and want to learn how PE firms create value." }];
+      obj.cover_letter = "Dear Fake Capital, ...";
+      obj.notes = "Add your predicted grades.";
+    }
     text = JSON.stringify(obj);
   } else if (prompt.includes("Write the guide section")) {
     text = "## Week 1\n### In one minute\n- Demand falls when price rises.\n### Worked examples\nPrice 10 → 12 is +20%; quantity 100 → 80 is −20%; elasticity = −20 / 20 = −1.";

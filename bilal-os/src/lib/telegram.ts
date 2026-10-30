@@ -1,4 +1,4 @@
-import { Api } from "grammy";
+import { Api, InputFile } from "grammy";
 import { getSecret } from "./settings";
 import { q } from "./db";
 
@@ -59,4 +59,13 @@ export function splitMessage(s: string, max: number): string[] {
   }
   if (rest) out.push(rest);
   return out;
+}
+
+/** Send an image file (e.g. a screenshot of a filled-in form). */
+export async function sendTelegramPhoto(filePath: string, caption?: string): Promise<boolean> {
+  const a = await api();
+  const chatId = await getSecret("telegram_chat_id");
+  if (!a || !chatId) return false;
+  await a.sendPhoto(chatId, new InputFile(filePath), { caption: caption?.slice(0, 1000), parse_mode: "HTML" });
+  return true;
 }

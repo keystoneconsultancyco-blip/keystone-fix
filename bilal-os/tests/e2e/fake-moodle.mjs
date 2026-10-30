@@ -25,6 +25,8 @@ http.createServer(async (req, res) => {
     return send(200, html('<form method="post"><input id="username" name="username"><input id="password" name="password" type="password"><button id="loginbtn">Log in</button></form>'));
   }
   if (url.pathname === "/timetable.ics") return send(200, `BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:tt1\r\nSUMMARY:EC1101 Lecture\r\nLOCATION:Windsor 0-03\r\nDTSTART:${new Date(Date.now() + 3600e3).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z\r\nDTEND:${new Date(Date.now() + 7200e3).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z\r\nEND:VEVENT\r\nEND:VCALENDAR`, "text/calendar");
+  if (url.pathname === "/jobs") return send(200, html('<h1>Spring weeks</h1><div class="job"><a href="/jobs/apply">Private Equity Spring Week 2027 - Fake Capital</a> London. Deadline 15 December 2026.</div>'));
+  if (url.pathname === "/jobs/apply") return send(200, html('<h1>Apply: PE Spring Week</h1><form><label for="q1">Why are you interested in this programme?</label><textarea id="q1" required></textarea><label for="name">Full name</label><input type="text" id="name"><button type="submit">Submit</button></form>'));
   if (!authed) return send(303, "", "text/html", { Location: "/login/index.php" });
   if (url.pathname === "/my/") return send(200, html("<h2>Dashboard</h2>"));
   if (url.pathname === "/lib/ajax/service.php") {

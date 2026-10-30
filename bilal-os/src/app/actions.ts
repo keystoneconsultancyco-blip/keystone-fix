@@ -244,3 +244,67 @@ export async function toggleModuleAction(code: string, active: boolean): Promise
   revalidatePath("/sectors/uni");
   return { ok: true };
 }
+
+// ---------- Work experience ----------
+const OPP_STATUSES = ["new", "shortlisted", "ignored", "drafting", "draft_ready", "applied", "interview", "offer", "rejected"];
+
+export async function setOpportunityStatusAction(id: number, status: string): Promise<Result> {
+  await guard();
+  if (!OPP_STATUSES.includes(status)) return { ok: false, message: "Bad status" };
+  await q("UPDATE opportunities SET status = $2, updated_at = now() WHERE id = $1", [id, status]);
+  if (status === "drafting") await sendCommand("agent.run", { agentId: "workexp.application-drafter", input: { opportunityId: id }, trigger: "manual" });
+  if (["applied", "ignored", "rejected", "offer"].includes(status)) await q("UPDATE deadlines SET done = true WHERE source = 'opportunity' AND source_ref = $1", [String(id)]);
+  revalidatePath("/sectors/workexp");
+  return { ok: true, message: status === "drafting" ? "Drafting — it will appear in Approvals" : "Updated" };
+}
+
+export async function addOpportunityUrlAction(_: Result | null, form: FormData): Promise<Result> {
+  await guard();
+  const url = String(form.get("url") ?? "").trim();
+  if (!/^https?:\/\//.test(url)) return { ok: false, message: "Paste a full link starting with https://" };
+  await sendCommand("agent.run", { agentId: "workexp.opportunity-finder", input: { url }, trigger: "manual" });
+  return { ok: true, message: "Reading that page — it'll appear here in a minute." };
+}
+
+export async function saveProfileAction(_: Result | null, form: FormData): Promise<Result> {
+  await guard();
+  await setSetting("workexp.profile", {
+    summary: String(form.get("summary") ?? "").trim(),
+    cvText: String(form.get("cvText") ?? "").trim(),
+    targets: String(form.get("targets") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  });
+  revalidatePath("/sectors/workexp");
+  return { ok: true, message: "Profile saved" };
+}
+
+export async function saveSourcesAction(_: Result | null, form: FormData): Promise<Result> {
+  await guard();
+  try {
+    const parsed = JSON.parse(String(form.get("sources") ?? "[]"));
+    if (!Array.isArray(parsed) || !parsed.every((s) => s.id && s.name && /^https?:\/\//.test(s.url))) throw new Error("Each source needs id, name and url");
+    await setSetting("workexp.sources", parsed.map((s) => ({ id: String(s.id), name: String(s.name), url: String(s.url), enabled: s.enabled !== false })));
+    return { ok: true, message: "Sources saved" };
+  } catch (e) {
+    return { ok: false, message: `Not saved: ${(e as Error).message}` };
+  }
+}
+
+export async function uploadCvAction(_: Result | null, form: FormData): Promise<Result> {
+  await guard();
+  const file = form.get("cv");
+  if (!(file instanceof File) || !file.size) return { ok: false, message: "Choose a PDF" };
+  if (file.size > 5 * 1024 * 1024 || !/pdf/i.test(file.type)) return { ok: false, message: "PDF under 5 MB please" };
+  const { dataPath } = await import("@/lib/browser");
+  const fsMod = await import("node:fs/promises");
+  const buf = Buffer.from(await file.arrayBuffer());
+  const p = dataPath("profile", "cv.pdf");
+  await fsMod.writeFile(p, buf);
+  // Also keep the text, so drafts can quote it.
+  const { extractText } = await import("@/lib/extract");
+  const text = (await extractText(p).catch(() => "")).replace(/\[page \d+\]\n?/g, "").trim();
+  const { getSetting } = await import("@/lib/settings");
+  const profile = await getSetting("workexp.profile");
+  if (text) await setSetting("workexp.profile", { ...profile, cvText: text.slice(0, 20000) });
+  revalidatePath("/sectors/workexp");
+  return { ok: true, message: text ? "CV uploaded and text extracted" : "CV uploaded (couldn't read its text — paste it below)" };
+}

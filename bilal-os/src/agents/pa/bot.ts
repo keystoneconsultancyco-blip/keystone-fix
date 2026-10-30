@@ -128,7 +128,7 @@ async function startWith(token: string) {
 
 /** Starts the bot and restarts it whenever the token on the Setup page changes. */
 export async function startBot() {
-  await import("./telegram-handlers"); // registers PA commands + text handler
+  await import("@/agents/telegram"); // registers every sector's commands, buttons and the PA text handler
   const check = async () => {
     const token = await getSecret("telegram_bot_token");
     if (token === currentToken && bot) return;

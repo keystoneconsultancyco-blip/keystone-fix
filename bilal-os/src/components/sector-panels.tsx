@@ -5,6 +5,7 @@ import { getAllSettings } from "@/lib/settings";
 import { fmtTime, fmtDate, relative } from "@/lib/time";
 import { InlineField, Toggle } from "./ui";
 import { UniSearch } from "./panels/UniSearch";
+import { WorkExpPanel } from "./panels/WorkExpPanel";
 import { saveSettingAction, toggleModuleAction } from "@/app/actions";
 
 async function PaPanel() {
@@ -55,9 +56,11 @@ async function UniPanel() {
                   <td><b>{m.code}</b><div className="muted" style={{ fontSize: "0.82rem" }}>{m.name}</div></td>
                   <td>{m.files}<div className="help">{m.indexed} searchable</div></td>
                   <td>{m.guide_doc_id ? <a href={`https://docs.google.com/document/d/${m.guide_doc_id}`} target="_blank" rel="noreferrer">Guide ↗</a> : <span className="muted">not yet</span>}{m.guide_updated_at && <div className="help">{relative(m.guide_updated_at)}</div>}</td>
-                  <td className="row">
-                    {m.moodle_url && <a href={m.moodle_url} target="_blank" rel="noreferrer">Moodle</a>}
-                    {m.drive_folder_id && <a href={`https://drive.google.com/drive/folders/${m.drive_folder_id}`} target="_blank" rel="noreferrer">Drive</a>}
+                  <td>
+                    <div className="row">
+                      {m.moodle_url && <a href={m.moodle_url} target="_blank" rel="noreferrer">Moodle</a>}
+                      {m.drive_folder_id && <a href={`https://drive.google.com/drive/folders/${m.drive_folder_id}`} target="_blank" rel="noreferrer">Drive</a>}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -79,7 +82,10 @@ async function UniPanel() {
   );
 }
 
-export const SECTOR_PANELS: Record<string, (p: { sectorId: string }) => Promise<React.ReactNode>> = {
+export type PanelProps = { sectorId: string; searchParams: Record<string, string | undefined> };
+
+export const SECTOR_PANELS: Record<string, (p: PanelProps) => Promise<React.ReactNode>> = {
   pa: PaPanel,
   uni: UniPanel,
+  workexp: (p) => WorkExpPanel({ status: p.searchParams.status }),
 };

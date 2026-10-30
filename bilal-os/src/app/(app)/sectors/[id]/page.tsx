@@ -8,7 +8,7 @@ import type { Kpi } from "@/lib/agent/types";
 import { KpiCards, AlertsList, ApprovalsList, AgentsTable, ActivityList } from "@/components/blocks";
 import { ActionButton, InlineField } from "@/components/ui";
 import { readAllAlertsAction, saveAgentConfigAction, deleteSectorAction } from "../../../actions";
-import { SECTOR_PANELS } from "@/components/sector-panels";
+import { SECTOR_PANELS, type PanelProps } from "@/components/sector-panels";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ async function collectKpis(sectorId: string): Promise<Kpi[]> {
   return out;
 }
 
-export default async function SectorPage(props: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; agent?: string; level?: string }> }) {
+export default async function SectorPage(props: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; agent?: string; level?: string; status?: string }> }) {
   const { id } = await props.params;
   const sp = await props.searchParams;
   const tab = (TABS as readonly string[]).includes(sp.tab ?? "") ? sp.tab! : "overview";
@@ -44,7 +44,7 @@ export default async function SectorPage(props: { params: Promise<{ id: string }
         {TABS.map((t) => <Link key={t} href={`/sectors/${id}?tab=${t}`} className={t === tab ? "active" : ""}>{t[0].toUpperCase() + t.slice(1)}</Link>)}
       </nav>
 
-      {tab === "overview" && <Overview id={id} Panel={Panel} />}
+      {tab === "overview" && <Overview id={id} Panel={Panel} searchParams={sp} />}
       {tab === "agents" && <AgentsTable agents={agents} />}
       {tab === "activity" && <ActivityTab id={id} agent={sp.agent} level={sp.level} agents={agents.map((a) => ({ id: a.id, name: a.name }))} />}
       {tab === "settings" && <SettingsTab id={id} builtin={sector.builtin} agents={agents} />}
@@ -52,12 +52,12 @@ export default async function SectorPage(props: { params: Promise<{ id: string }
   );
 }
 
-async function Overview({ id, Panel }: { id: string; Panel?: (p: { sectorId: string }) => Promise<React.ReactNode> }) {
+async function Overview({ id, Panel, searchParams }: { id: string; Panel?: (p: PanelProps) => Promise<React.ReactNode>; searchParams: Record<string, string | undefined> }) {
   const [kpis, alerts, approvals] = await Promise.all([collectKpis(id), openAlerts(id), pendingApprovals(id)]);
   return (
     <div className="stack">
       <KpiCards kpis={kpis} />
-      {Panel && <Panel sectorId={id} />}
+      {Panel && <Panel sectorId={id} searchParams={searchParams} />}
       <div className="grid cols-2">
         <section className="card">
           <div className="card-head"><h2>Alerts</h2>{alerts.length > 0 && <ActionButton className="small" action={readAllAlertsAction.bind(null, id)}>Clear all</ActionButton>}</div>

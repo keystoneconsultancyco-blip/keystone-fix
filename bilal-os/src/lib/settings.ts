@@ -44,7 +44,7 @@ export const SETTING_DEFAULTS = {
       "First-year BSc Economics student at Royal Holloway, University of London. Runs Keystone, a finance-operations consultancy, and a property-sourcing side business. Interested in private equity and investment.",
     cvText: "",
     targets: ["private equity", "investment management", "investment banking", "asset management"],
-  },
+  } as { summary: string; cvText: string; targets: string[] },
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;
