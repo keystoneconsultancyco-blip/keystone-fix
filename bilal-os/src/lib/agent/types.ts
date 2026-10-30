@@ -78,6 +78,8 @@ export interface AgentDefinition {
   approvals?: ApprovalRule[];
   /** Extra settings shown on the sector's settings tab. Read with ctx.config(key). */
   settings?: AgentSettingDef[];
+  /** Don't record runs that end with `skipped` (for agents that poll every minute). */
+  quietWhenIdle?: boolean;
   /** Retries after a failure (with exponential backoff). Default 2. */
   retries?: number;
   /** Max run time in seconds before the job is killed. Default 900. */

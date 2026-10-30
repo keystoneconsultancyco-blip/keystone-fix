@@ -34,6 +34,12 @@ export async function runAgent(agent: AgentDefinition, opts: RunOptions): Promis
   const ctx = buildContext(agent, runId, opts.trigger, opts.input ?? {});
   try {
     const res = await agent.run(ctx);
+    if (res.skipped && agent.quietWhenIdle) {
+      await q("DELETE FROM agent_runs WHERE id = $1", [runId]);
+      await q("UPDATE agents SET last_status = 'success' WHERE id = $1", [agent.id]);
+      await recordSuccess(agent.id);
+      return;
+    }
     const status = res.skipped ? "skipped" : "success";
     await q("UPDATE agent_runs SET finished_at = now(), status = $2, summary = $3 WHERE id = $1", [runId, status, res.summary]);
     await q("UPDATE agents SET last_status = $2 WHERE id = $1", [agent.id, status]);

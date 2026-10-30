@@ -62,3 +62,14 @@ describe("helpers", () => {
     expect(JSON.stringify(r)).not.toMatch(/"x"|"y"|abc123/);
   });
 });
+
+describe("telegram quick parse", async () => {
+  it("parses simple reminders without AI", async () => {
+    const { quickParse } = await import("@/agents/pa/telegram-handlers");
+    const r = quickParse("remind me to call mum at 4pm");
+    expect(r?.title).toBe("call mum");
+    expect(r?.when).toBeInstanceOf(Date);
+    expect(quickParse("remind me to buy milk")).toEqual({ title: "buy milk", when: null });
+    expect(quickParse("what's the weather")).toBeNull();
+  });
+});

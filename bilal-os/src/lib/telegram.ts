@@ -4,10 +4,15 @@ import { q } from "./db";
 
 let cached: { token: string; api: Api } | null = null;
 
+/** TELEGRAM_API_ROOT lets tests point the bot at a fake Telegram server. */
+export function telegramClientOptions() {
+  return process.env.TELEGRAM_API_ROOT ? { apiRoot: process.env.TELEGRAM_API_ROOT } : undefined;
+}
+
 async function api(): Promise<Api | null> {
   const token = await getSecret("telegram_bot_token");
   if (!token) return null;
-  if (!cached || cached.token !== token) cached = { token, api: new Api(token) };
+  if (!cached || cached.token !== token) cached = { token, api: new Api(token, telegramClientOptions()) };
   return cached.api;
 }
 

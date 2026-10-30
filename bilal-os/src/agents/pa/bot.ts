@@ -5,7 +5,7 @@ import { getSecret, setSecret } from "@/lib/settings";
 import { q, one } from "@/lib/db";
 import { decideApproval } from "@/lib/approvals";
 import { logActivity } from "@/lib/activity";
-import { esc } from "@/lib/telegram";
+import { esc, telegramClientOptions } from "@/lib/telegram";
 
 export type CommandHandler = (args: string, ctx: Context) => Promise<string | void>;
 const commands = new Map<string, { description: string; handler: CommandHandler }>();
@@ -42,7 +42,7 @@ async function tryPair(ctx: Context, code: string): Promise<boolean> {
 }
 
 function build(token: string): Bot {
-  const b = new Bot(token);
+  const b = new Bot(token, { client: telegramClientOptions() });
 
   b.command("start", async (ctx) => {
     if (await isOwner(ctx)) return void ctx.reply("You're already linked. Send /help to see what I can do.");
@@ -148,7 +148,7 @@ export async function stopBot() {
 
 export async function botUsername(token: string): Promise<string | null> {
   try {
-    const b = new Bot(token);
+    const b = new Bot(token, { client: telegramClientOptions() });
     await b.init();
     return b.botInfo.username;
   } catch {
