@@ -5,6 +5,8 @@ const base = process.env.BASE ?? "http://localhost:3101";
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: Number(process.env.W ?? 1280), height: 900 } });
 const page = await ctx.newPage();
+page.on("pageerror", (e) => console.log("PAGEERROR", page.url(), e.message));
+page.on("console", (m) => { if (m.type() === "error") console.log("CONSOLE", page.url(), m.text().slice(0, 200)); });
 await page.goto(base + "/login");
 await page.fill("input[name=password]", "test-password-123");
 await page.click("button.btn.primary");

@@ -71,8 +71,10 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 5px; font-si
 .pagehead { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
 
 .tabbar { display: none; }
+.mobile-only { display: none !important; }
 @media (max-width: 820px) {
   .sidebar { display: none; }
+  .mobile-only { display: flex !important; }
   .main { padding: 16px 16px calc(84px + env(safe-area-inset-bottom)); }
   .tabbar {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;

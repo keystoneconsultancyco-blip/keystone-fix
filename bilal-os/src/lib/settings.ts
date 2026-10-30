@@ -30,7 +30,6 @@ export const SETTING_DEFAULTS = {
   "uni.timetableIcsUrl": "",
   "uni.timetableUrl": "https://timetable.royalholloway.ac.uk",
   "uni.driveRootName": "Bilal OS — Uni",
-  "uni.termStart": "2026-09-28",
 
   "workexp.minScoreToAlert": 70,
   "workexp.autoSubmit": false,

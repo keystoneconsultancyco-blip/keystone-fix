@@ -1,11 +1,10 @@
 import Link from "next/link";
-import fs from "node:fs";
 import { q } from "@/lib/db";
 import { getSetting } from "@/lib/settings";
-import { dataPath } from "@/lib/browser";
+import { hasBlob } from "@/lib/blobs";
 import { fmtDate, relative } from "@/lib/time";
-import { ActionButton, ActionForm } from "../ui";
-import { addOpportunityUrlAction, saveProfileAction, saveSourcesAction, setOpportunityStatusAction, uploadCvAction } from "@/app/actions";
+import { ActionButton, ActionForm, InlineField } from "../ui";
+import { addOpportunityUrlAction, saveSettingAction, saveProfileAction, saveSourcesAction, setOpportunityStatusAction, uploadCvAction } from "@/app/actions";
 
 const STAGES: [string, string][] = [["new", "New"], ["shortlisted", "Shortlisted"], ["drafting", "Drafting"], ["draft_ready", "Draft ready"], ["applied", "Applied"], ["interview", "Interview"], ["offer", "Offer"], ["rejected", "Rejected"], ["ignored", "Ignored"]];
 
@@ -22,8 +21,9 @@ export async function WorkExpPanel({ status }: { status?: string }) {
     getSetting("workexp.profile"),
     getSetting("workexp.sources"),
   ]);
+  const [minScore, autoSubmit] = await Promise.all([getSetting("workexp.minScoreToAlert"), getSetting("workexp.autoSubmit")]);
   const count = Object.fromEntries(counts.map((c) => [c.status, c.n]));
-  const hasCv = fs.existsSync(dataPath("profile", "cv.pdf"));
+  const hasCv = await hasBlob("cv");
   return (
     <div className="stack">
       <section className="card">
@@ -91,6 +91,8 @@ export async function WorkExpPanel({ status }: { status?: string }) {
           <ActionForm action={saveSourcesAction} submit="Save sources">
             <textarea name="sources" defaultValue={JSON.stringify(sources, null, 2)} style={{ minHeight: 260, fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }} />
           </ActionForm>
+          <InlineField label="Message me about matches scoring at least" type="number" value={minScore} save={saveSettingAction.bind(null, "workexp.minScoreToAlert")} />
+          <InlineField label="Auto-submit simple forms after I approve (not recommended)" type="boolean" value={autoSubmit} help="Off: Bilal OS fills what it can and you press submit. On: it clicks submit only on simple, fully filled forms." save={saveSettingAction.bind(null, "workexp.autoSubmit")} />
         </section>
       </div>
     </div>

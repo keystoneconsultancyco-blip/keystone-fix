@@ -139,8 +139,7 @@ async function housekeeping() {
 
 // Tiny HTTP server so the platform health check works for the worker too.
 function healthServer() {
-  const port = Number(process.env.PORT ?? 0);
-  if (!port) return;
+  const port = Number(process.env.PORT ?? 3000);
   http.createServer(async (req, res) => {
     let ok = true;
     try { await q("SELECT 1"); } catch { ok = false; }

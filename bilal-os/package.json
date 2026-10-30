@@ -13,6 +13,7 @@
     "worker": "tsx --env-file-if-exists=.env worker/index.ts",
     "migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "typecheck": "tsc --noEmit",
+    "new-agent": "tsx scripts/new-agent.ts",
     "test": "vitest run"
   },
   "dependencies": {

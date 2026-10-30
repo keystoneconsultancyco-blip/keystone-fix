@@ -294,14 +294,13 @@ export async function uploadCvAction(_: Result | null, form: FormData): Promise<
   const file = form.get("cv");
   if (!(file instanceof File) || !file.size) return { ok: false, message: "Choose a PDF" };
   if (file.size > 5 * 1024 * 1024 || !/pdf/i.test(file.type)) return { ok: false, message: "PDF under 5 MB please" };
-  const { dataPath } = await import("@/lib/browser");
-  const fsMod = await import("node:fs/promises");
   const buf = Buffer.from(await file.arrayBuffer());
-  const p = dataPath("profile", "cv.pdf");
-  await fsMod.writeFile(p, buf);
+  const { putBlob, blobToFile } = await import("@/lib/blobs");
+  await putBlob("cv", "cv.pdf", "application/pdf", buf);
   // Also keep the text, so drafts can quote it.
   const { extractText } = await import("@/lib/extract");
-  const text = (await extractText(p).catch(() => "")).replace(/\[page \d+\]\n?/g, "").trim();
+  const p = await blobToFile("cv");
+  const text = p ? (await extractText(p).catch(() => "")).replace(/\[page \d+\]\n?/g, "").trim() : "";
   const { getSetting } = await import("@/lib/settings");
   const profile = await getSetting("workexp.profile");
   if (text) await setSetting("workexp.profile", { ...profile, cvText: text.slice(0, 20000) });

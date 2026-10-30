@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { workerHealth, spendByModel } from "@/lib/queries";
 import { costStatus } from "@/lib/cost";
 import { q } from "@/lib/db";
@@ -20,6 +21,12 @@ export default async function SystemPage() {
   return (
     <>
       <div className="pagehead"><h1>Health &amp; spend</h1></div>
+      <nav className="card row mobile-only" style={{ marginBottom: 14 }}>
+        <Link className="btn" href="/settings">⚙️ Settings</Link>
+        <Link className="btn" href="/setup">🔑 Setup</Link>
+        <Link className="btn" href="/activity">📜 Activity</Link>
+        <Link className="btn" href="/sectors">🧩 Sectors</Link>
+      </nav>
       <div className="grid cols-2">
         <section className="card stack">
           <h2>🩺 Worker</h2>

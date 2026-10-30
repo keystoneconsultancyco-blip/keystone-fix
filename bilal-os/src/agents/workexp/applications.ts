@@ -1,7 +1,7 @@
-import fs from "node:fs";
 import type { AgentContext, AgentDefinition } from "@/lib/agent/types";
 import { q, one } from "@/lib/db";
 import { dataPath } from "@/lib/browser";
+import { blobToFile } from "@/lib/blobs";
 import { esc, sendTelegram, sendTelegramPhoto } from "@/lib/telegram";
 import { fmtDateTime } from "@/lib/time";
 import { BROWSER_PROFILE, readPage } from "./finder";
@@ -195,8 +195,8 @@ async function fillForm(ctx: AgentContext, url: string, answers: { question: str
         await page.fill(f.selector, value).then(() => filled++).catch(() => {});
       }
     }
-    const cv = dataPath("profile", "cv.pdf");
-    if (fs.existsSync(cv)) await page.locator("input[type=file]").first().setInputFiles(cv).catch(() => {});
+    const cv = await blobToFile("cv");
+    if (cv) await page.locator("input[type=file]").first().setInputFiles(cv).catch(() => {});
     const shot = dataPath("applications", `${Date.now()}.png`);
     await page.screenshot({ path: shot, fullPage: true });
 
