@@ -1,0 +1,51 @@
+# One-click setup for Render (New → Blueprint). Creates the database, the
+# dashboard and the always-on worker for Bilal OS (code in bilal-os/).
+databases:
+  - name: bilal-os-db
+    region: frankfurt
+
+services:
+  - type: web
+    name: bilal-os
+    runtime: docker
+    region: frankfurt
+    plan: free
+    rootDir: bilal-os
+    dockerfilePath: ./bilal-os/Dockerfile
+    dockerContext: ./bilal-os
+    healthCheckPath: /api/health
+    envVars:
+      - key: ROLE
+        value: web
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bilal-os-db
+          property: connectionString
+      - key: MASTER_KEY
+        generateValue: true
+
+  - type: worker
+    name: bilal-os-worker
+    runtime: docker
+    region: frankfurt
+    rootDir: bilal-os
+    dockerfilePath: ./bilal-os/Dockerfile
+    dockerContext: ./bilal-os
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 2
+    envVars:
+      - key: ROLE
+        value: worker
+      - key: DATA_DIR
+        value: /data
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bilal-os-db
+          property: connectionString
+      - key: MASTER_KEY
+        fromService:
+          type: web
+          name: bilal-os
+          envVarKey: MASTER_KEY

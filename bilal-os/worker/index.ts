@@ -148,11 +148,21 @@ function healthServer() {
   }).listen(port, () => console.log(`[worker] health server on :${port}`));
 }
 
+/** If APP_URL isn't set (e.g. Render), use the address the dashboard saved on boot. */
+const APP_URL_FROM_ENV = Boolean(process.env.APP_URL);
+async function loadAppUrl() {
+  if (APP_URL_FROM_ENV) return;
+  const row = await one<{ value: string }>("SELECT value #>> '{}' AS value FROM settings WHERE key = 'system.appUrl'").catch(() => null);
+  if (row?.value) process.env.APP_URL = row.value;
+}
+
 async function main() {
   console.log("[worker] starting");
   healthServer();
   const applied = await migrate();
   if (applied.length) console.log("[worker] migrations applied:", applied.join(", "));
+  await loadAppUrl();
+  setInterval(() => void loadAppUrl(), 10 * 60_000);
   await boss.start();
   await setupAll();
   await startWorkers();

@@ -101,6 +101,19 @@ Railway builds and starts both services automatically after variable changes (it
 
 ---
 
+## Alternative: one-click setup on Render
+
+If Railway isn't available, use Render instead. The repository contains `render.yaml`, which creates everything for you: the database, the dashboard, the always-on worker with its storage, and a randomly generated `MASTER_KEY`.
+
+1. Sign up at <https://render.com> with GitHub and add a payment card.
+2. **New → Blueprint** → pick your repository → branch `claude/bilal-os-build-dpbr7w` → **Apply**.
+3. Wait about 10 minutes until all three show **Available / Live**.
+4. Open the dashboard address Render shows for `bilal-os` (e.g. `https://bilal-os.onrender.com`) and continue from **Step 4 — Create your dashboard login** above.
+
+Notes: the dashboard runs on Render's free tier, so it naps after 15 minutes unused and takes ~30 seconds to wake. The worker and database are paid and always on. You don't need to set `APP_URL` on Render.
+
+---
+
 ## Step 4 — Create your dashboard login
 
 1. Open your dashboard address in Safari/Chrome.

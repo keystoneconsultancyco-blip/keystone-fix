@@ -12,7 +12,9 @@ export const env = {
     return process.env.MASTER_KEY ?? "";
   },
   get appUrl() {
-    return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    // On Render the dashboard knows its own address (RENDER_EXTERNAL_URL); the worker
+    // copies it from the database at start-up (see worker/index.ts).
+    return (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:3000").replace(/\/$/, "");
   },
   get dataDir() {
     return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? "./data");
