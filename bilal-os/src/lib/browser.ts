@@ -26,6 +26,9 @@ export async function withBrowser<T>(profile: string, fn: (ctx: BrowserContext) 
     viewport: { width: 1280, height: 900 },
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
+  // tsx/esbuild adds a __name() helper to functions; make it exist inside pages
+  // so code passed to page.evaluate() works.
+  await ctx.addInitScript({ content: "globalThis.__name = globalThis.__name || ((f) => f);" });
   try {
     return await fn(ctx);
   } finally {

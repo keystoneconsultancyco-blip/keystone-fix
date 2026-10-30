@@ -10,6 +10,7 @@ import { AGENTS, getAgent } from "../src/agents";
 import { syncRegistry, resolveSchedule } from "../src/lib/agent/registry-sync";
 import { runAgent, handleApproval } from "../src/lib/agent/runner";
 import { logActivity } from "../src/lib/activity";
+import { checkThresholds } from "../src/lib/cost";
 import { startBot, stopBot } from "../src/agents/pa/bot";
 import type { AgentDefinition } from "../src/lib/agent/types";
 
@@ -160,6 +161,8 @@ async function main() {
   await processCommands();
   await heartbeat();
   setInterval(() => void heartbeat().catch((e) => console.error("[heartbeat]", e.message)), 60_000);
+  // Budget alerts also fire when the cap is lowered, not only after an AI call.
+  setInterval(() => void checkThresholds().catch(() => {}), 5 * 60_000);
   setInterval(() => void processCommands(), 30_000);
   setInterval(() => void refreshNextRuns().catch(() => {}), 10 * 60_000);
   setInterval(() => void housekeeping().catch(() => {}), 6 * 3600_000);

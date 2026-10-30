@@ -20,6 +20,7 @@
     "@huggingface/transformers": "^4.3.2",
     "googleapis": "^188.0.0",
     "grammy": "^1.46.0",
+    "jszip": "^3.10.2",
     "next": "^16.4.3",
     "otplib": "^13.5.0",
     "pg": "^8.23.1",
@@ -29,6 +30,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsx": "^4.23.15",
+    "unpdf": "^1.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -228,3 +228,19 @@ export async function signOutEverywhereAction(): Promise<Result> {
   await q("DELETE FROM sessions");
   redirect("/login");
 }
+
+// ---------- Uni ----------
+export async function searchCourseAction(query: string, moduleCode?: string): Promise<Result> {
+  await guard();
+  if (query.trim().length < 3) return { ok: false, message: "Type a few more words" };
+  const { searchCourse } = await import("@/agents/uni/indexer");
+  const rows = await searchCourse(query.trim(), moduleCode || undefined, 8);
+  return { ok: true, data: rows.map((r) => ({ ...r, content: r.content.slice(0, 600) })) };
+}
+
+export async function toggleModuleAction(code: string, active: boolean): Promise<Result> {
+  await guard();
+  await q("UPDATE modules SET active = $2 WHERE code = $1", [code, active]);
+  revalidatePath("/sectors/uni");
+  return { ok: true };
+}

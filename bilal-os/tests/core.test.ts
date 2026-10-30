@@ -73,3 +73,35 @@ describe("telegram quick parse", async () => {
     expect(quickParse("what's the weather")).toBeNull();
   });
 });
+
+describe("uni helpers", () => {
+  it("parses ICS feeds", async () => {
+    const { parseIcs } = await import("@/lib/ics");
+    const ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r\nSUMMARY:EC1101 Lecture\\, Microeconomics\r\nLOCATION:Windsor Building 0-03\r\nDTSTART;TZID=Europe/London:20261102T100000\r\nDTEND;TZID=Europe/London:20261102T110000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:def\r\nSUMMARY:Cancelled\r\nSTATUS:CANCELLED\r\nDTSTART:20261103T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR";
+    const ev = parseIcs(ics);
+    expect(ev).toHaveLength(1);
+    expect(ev[0].summary).toBe("EC1101 Lecture, Microeconomics");
+    expect(ev[0].start.toISOString()).toBe("2026-11-02T10:00:00.000Z");
+  });
+  it("chunks text", async () => {
+    const { chunkText } = await import("@/lib/embeddings");
+    const text = Array.from({ length: 60 }, (_, i) => `Sentence number ${i} about elasticity of demand.`).join(" ");
+    const chunks = chunkText(text, 500, 50);
+    expect(chunks.length).toBeGreaterThan(3);
+    expect(chunks.every((c) => c.length <= 520)).toBe(true);
+  });
+});
+
+describe("uni naming", async () => {
+  const h = await import("@/agents/uni/helpers");
+  it("finds module codes and weeks", () => {
+    expect(h.moduleCodeFrom("EC1101_2026-27", "Principles")).toBe("EC1101");
+    expect(h.moduleCodeFrom("Intro to Economics", "EC 1102 Macro")).toBe("EC1102");
+    expect(h.weekFrom("Week 3: Elasticity")).toBe(3);
+    expect(h.weekFrom("General")).toBeNull();
+    expect(h.kindFrom("Lecture 3 slides.pdf")).toBe("lecture");
+    expect(h.kindFrom("Problem set 2.pdf")).toBe("seminar");
+    expect(h.sectionFolder("Week 3: Elasticity", 3)).toBe("Week 03 — Elasticity");
+    expect(h.sectionFolder("Week 3", 3)).toBe("Week 03");
+  });
+});
