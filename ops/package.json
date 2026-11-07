@@ -1,0 +1,11 @@
+{
+  "name": "keystone-ops",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Keystone operations platform: shared logic for every n8n workflow, plus the workflow generator and tests.",
+  "scripts": {
+    "build": "node scripts/build-workflows.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "UNLICENSED"
+}

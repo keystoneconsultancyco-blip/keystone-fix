@@ -1,0 +1,18 @@
+{
+  "_note": "Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.",
+  "baseId": "app8WDGaKEamwXTqh",
+  "tables": {
+    "clients": "tbl3vmAkTQlzaU9ac",
+    "jobs": "tbliUF4OWbhpsNMPA",
+    "discounts": "tbl6UXWCyAHMqDQJ6",
+    "agentLog": "tbl2w5ClJO9aojS43",
+    "needsReview": "tblI09VVKADnb8Ln0",
+    "callLog": "tblq3eEhVkCGlYuTy",
+    "quotes": "tbl1lUnKBBqk7NKt7",
+    "approvedFixes": "tblTnGQbfSDTLEf0i",
+    "clientMetrics": "tblDIK2iPEv4bdkHj",
+    "auditIntakes": "tbl1p0MQLs1MA0DnY",
+    "prospects": "tblnjK4LLfZSqiGRc",
+    "serviceProgress": "tblAJ5gq7HjyWMLu9"
+  }
+}
