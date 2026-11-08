@@ -178,5 +178,30 @@
     "credentials": [
       "Xero account"
     ]
+  },
+  {
+    "name": "KS Weekly Money + Dashboard",
+    "file": "n8n/workflows/ks-weekly-money-dashboard.json",
+    "nodes": 35,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run weekly money now",
+        "method": "POST",
+        "path": "ks-weekly-money-now"
+      },
+      {
+        "node": "Dashboard page",
+        "method": "GET",
+        "path": "ks-dashboard"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Xero account",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
   }
 ]

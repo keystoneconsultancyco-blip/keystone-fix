@@ -30,6 +30,11 @@ function airtableUpdate(baseId, tableId, updates) {
   return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };
 }
 
+// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.
+function airtableUpsert(baseId, tableId, mergeOn, fieldsList) {
+  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };
+}
+
 function clean(f) {
   const o = {};
   for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;
@@ -68,4 +73,4 @@ const write = {
 
 function ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }
 
-module.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };
+module.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };
