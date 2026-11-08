@@ -1,0 +1,2 @@
+# test helper JSON is generated with a secret token at deploy time
+n8n/workflows/ks-test-xero-helper.json

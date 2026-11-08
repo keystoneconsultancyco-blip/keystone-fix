@@ -74,5 +74,21 @@
       }
     ],
     "credentials": []
+  },
+  {
+    "name": "KS Test - Xero helper",
+    "file": "n8n/workflows/ks-test-xero-helper.json",
+    "nodes": 7,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Xero helper",
+        "method": "POST",
+        "path": "ks-test-xero-helper"
+      }
+    ],
+    "credentials": [
+      "Xero account"
+    ]
   }
 ]

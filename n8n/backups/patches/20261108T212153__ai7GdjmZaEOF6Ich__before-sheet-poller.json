@@ -1,0 +1,589 @@
+{
+  "id": "ai7GdjmZaEOF6Ich",
+  "name": "[Stock] Invoice Automation - Sheet Poller",
+  "description": null,
+  "active": true,
+  "activeVersionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+  "createdAt": "2026-09-01T00:07:27.163Z",
+  "updatedAt": "2026-11-08T13:57:37.873Z",
+  "isArchived": false,
+  "versionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 2,
+  "nodes": [
+    {
+      "id": "poller-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1300,
+        -500
+      ],
+      "parameters": {
+        "content": "## Sheet Poller\nWatches the \"Jobs\" tab of the Google Sheet in Client Config (jobsSheetId) for rows with Status = \"Complete\", and fires each one through the already-tested main workflow's own webhook - reusing all of its validation/Xero/email logic rather than duplicating any of it. That includes the Payment Method branch (Send Invoice vs Paid Cash) - this Poller just passes the cell value through unchanged; the main workflow decides what to do with it.\n\nThree ways this runs:\n- Schedule Trigger: real production path, every 5 minutes.\n- Manual Trigger: editor testing.\n- Webhook (POST /webhook/invoice/poll-now): on-demand / API testing, same pattern used everywhere else in this template.\n\nAfter each row is processed, its Status cell is written back (\"Invoiced\" / \"Skipped - Duplicate\" / \"Error - ...\") so it's never reprocessed on the next poll, plus invoiceReference/invoiceNumber/processedAt/errorMessage for traceability. Only rows whose Status is literally \"Complete\" (case-sensitive) are picked up - staff should leave Status blank until a job is genuinely done.\n\nUses raw Google Sheets REST API calls (HTTP Request nodes) rather than the native Google Sheets node - that node's column-mapping/resourceMapper behavior proved unreliable in live testing (a Read/Update combination either errored outright or silently wrote unrelated webhook-request fields into the sheet). The raw REST pattern here is the same proven-working approach already used for Xero throughout this project.\n\nSee workflows/invoice-automation/README.md for the exact Jobs tab column layout this expects.",
+        "height": 480,
+        "width": 520
+      }
+    },
+    {
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger (every 5 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1300,
+        -160
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1300,
+        20
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "webhook-poll-now",
+      "name": "Poll Trigger (Webhook)",
+      "webhookId": "invoice-poll-now",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1300,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice/poll-now",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -1040,
+        20
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "s2riyS1tZ0jtVuSR",
+          "mode": "id"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "get-jobs-rows",
+      "name": "Get Jobs Rows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -800,
+        20
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.jobsSheetTabName }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xKa0P1ACdrwcNgDR",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "code-process-rows",
+      "name": "Process Complete Rows",
+      "notes": "Calls the main workflow's own already-tested webhook per qualifying row (now including paymentMethod, passed through unchanged from whatever the sheet cell contains - blank/unexpected values are handled by the main workflow's own 'Normalize Payment Method' node, not here), sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Builds a Sheets values.update range (columns I-M: status, invoiceReference, invoiceNumber, processedAt, errorMessage) per row for the next node - shifted one column right from the original H-L now that Payment Method occupies column H. Assumes the exact Jobs tab column order from the README - if that ever changes, update the column letters here.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        20
+      ],
+      "parameters": {
+        "jsCode": "const config = $('Get Client Config').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map((row, idx) => {\n  const obj = { row_number: idx + 2 };\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n\nconst results = [];\nfor (const r of completed) {\n  const payload = {\n    jobId: r.jobId,\n    customerId: r.customerId,\n    customerName: r.customerName,\n    customerEmail: r.customerEmail || undefined,\n    customerPhone: r.customerPhone || undefined,\n    jobDescription: r.jobDescription,\n    jobValue: Number(r.jobValue),\n    paymentMethod: r.paymentMethod || undefined,\n    milestoneNumber: r.milestoneNumber || null,\n    milestoneLabel: r.milestoneLabel || null,\n  };\n\n  let status, invoiceReference, invoiceNumber, errorMessage;\n  try {\n    const body = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed',\n      body: payload,\n      json: true,\n    });\n    if (body.status === 'success') {\n      status = 'Invoiced';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = body.invoiceNumber || '';\n      errorMessage = '';\n    } else if (body.status === 'skipped') {\n      status = 'Skipped - Duplicate';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = '';\n      errorMessage = '';\n    } else if (body.status === 'rejected') {\n      status = 'Error - Rejected';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = (body.errors || []).join(', ');\n    } else {\n      status = 'Error - Unexpected Response';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = JSON.stringify(body).slice(0, 500);\n    }\n  } catch (err) {\n    status = 'Error - Request Failed';\n    invoiceReference = '';\n    invoiceNumber = '';\n    errorMessage = String((err && err.message) || err).slice(0, 500);\n  }\n\n  results.push({\n    json: {\n      jobsSheetId: config.jobsSheetId,\n      updateRange: `${config.jobsSheetTabName}!I${r.row_number}:M${r.row_number}`,\n      status,\n      invoiceReference,\n      invoiceNumber,\n      processedAt: new Date().toISOString(),\n      errorMessage,\n    }\n  });\n}\n\nreturn results;"
+      }
+    },
+    {
+      "id": "update-row",
+      "name": "Update Row",
+      "notes": "One PUT per qualifying row (n8n's default per-item HTTP Request behavior) - fine at the expected small volume of jobs per poll. alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "alwaysOutputData": true,
+      "position": [
+        -320,
+        20
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.updateRange }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "valueInputOption",
+              "value": "RAW"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[$json.status, $json.invoiceReference, $json.invoiceNumber, $json.processedAt, $json.errorMessage]] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xKa0P1ACdrwcNgDR",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "code-poll-summary",
+      "name": "Build Poll Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        20
+      ],
+      "parameters": {
+        "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.updateRange);\nreturn [{ json: { rowsProcessed: processed.length, results: processed } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (every 5 min)": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Trigger (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config": {
+      "main": [
+        [
+          {
+            "node": "Get Jobs Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Jobs Rows": {
+      "main": [
+        [
+          {
+            "node": "Process Complete Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Complete Rows": {
+      "main": [
+        [
+          {
+            "node": "Update Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row": {
+      "main": [
+        [
+          {
+            "node": "Build Poll Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "errorWorkflow": "GKF6X82UvFFth43w"
+  },
+  "staticData": {
+    "node:Schedule Trigger (every 5 min)": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": null,
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ai7GdjmZaEOF6Ich",
+      "projectId": "FrKmPeJlyYapT3T8",
+      "project": {
+        "id": "FrKmPeJlyYapT3T8",
+        "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-07-06T18:03:16.642Z",
+        "updatedAt": "2026-07-06T18:03:25.479Z"
+      },
+      "createdAt": "2026-09-01T00:07:27.165Z",
+      "updatedAt": "2026-09-01T00:07:27.165Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+    "workflowId": "ai7GdjmZaEOF6Ich",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Sheet Poller\nWatches the \"Jobs\" tab of the Google Sheet in Client Config (jobsSheetId) for rows with Status = \"Complete\", and fires each one through the already-tested main workflow's own webhook - reusing all of its validation/Xero/email logic rather than duplicating any of it. That includes the Payment Method branch (Send Invoice vs Paid Cash) - this Poller just passes the cell value through unchanged; the main workflow decides what to do with it.\n\nThree ways this runs:\n- Schedule Trigger: real production path, every 5 minutes.\n- Manual Trigger: editor testing.\n- Webhook (POST /webhook/invoice/poll-now): on-demand / API testing, same pattern used everywhere else in this template.\n\nAfter each row is processed, its Status cell is written back (\"Invoiced\" / \"Skipped - Duplicate\" / \"Error - ...\") so it's never reprocessed on the next poll, plus invoiceReference/invoiceNumber/processedAt/errorMessage for traceability. Only rows whose Status is literally \"Complete\" (case-sensitive) are picked up - staff should leave Status blank until a job is genuinely done.\n\nUses raw Google Sheets REST API calls (HTTP Request nodes) rather than the native Google Sheets node - that node's column-mapping/resourceMapper behavior proved unreliable in live testing (a Read/Update combination either errored outright or silently wrote unrelated webhook-request fields into the sheet). The raw REST pattern here is the same proven-working approach already used for Xero throughout this project.\n\nSee workflows/invoice-automation/README.md for the exact Jobs tab column layout this expects.",
+          "height": 480,
+          "width": 520
+        },
+        "id": "poller-note",
+        "name": "Sticky Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1300,
+          -500
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 5
+              }
+            ]
+          }
+        },
+        "id": "schedule-trigger",
+        "name": "Schedule Trigger (every 5 min)",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -1300,
+          -160
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-trigger",
+        "name": "Manual Trigger",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1300,
+          20
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "invoice/poll-now",
+          "responseMode": "lastNode",
+          "options": {}
+        },
+        "id": "webhook-poll-now",
+        "name": "Poll Trigger (Webhook)",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -1300,
+          200
+        ],
+        "webhookId": "invoice-poll-now"
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "s2riyS1tZ0jtVuSR",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "exec-client-config",
+        "name": "Get Client Config",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          -1040,
+          20
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.jobsSheetTabName }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {}
+        },
+        "id": "get-jobs-rows",
+        "name": "Get Jobs Rows",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -800,
+          20
+        ],
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "xKa0P1ACdrwcNgDR",
+            "name": "Google Sheets account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $('Get Client Config').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map((row, idx) => {\n  const obj = { row_number: idx + 2 };\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n\nconst results = [];\nfor (const r of completed) {\n  const payload = {\n    jobId: r.jobId,\n    customerId: r.customerId,\n    customerName: r.customerName,\n    customerEmail: r.customerEmail || undefined,\n    customerPhone: r.customerPhone || undefined,\n    jobDescription: r.jobDescription,\n    jobValue: Number(r.jobValue),\n    paymentMethod: r.paymentMethod || undefined,\n    milestoneNumber: r.milestoneNumber || null,\n    milestoneLabel: r.milestoneLabel || null,\n  };\n\n  let status, invoiceReference, invoiceNumber, errorMessage;\n  try {\n    const body = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed',\n      body: payload,\n      json: true,\n    });\n    if (body.status === 'success') {\n      status = 'Invoiced';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = body.invoiceNumber || '';\n      errorMessage = '';\n    } else if (body.status === 'skipped') {\n      status = 'Skipped - Duplicate';\n      invoiceReference = body.invoiceReference || '';\n      invoiceNumber = '';\n      errorMessage = '';\n    } else if (body.status === 'rejected') {\n      status = 'Error - Rejected';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = (body.errors || []).join(', ');\n    } else {\n      status = 'Error - Unexpected Response';\n      invoiceReference = '';\n      invoiceNumber = '';\n      errorMessage = JSON.stringify(body).slice(0, 500);\n    }\n  } catch (err) {\n    status = 'Error - Request Failed';\n    invoiceReference = '';\n    invoiceNumber = '';\n    errorMessage = String((err && err.message) || err).slice(0, 500);\n  }\n\n  results.push({\n    json: {\n      jobsSheetId: config.jobsSheetId,\n      updateRange: `${config.jobsSheetTabName}!I${r.row_number}:M${r.row_number}`,\n      status,\n      invoiceReference,\n      invoiceNumber,\n      processedAt: new Date().toISOString(),\n      errorMessage,\n    }\n  });\n}\n\nreturn results;"
+        },
+        "id": "code-process-rows",
+        "name": "Process Complete Rows",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -560,
+          20
+        ],
+        "notes": "Calls the main workflow's own already-tested webhook per qualifying row (now including paymentMethod, passed through unchanged from whatever the sheet cell contains - blank/unexpected values are handled by the main workflow's own 'Normalize Payment Method' node, not here), sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Builds a Sheets values.update range (columns I-M: status, invoiceReference, invoiceNumber, processedAt, errorMessage) per row for the next node - shifted one column right from the original H-L now that Payment Method occupies column H. Assumes the exact Jobs tab column order from the README - if that ever changes, update the column letters here."
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.updateRange }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "valueInputOption",
+                "value": "RAW"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ values: [[$json.status, $json.invoiceReference, $json.invoiceNumber, $json.processedAt, $json.errorMessage]] }) }}",
+          "options": {}
+        },
+        "id": "update-row",
+        "name": "Update Row",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "alwaysOutputData": true,
+        "position": [
+          -320,
+          20
+        ],
+        "notes": "One PUT per qualifying row (n8n's default per-item HTTP Request behavior) - fine at the expected small volume of jobs per poll. alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "xKa0P1ACdrwcNgDR",
+            "name": "Google Sheets account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.updateRange);\nreturn [{ json: { rowsProcessed: processed.length, results: processed } }];"
+        },
+        "id": "code-poll-summary",
+        "name": "Build Poll Summary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -80,
+          20
+        ]
+      }
+    ],
+    "connections": {
+      "Schedule Trigger (every 5 min)": {
+        "main": [
+          [
+            {
+              "node": "Get Client Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Manual Trigger": {
+        "main": [
+          [
+            {
+              "node": "Get Client Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Poll Trigger (Webhook)": {
+        "main": [
+          [
+            {
+              "node": "Get Client Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Client Config": {
+        "main": [
+          [
+            {
+              "node": "Get Jobs Rows",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Jobs Rows": {
+        "main": [
+          [
+            {
+              "node": "Process Complete Rows",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Complete Rows": {
+        "main": [
+          [
+            {
+              "node": "Update Row",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Row": {
+        "main": [
+          [
+            {
+              "node": "Build Poll Summary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Bilal Khan",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-09-05T01:39:32.981Z",
+    "updatedAt": "2026-09-05T01:39:32.981Z",
+    "workflowPublishHistory": [
+      {
+        "id": 137,
+        "workflowId": "ai7GdjmZaEOF6Ich",
+        "versionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+        "event": "activated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-09-05T01:39:33.138Z"
+      },
+      {
+        "id": 213,
+        "workflowId": "ai7GdjmZaEOF6Ich",
+        "versionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+        "event": "deactivated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-11-08T13:57:37.974Z"
+      },
+      {
+        "id": 214,
+        "workflowId": "ai7GdjmZaEOF6Ich",
+        "versionId": "dae10e73-d2d5-486c-b7f6-4077dd515353",
+        "event": "activated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-11-08T13:57:37.975Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
