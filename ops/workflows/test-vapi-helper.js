@@ -10,7 +10,7 @@ const b = $json.body || {};
 if (b.token !== ${JSON.stringify(TOKEN)}) return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];
 const m = String(b.method || 'GET').toUpperCase();
 const p = String(b.path || '');
-const ok = (m === 'GET' && /^(assistant|phone-number|credential|tool)(\\/[A-Za-z0-9-]+)?$/.test(p)) || ((m === 'PATCH') && /^(assistant|tool)\\/[A-Za-z0-9-]+$/.test(p)) || (m === 'POST' && p === 'tool');
+const ok = (m === 'GET' && /^(assistant|phone-number|credential|tool)(\\/[A-Za-z0-9-]+)?$/.test(p)) || ((m === 'PATCH') && /^(assistant|tool)\\/[A-Za-z0-9-]+$/.test(p)) || (m === 'POST' && /^(tool|assistant|phone-number)$/.test(p)) || (m === 'PATCH' && /^phone-number\\/[A-Za-z0-9-]+$/.test(p));
 if (!ok) return [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];
 return [{ json: { allowed: true, req: { url: 'https://api.vapi.ai/' + p, method: m, body: b.body || {} } } }];`),
   n.iff('Allowed?', 'allowed'),

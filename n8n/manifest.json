@@ -132,6 +132,22 @@
     "credentials": []
   },
   {
+    "name": "KS Test - Sheets helper",
+    "file": "n8n/workflows/ks-test-sheets-helper.json",
+    "nodes": 7,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Sheets helper",
+        "method": "POST",
+        "path": "ks-test-sheets-helper"
+      }
+    ],
+    "credentials": [
+      "Google Sheets account"
+    ]
+  },
+  {
     "name": "KS Util - Vapi helper",
     "file": "n8n/workflows/ks-util-vapi-helper.json",
     "nodes": 7,

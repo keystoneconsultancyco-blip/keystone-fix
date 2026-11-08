@@ -78,6 +78,7 @@ function toPhoneConfig(client, record) {
     managerPhoneNumber: Rg.normalizePhone(field(record, 'Manager phone')) || client.phone.receptionNumber,
     vapiSipCredentialId: field(record, 'Vapi SIP credential ID') || '',
     vapiSipRegionHost: 'sip.vapi.ai',
+    vapiSipUri: field(record, 'Vapi SIP URI') || '',
     vapiAssistantId: field(record, 'Vapi assistant ID') || '',
     googleCalendarId: client.phone.calendarId || 'primary',
     bookingSlotDurationMinutes: 30,

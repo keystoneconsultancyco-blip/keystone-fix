@@ -2,3 +2,4 @@
 n8n/workflows/ks-test-xero-helper.json
 n8n/workflows/ks-util-vapi-helper.json
 n8n/workflows/ks-test-calendar-helper.json
+n8n/workflows/ks-test-sheets-helper.json
