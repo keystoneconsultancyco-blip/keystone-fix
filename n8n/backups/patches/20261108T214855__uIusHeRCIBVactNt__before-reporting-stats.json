@@ -1,0 +1,2355 @@
+{
+  "id": "uIusHeRCIBVactNt",
+  "name": "[Stock] Monthly Reporting",
+  "description": null,
+  "active": true,
+  "activeVersionId": "cb7dc07d-4d43-4ffd-b5b1-0c778f0d0fe6",
+  "createdAt": "2026-09-08T00:29:34.952Z",
+  "updatedAt": "2026-11-08T21:47:51.448Z",
+  "isArchived": false,
+  "versionId": "cb7dc07d-4d43-4ffd-b5b1-0c778f0d0fe6",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 2,
+  "nodes": [
+    {
+      "id": "top-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3000,
+        -1000
+      ],
+      "parameters": {
+        "content": "## Monthly Reporting - Stock Template\n\nRuns on the 1st of each month, for every active row in the Clients Registry (a new Google Sheet - see README), and compiles last calendar month's activity into a client-facing report emailed via Resend, plus an internal archive copy in Google Drive (one folder per client).\n\nReads data already produced by the existing systems rather than duplicating any of their logic:\n- Phone Booking -> that client's CallLog sheet (new - see workflows/ai-phone-booking/03-post-call-actions.json) for calls answered / bookings made.\n- Invoice Automation -> that client's Jobs sheet for invoices sent / cash jobs.\n- Collections/Reminders -> Xero Invoice History (same tagged COLLECTIONS_STAGE entries Collections itself writes) for invoices chased / paid.\n- Quoting -> not built yet; always skipped (usesQuoting is always false in the Registry today). Wired in now so nothing else needs to change when it exists.\n\nA client with a service flag OFF in the Registry has that whole section omitted from their report entirely (not shown as zero/N/A). A client with a service ON but genuinely zero activity that month still gets that section, worded gracefully (\"We didn't send any invoices this month.\") rather than a bare 0.\n\nThree triggers, same pattern as every other workflow in this project:\n- Schedule Trigger: real production path, 1st of the month at 08:00.\n- Manual Trigger + \"Sample Mock Clients\": click-to-test with 2 fictional trades businesses covering full-usage and partial-usage cases.\n- Webhook (POST /webhook/reporting/monthly-check): accepts { testMode: true, mockClients: [...] } for API testing - this is what was used for the pre-live test run (see README).\n\ntestMode bypasses the real Clients Registry/Xero/Sheets fetch entirely (mock clients already carry their own fully-formed stats) but still sends a real Resend email and creates a real Drive archive file, so delivery is actually proven end to end, not just simulated.\n\nSee README.md for the Clients Registry sheet structure, the Drive folder setup, and flagged parameter-shape uncertainties - this workflow is the first in the project to call Google Drive at all, the first to use the Sheets values:append verb, and the first to make authenticated API calls from inside a Code node (this.helpers.httpRequestWithAuthentication) rather than a native node - all unverified until a live test proves them.",
+        "height": 900,
+        "width": 700
+      }
+    },
+    {
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger (1st of month 08:00)",
+      "notes": "Parameter-shape flag: the 'months'/triggerAtDayOfMonth field shape here is best-effort - only 'minutes' (Sheet Poller) and 'days'/triggerAtHour (Collections) have been proven live in this project so far. Verify the first scheduled run actually fires on the 1st.",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3000,
+        -560
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-production-input",
+      "name": "Production Run Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2760,
+        -560
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { testMode: false, mockClients: [] } }];"
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3000,
+        -280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "code-sample-mock-clients",
+      "name": "Sample Mock Clients (Manual Test)",
+      "notes": "Two fixtures: Ridgeline uses every service with plausible mixed numbers (proves the normal case and graceful non-zero wording); Bright Spark uses only Invoice Automation with zero activity (proves both the 'skip unused service section entirely' rule AND the 'graceful zero wording for a used-but-quiet service' rule in one pass).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2760,
+        -280
+      ],
+      "parameters": {
+        "jsCode": "const mockClients = [\n  {\n    clientId: 'MOCK-RIDGELINE',\n    clientName: 'Ridgeline Plumbing & Heating',\n    contactEmail: 'keystoneconsultancy.co@gmail.com',\n    usesPhoneBooking: true,\n    usesInvoiceAutomation: true,\n    usesCollections: true,\n    usesQuoting: false,\n    callsAnswered: 47,\n    bookingsMade: 22,\n    quotesGiven: 0,\n    invoicesSent: 19,\n    invoicesChased: 5,\n    invoicesPaid: 3,\n    cashJobs: 6,\n  },\n  {\n    clientId: 'MOCK-BRIGHTSPARK',\n    clientName: 'Bright Spark Electrical',\n    contactEmail: 'keystoneconsultancy.co@gmail.com',\n    usesPhoneBooking: false,\n    usesInvoiceAutomation: true,\n    usesCollections: false,\n    usesQuoting: false,\n    callsAnswered: 0,\n    bookingsMade: 0,\n    quotesGiven: 0,\n    invoicesSent: 0,\n    invoicesChased: 0,\n    invoicesPaid: 0,\n    cashJobs: 0,\n  },\n];\n\nreturn [{ json: { testMode: true, mockClients } }];"
+      }
+    },
+    {
+      "id": "webhook-reporting-check",
+      "name": "Reporting Check Input",
+      "webhookId": "reporting-monthly-check",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3000,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reporting/monthly-check",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-extract-webhook-input",
+      "name": "Extract Reporting Check Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: { testMode: !!body.testMode, mockClients: Array.isArray(body.mockClients) ? body.mockClients : [] } }];"
+      }
+    },
+    {
+      "id": "noop-reporting-run-in",
+      "name": "Reporting Run In",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -2520,
+        -280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "code-compute-period",
+      "name": "Compute Report Period",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2280,
+        -280
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nconst now = new Date();\n\nconst firstOfThisMonthUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);\nconst firstOfLastMonth = new Date(firstOfThisMonthUTC);\nfirstOfLastMonth.setUTCMonth(firstOfLastMonth.getUTCMonth() - 1);\nconst lastOfLastMonth = new Date(firstOfThisMonthUTC - 86400000);\n\nfunction ymd(d) { return d.toISOString().slice(0, 10); }\n\nconst monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(firstOfLastMonth);\n\nreturn [{ json: {\n  ...input,\n  reportPeriodStart: ymd(firstOfLastMonth),\n  reportPeriodEnd: ymd(lastOfLastMonth),\n  monthLabel,\n  reportingRegistrySheetId: '1nZm1FLROmGQLyDm4T0p_Lli6WQYzJ6zHDJ2IsoEaWKs',\n  clientsTabName: 'Clients',\n  driveRootFolderId: '1U3BZHyNU-G1DNHN-picZkZAEXHaO66sW',\n  reportsFromEmail: 'onboarding@resend.dev',\n} }];"
+      }
+    },
+    {
+      "id": "if-test-mode",
+      "name": "Is Test Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2040,
+        -280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.testMode }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "code-build-mock-clients",
+      "name": "Build Mock Clients",
+      "notes": "Mock clients already carry their own fully-formed stats (no Sheets/Xero calls at all in test mode) - explodes the mockClients array into one item per client, same shape the real path produces, so both paths share the same downstream report-formatting/email/Drive logic.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1800,
+        -420
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nconst mockClients = input.mockClients || [];\n\nreturn mockClients.map(c => ({ json: {\n  clientId: c.clientId,\n  clientName: c.clientName,\n  contactEmail: c.contactEmail,\n  usesPhoneBooking: !!c.usesPhoneBooking,\n  usesInvoiceAutomation: !!c.usesInvoiceAutomation,\n  usesCollections: !!c.usesCollections,\n  usesQuoting: !!c.usesQuoting,\n  callsAnswered: Number(c.callsAnswered) || 0,\n  bookingsMade: Number(c.bookingsMade) || 0,\n  quotesGiven: Number(c.quotesGiven) || 0,\n  invoicesSent: Number(c.invoicesSent) || 0,\n  invoicesChased: Number(c.invoicesChased) || 0,\n  invoicesPaid: Number(c.invoicesPaid) || 0,\n  cashJobs: Number(c.cashJobs) || 0,\n  monthLabel: input.monthLabel,\n  reportPeriodStart: input.reportPeriodStart,\n  reportPeriodEnd: input.reportPeriodEnd,\n  testMode: true,\n  driveRootFolderId: input.driveRootFolderId,\n  reportsFromEmail: input.reportsFromEmail,\n} }));"
+      }
+    },
+    {
+      "id": "http-get-connections",
+      "name": "Xero - Get Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1800,
+        -140
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "id": "code-extract-tenant",
+      "name": "Extract Tenant ID + Reporting Config",
+      "notes": "Reporting Config values (reportingRegistrySheetId, driveRootFolderId, reportsFromEmail) are hardcoded here rather than pulled from a per-client Client Config sub-workflow, since this workflow serves ALL clients at once, not one - there's no single 'client' context to Execute Workflow against. Fill these in once, directly on the live deployment (same REPLACE_WITH_* convention as everywhere else).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1560,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Compute Report Period').item.json;\nreturn [{ json: {\n  ...prior,\n  xeroTenantId: tenantId,\n} }];"
+      }
+    },
+    {
+      "id": "http-get-clients-registry",
+      "name": "Get Clients Registry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1320,
+        -140
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.airtable.com/v0/app8WDGaKEamwXTqh/tbl3vmAkTQlzaU9ac?maxRecords=100&filterByFormula=AND(%7BStatus%7D%3D'Active'%2C%7BReporting%20on%7D)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "Z7PPfHB8c3BsuGME",
+          "name": "Keystone Airtable"
+        }
+      }
+    },
+    {
+      "id": "code-parse-active-clients",
+      "name": "Parse Active Clients",
+      "notes": "Explodes the Clients Registry response into one item per ACTIVE client. jobsSheetId/reportingSheetId are read directly from the Registry (a synced copy of the values already in each client's own Invoice Automation / Phone Booking Client Config) rather than fetched live via Execute Workflow per client - see README for why (avoids two unproven n8n mechanisms: dynamic per-item sub-workflow IDs, and Execute Workflow's own per-item batch behavior, neither of which has been exercised anywhere in this project).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1080,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID + Reporting Config').item.json;\nconst recs = (resp.body || resp).records || [];\nif (resp.statusCode && resp.statusCode >= 300) throw new Error('Monthly Reporting: could not read Airtable My Clients (' + resp.statusCode + ')');\nconst list = (s) => String(s || '').split(/[,;\\n]/).map((x) => x.trim()).filter(Boolean);\nreturn recs.map((r) => { const f = r.fields; return { json: {\n  clientId: f['Client ID'], clientName: f['Client name'],\n  contactEmail: f['Is demo/test'] ? 'khan.bilalbk408@gmail.com' : (list(f['Report recipients'])[0] || f['Contact email'] || ''),\n  usesPhoneBooking: !!f['Phone on'], usesInvoiceAutomation: !!f['Invoicing on'], usesCollections: false, usesQuoting: !!f['Quotes on'],\n  jobsSheetId: f['Jobs sheet ID'] || '', jobsSheetTabName: f['Jobs sheet tab'] || 'Jobs',\n  reportingSheetId: f['Call log sheet ID'] || '', callLogTabName: 'CallLog',\n  xeroTenantId: f['Xero organisation ID'] && !/^DEMO-/.test(f['Xero organisation ID']) ? f['Xero organisation ID'] : prior.xeroTenantId,\n  driveRootFolderId: prior.driveRootFolderId, reportsFromEmail: f['From email'] || prior.reportsFromEmail,\n  monthLabel: prior.monthLabel, reportPeriodStart: prior.reportPeriodStart, reportPeriodEnd: prior.reportPeriodEnd, testMode: false,\n} }; }).filter((x) => x.json.clientId);"
+      }
+    },
+    {
+      "id": "code-compile-sheet-stats",
+      "name": "Compile Phone/Invoice Sheet Stats",
+      "notes": "Parameter-shape flag: this.helpers.httpRequestWithAuthentication('googleSheetsOAuth2Api', ...) called from inside a Code node - unlike every other Code-node HTTP call in this project (Sheet Poller, Collections), which called n8n's own unauthenticated webhook, this needs a REAL OAuth2-authenticated external call from within Code. Never done anywhere else in this project. Also requires this Code node to have a googleSheetsOAuth2Api credential attached (also new - Code nodes have never carried a credential before). Unverified until a live test proves both the credential-attachment and the helper method signature.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueRegularOutput",
+      "position": [
+        -840,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const client = $input.item.json;\n\nfunction inPeriod(dateStr) {\n  if (!dateStr) return false;\n  const d = String(dateStr).slice(0, 10);\n  return d >= client.reportPeriodStart && d <= client.reportPeriodEnd;\n}\nfunction parseSheetRows(resp) {\n  const values = resp.values || [];\n  const headers = values[0] || [];\n  return values.slice(1).map(row => {\n    const obj = {};\n    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n    return obj;\n  });\n}\n\nlet callsAnswered = 0;\nlet bookingsMade = 0;\n\nif (client.usesPhoneBooking && client.reportingSheetId) {\n  const resp = await this.helpers.httpRequestWithAuthentication.call(this, 'googleSheetsOAuth2Api', {\n    method: 'GET',\n    url: `https://sheets.googleapis.com/v4/spreadsheets/${client.reportingSheetId}/values/${client.callLogTabName}`,\n    json: true,\n  });\n  const rows = parseSheetRows(resp);\n  const thisMonth = rows.filter(r => inPeriod(r.timestamp));\n  callsAnswered = thisMonth.length;\n  bookingsMade = thisMonth.filter(r => String(r.bookingMade).toLowerCase() === 'true').length;\n}\n\nlet invoicesSent = 0;\nlet cashJobs = 0;\nlet invoiceReferencesToCheck = [];\n\nif (client.usesInvoiceAutomation && client.jobsSheetId) {\n  const resp = await this.helpers.httpRequestWithAuthentication.call(this, 'googleSheetsOAuth2Api', {\n    method: 'GET',\n    url: `https://sheets.googleapis.com/v4/spreadsheets/${client.jobsSheetId}/values/${client.jobsSheetTabName}`,\n    json: true,\n  });\n  const rows = parseSheetRows(resp);\n  const invoicedThisMonth = rows.filter(r => String(r.status || '').trim() === 'Invoiced' && inPeriod(r.processedAt));\n  const cashRows = invoicedThisMonth.filter(r => String(r.paymentMethod || '').trim() === 'Paid Cash');\n  const sentRows = invoicedThisMonth.filter(r => String(r.paymentMethod || '').trim() !== 'Paid Cash');\n  cashJobs = cashRows.length;\n  invoicesSent = sentRows.length;\n  invoiceReferencesToCheck = client.usesCollections ? sentRows.map(r => r.invoiceReference).filter(Boolean) : [];\n}\n\nreturn { json: {\n  ...client,\n  callsAnswered,\n  bookingsMade,\n  quotesGiven: (client.valueStats && client.valueStats.quotesDrafted) || 0,\n  invoicesSent,\n  cashJobs,\n  invoiceReferencesToCheck,\n} };"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xKa0P1ACdrwcNgDR",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "code-compile-collections-stats",
+      "name": "Compile Collections Stats",
+      "notes": "Same this.helpers.httpRequestWithAuthentication uncertainty as the previous node, here with the xeroOAuth2Api credential type instead. One Xero call pair (Invoices by Reference + that invoice's History) per invoiced job last month - reuses the exact GET shapes already proven in 01-invoice-automation.json and 03-collections-reminders.json, just invoked from a Code node instead of a native httpRequest node.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const client = $input.item.json;\n\nlet invoicesChased = 0;\nlet invoicesPaid = 0;\n\nif (client.usesCollections && Array.isArray(client.invoiceReferencesToCheck) && client.invoiceReferencesToCheck.length) {\n  for (const ref of client.invoiceReferencesToCheck) {\n    try {\n      const invResp = await this.helpers.httpRequestWithAuthentication.call(this, 'xeroOAuth2Api', {\n        method: 'GET',\n        url: 'https://api.xero.com/api.xro/2.0/Invoices',\n        qs: { where: `Reference==\"${ref}\"` },\n        headers: { 'xero-tenant-id': client.xeroTenantId, 'Accept': 'application/json' },\n        json: true,\n      });\n      const invoice = (invResp.Invoices || [])[0];\n      if (!invoice) continue;\n\n      const histResp = await this.helpers.httpRequestWithAuthentication.call(this, 'xeroOAuth2Api', {\n        method: 'GET',\n        url: `https://api.xero.com/api.xro/2.0/Invoices/${invoice.InvoiceID}/History`,\n        headers: { 'xero-tenant-id': client.xeroTenantId, 'Accept': 'application/json' },\n        json: true,\n      });\n      const records = histResp.HistoryRecords || [];\n      const wasChased = records.some(r => /COLLECTIONS_STAGE=\\d/.test(String(r.Details || '')));\n      if (wasChased) {\n        invoicesChased += 1;\n        if (Number(invoice.AmountDue) === 0) invoicesPaid += 1;\n      }\n    } catch (err) {\n      // One invoice failing to fetch shouldn't break this client's whole report - skip and continue.\n    }\n  }\n}\n\nconst { invoiceReferencesToCheck, ...rest } = client;\nreturn { json: { ...rest, invoicesChased, invoicesPaid } };"
+      },
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "id": "code-format-report",
+      "name": "Format Client Report",
+      "notes": "Gating rule: a service flag OFF (usesPhoneBooking/usesInvoiceAutomation/usesCollections/usesQuoting) omits that whole section - never shown as zero. A service ON but genuinely zero this month still shows, worded gracefully (\"We didn't send any invoices this month.\") rather than a bare 0. cashJobs specifically is only mentioned when > 0 (a supplementary detail, not a headline metric) - the one deliberate exception to that rule, documented here since it's a judgement call.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        -280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const c = $input.item.json;\n\nfunction plural(n, s) { return n === 1 ? s : s + 's'; }\n\nconst parts = [];\n\nif (c.usesPhoneBooking) {\n  if (c.callsAnswered > 0) {\n    parts.push(`This month, we answered ${c.callsAnswered} ${plural(c.callsAnswered, 'call')} on your behalf, resulting in ${c.bookingsMade} booked ${plural(c.bookingsMade, 'job')}.`);\n  } else {\n    parts.push(`We didn't receive any calls on your behalf this month.`);\n  }\n  if (c.usesQuoting) {\n    if (c.quotesGiven > 0) {\n      parts.push(`We also provided ${c.quotesGiven} ${plural(c.quotesGiven, 'quote')} over the phone.`);\n    } else {\n      parts.push(`We didn't provide any phone quotes this month.`);\n    }\n  }\n}\n\nif (c.usesInvoiceAutomation) {\n  if (c.invoicesSent > 0) {\n    parts.push(`We sent ${c.invoicesSent} ${plural(c.invoicesSent, 'invoice')} this month.`);\n  } else {\n    parts.push(`We didn't send any invoices this month.`);\n  }\n  if (c.usesCollections) {\n    if (c.invoicesChased > 0) {\n      parts.push(`Of those, ${c.invoicesChased} needed a collections follow-up, and we successfully chased ${c.invoicesPaid} of them to full payment.`);\n    } else {\n      parts.push(`None of your invoices needed a collections follow-up this month.`);\n    }\n  }\n  if (c.cashJobs > 0) {\n    parts.push(`Separately, ${c.cashJobs} ${plural(c.cashJobs, 'job')} ${c.cashJobs === 1 ? 'was' : 'were'} paid in cash and logged directly.`);\n  }\n}\n\nconst v = c.valueStats || {};\nconst valueLines = [];\nif (v.aiInvoicesDrafted) valueLines.push('- ' + v.aiInvoicesDrafted + ' draft ' + plural(v.aiInvoicesDrafted, 'invoice') + ' prepared in Xero for your approval');\nif (v.invoicesCaughtForReview) valueLines.push('- ' + v.invoicesCaughtForReview + ' ' + plural(v.invoicesCaughtForReview, 'job') + ' with messy data caught and checked before invoicing');\nif (v.aiCallsHandled) valueLines.push('- ' + v.aiCallsHandled + ' ' + plural(v.aiCallsHandled, 'call') + ' handled by your AI assistant, ' + (v.aiBookings || 0) + ' booked or moved');\nif (v.urgentEscalated) valueLines.push('- ' + v.urgentEscalated + ' urgent ' + plural(v.urgentEscalated, 'call') + ' escalated to you straight away');\nif (v.quotesDrafted) valueLines.push('- ' + v.quotesDrafted + ' ' + plural(v.quotesDrafted, 'quote') + ' drafted');\nif (v.issuesAutoFixed) valueLines.push('- ' + v.issuesAutoFixed + ' ' + plural(v.issuesAutoFixed, 'issue') + ' fixed automatically');\nif (valueLines.length) parts.push('\\n\\nWhat Keystone did for you:\\n' + valueLines.join('\\n') + (v.hoursSaved ? '\\n\\nThat is about ' + v.hoursSaved + ' hours of admin time saved (roughly £' + Math.round(v.hoursSaved * 28) + ' at £28/hour).' : ''));\nconst bodyIntro = `Here's your Keystone performance summary for ${c.monthLabel}.`;\nconst bodyMiddle = parts.length ? parts.join(' ') : `We didn't have any activity to report for you this month.`;\nconst bodyOutro = `If you have any questions about this report, just get in touch.\\n\\nThanks for being a Keystone client.`;\n\nconst reportBodyText = `Hi ${c.clientName} team,\\n\\n${bodyIntro}\\n\\n${bodyMiddle}\\n\\n${bodyOutro}`;\nconst reportSubject = `Your Keystone Performance Report \\u2014 ${c.monthLabel}`;\n\nreturn { json: { ...c, reportSubject, reportBodyText } };"
+      }
+    },
+    {
+      "id": "if-has-contact-email",
+      "name": "Has Contact Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -120,
+        -280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.contactEmail }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-send-report-email",
+      "name": "Send Report Email (Resend)",
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential, same as every other Resend call in this project. reportsFromEmail is Keystone's own sending address (Reporting Config), not the client's confirmationFromEmail - this email is FROM Keystone TO the client, not the client's own outbound mail.",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        120,
+        -380
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.reportsFromEmail || 'onboarding@resend.dev', to: [$json.contactEmail], subject: $json.reportSubject, text: $json.reportBodyText }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YHY8OwE9VDR10sYO",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "id": "code-mark-email-sent",
+      "name": "Mark Email Sent",
+      "notes": "References $('Has Contact Email?') for the report data, not $input - by this point $input.item.json is the Resend API response, not the client/report fields (they'd otherwise be silently wiped).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        -380
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Has Contact Email?').item.json;\nreturn { json: { ...prior, emailSent: true, emailMessageId: resp.id || null } };"
+      }
+    },
+    {
+      "id": "code-mark-email-skipped",
+      "name": "Mark Email Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { ...$input.item.json, emailSent: false, emailSkippedReason: 'missing_contact_email' } };"
+      }
+    },
+    {
+      "id": "noop-report-email-handled",
+      "name": "Report Email Handled",
+      "notes": "Convergence point for the email-sent/email-skipped branches, same purpose as 'Folder Resolved' below - lets 'Parse Folder Search Result' safely reference one guaranteed-to-have-run node (with emailSent already set) instead of 'Has Contact Email?' (which predates emailSent) or either branch-specific node directly (only one of which ran).",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        600,
+        -280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "http-find-drive-folder",
+      "name": "Find Client Drive Folder",
+      "notes": "Parameter-shape flag: first Google Drive API call anywhere in this project (only Calendar and Sheets have been used from Google so far). Needs a 'Google Drive OAuth2 API' credential in n8n - per the brief this should already exist alongside the Sheets/Calendar credentials, but that's unverified; if it doesn't exist, this needs the SAME underlying Google OAuth client granted Drive scope, or a separate Drive-scoped credential connecting the same Google account (still 'reusing existing auth', not a new provider).",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        -280
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "=name='{{ $json.clientName.replace(/'/g, \"\\\\'\") }}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{{ $json.driveRootFolderId }}' in parents"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "9m1HoiMw2B8WVlpG",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "code-parse-folder-search",
+      "name": "Parse Folder Search Result",
+      "notes": "References $('Has Contact Email?') for the base client/report data - that's the last node before the email/Drive fan-out that still carried the full item unchanged (both the email-sent and email-skipped branches passed through it without altering the fields this needs).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        -280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $input.item.json;\nconst files = resp.files || [];\nreturn { json: { ...$('Report Email Handled').item.json, existingFolderId: files.length ? files[0].id : null } };"
+      }
+    },
+    {
+      "id": "if-folder-exists",
+      "name": "Folder Already Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        -280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.existingFolderId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-create-drive-folder",
+      "name": "Create Client Drive Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.clientName, mimeType: 'application/vnd.google-apps.folder', parents: [$json.driveRootFolderId] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "9m1HoiMw2B8WVlpG",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "code-extract-new-folder-id",
+      "name": "Extract New Folder ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $input.item.json;\nreturn { json: { ...$('Parse Folder Search Result').item.json, resolvedFolderId: resp.id } };"
+      }
+    },
+    {
+      "id": "code-use-existing-folder-id",
+      "name": "Use Existing Folder ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -380
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $input.item.json;\nreturn { json: { ...d, resolvedFolderId: d.existingFolderId } };"
+      }
+    },
+    {
+      "id": "noop-folder-resolved",
+      "name": "Folder Resolved",
+      "notes": "Convergence point for the two folder-resolution branches (existing vs. just-created), same pattern as 'Contact Resolved' in 01-invoice-automation.json - lets downstream nodes safely reference $('Folder Resolved') regardless of which branch actually ran, instead of referencing one specific branch's node that might not have executed.",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        -280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "http-create-report-file",
+      "name": "Create Report File (metadata)",
+      "notes": "Two-step Drive upload (create metadata, then PATCH content below) rather than a single multipart/related upload call - n8n's httpRequest node doesn't have a built-in body type for Drive's specific multipart/related format, so this avoids hand-building that encoding.",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        -280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: `${$json.reportPeriodStart} - ${$json.monthLabel} Report.txt`, mimeType: 'text/plain', parents: [$json.resolvedFolderId] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "9m1HoiMw2B8WVlpG",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "code-parse-new-file-id",
+      "name": "Parse New File ID",
+      "notes": "References $('Folder Resolved') - the shared convergence point - rather than either branch-specific node directly, since only one of those two ever actually runs per item.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        -280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Folder Resolved').item.json;\nreturn { json: { ...prior, reportFileId: resp.id } };"
+      }
+    },
+    {
+      "id": "http-upload-report-content",
+      "name": "Upload Report Content",
+      "notes": "Raw-body upload confirmed live: the selector key is 'contentType: \"raw\"' (not 'specifyBody', which is only for the json/other body modes used elsewhere in this project) - 'rawContentType' + 'body' work as expected alongside it. Found via a live test after the first deploy silently uploaded a zero-byte file (no error, wrong parameter shape) - see README test results.",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2280,
+        -280
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://www.googleapis.com/upload/drive/v3/files/{{ $json.reportFileId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "uploadType",
+              "value": "media"
+            }
+          ]
+        },
+        "sendBody": true,
+        "rawContentType": "text/plain",
+        "body": "={{ `=== INTERNAL REFERENCE (not sent to client) ===\\nClient: ${$json.clientName} (${$json.clientId})\\nPeriod: ${$json.monthLabel} (${$json.reportPeriodStart} to ${$json.reportPeriodEnd})\\nCalls answered: ${$json.callsAnswered} | Bookings made: ${$json.bookingsMade} | Quotes given: ${$json.quotesGiven}\\nInvoices sent: ${$json.invoicesSent} | Chased: ${$json.invoicesChased} | Paid via chase: ${$json.invoicesPaid} | Cash jobs: ${$json.cashJobs}\\nReport emailed to: ${$json.contactEmail || '(none on file)'} | Email sent: ${$json.emailSent}\\n\\n=== CLIENT-FACING REPORT (as sent) ===\\nSubject: ${$json.reportSubject}\\n\\n${$json.reportBodyText}` }}",
+        "options": {},
+        "contentType": "raw"
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "9m1HoiMw2B8WVlpG",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "code-build-client-result",
+      "name": "Build Client Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        -280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $('Parse New File ID').item.json;\nreturn { json: {\n  clientId: d.clientId,\n  clientName: d.clientName,\n  monthLabel: d.monthLabel,\n  usesPhoneBooking: d.usesPhoneBooking,\n  usesInvoiceAutomation: d.usesInvoiceAutomation,\n  usesCollections: d.usesCollections,\n  usesQuoting: d.usesQuoting,\n  callsAnswered: d.callsAnswered,\n  bookingsMade: d.bookingsMade,\n  quotesGiven: d.quotesGiven,\n  invoicesSent: d.invoicesSent,\n  invoicesChased: d.invoicesChased,\n  invoicesPaid: d.invoicesPaid,\n  cashJobs: d.cashJobs,\n  reportSubject: d.reportSubject,\n  reportBodyText: d.reportBodyText,\n  emailSent: !!d.emailSent,\n  emailSkippedReason: d.emailSkippedReason || null,\n  archivedFolderId: d.resolvedFolderId,\n  archivedFileId: d.reportFileId,\n  testMode: !!d.testMode,\n} };"
+      }
+    },
+    {
+      "id": "f1dcb239-c8d2-4a15-8b60-37e6a02e51f7",
+      "name": "Agent Log query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst c = $input.item.json;\nconst f = 'AND({Client ID} = ' + KS.log.formulaString(c.clientId) + \", IS_AFTER({Timestamp}, '\" + c.reportPeriodStart + \"T00:00:00Z'), IS_BEFORE({Timestamp}, DATEADD('\" + c.reportPeriodEnd + \"T00:00:00Z', 1, 'days')))\";\nreturn { json: { ...c, req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.agentLog, { formula: f, maxRecords: 100 }) } };\n"
+      }
+    },
+    {
+      "id": "cde33315-233c-46b7-ac32-496372543059",
+      "name": "Get Agent Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        -740,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.req.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "Z7PPfHB8c3BsuGME",
+          "name": "Keystone Airtable"
+        }
+      }
+    },
+    {
+      "id": "ee209039-cd78-42eb-af1c-643d43df5ed3",
+      "name": "Value stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const c = $('Agent Log query').item.json;\nconst rows = (($json.body || {}).records || []).map((r) => r.fields);\nconst out = (r) => (r.Outcome && r.Outcome.name) || r.Outcome;\nconst ev = (r) => String(r.Event || '');\nconst v = {\n  aiInvoicesDrafted: rows.filter((r) => ev(r).startsWith('invoice_') && out(r) === 'Draft created').length,\n  invoicesCaughtForReview: rows.filter((r) => ev(r).startsWith('invoice_') && out(r) === 'Sent to review').length,\n  aiCallsHandled: rows.filter((r) => ev(r) === 'call_handled').length,\n  aiBookings: rows.filter((r) => ev(r) === 'booking_made' || ev(r) === 'reschedule').length,\n  urgentEscalated: rows.filter((r) => ev(r) === 'urgent_escalated').length,\n  quotesDrafted: rows.filter((r) => ev(r) === 'quote_drafted').length,\n  issuesAutoFixed: rows.filter((r) => out(r) === 'Auto-fixed').length,\n  minutesSaved: rows.reduce((s, r) => s + (Number(r['Minutes saved']) || 0), 0),\n};\nv.hoursSaved = Math.round(v.minutesSaved / 6) / 10;\nconst { req, ...client } = c;\nreturn { json: { ...client, valueStats: v } };\n"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (1st of month 08:00)": {
+      "main": [
+        [
+          {
+            "node": "Production Run Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Production Run Input": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Sample Mock Clients (Manual Test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample Mock Clients (Manual Test)": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporting Check Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Reporting Check Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Reporting Check Input": {
+      "main": [
+        [
+          {
+            "node": "Reporting Run In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporting Run In": {
+      "main": [
+        [
+          {
+            "node": "Compute Report Period",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Report Period": {
+      "main": [
+        [
+          {
+            "node": "Is Test Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Test Mode?": {
+      "main": [
+        [
+          {
+            "node": "Build Mock Clients",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Xero - Get Connections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Mock Clients": {
+      "main": [
+        [
+          {
+            "node": "Format Client Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Get Connections": {
+      "main": [
+        [
+          {
+            "node": "Extract Tenant ID + Reporting Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tenant ID + Reporting Config": {
+      "main": [
+        [
+          {
+            "node": "Get Clients Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Clients Registry": {
+      "main": [
+        [
+          {
+            "node": "Parse Active Clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Active Clients": {
+      "main": [
+        [
+          {
+            "node": "Agent Log query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Phone/Invoice Sheet Stats": {
+      "main": [
+        [
+          {
+            "node": "Compile Collections Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Collections Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Client Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Client Report": {
+      "main": [
+        [
+          {
+            "node": "Has Contact Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Contact Email?": {
+      "main": [
+        [
+          {
+            "node": "Send Report Email (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Email Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Report Email (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Mark Email Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Email Sent": {
+      "main": [
+        [
+          {
+            "node": "Report Email Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Email Skipped": {
+      "main": [
+        [
+          {
+            "node": "Report Email Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Email Handled": {
+      "main": [
+        [
+          {
+            "node": "Find Client Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Client Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Parse Folder Search Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Folder Search Result": {
+      "main": [
+        [
+          {
+            "node": "Folder Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Already Exists?": {
+      "main": [
+        [
+          {
+            "node": "Use Existing Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Client Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Client Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Extract New Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Folder ID": {
+      "main": [
+        [
+          {
+            "node": "Folder Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract New Folder ID": {
+      "main": [
+        [
+          {
+            "node": "Folder Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Resolved": {
+      "main": [
+        [
+          {
+            "node": "Create Report File (metadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Report File (metadata)": {
+      "main": [
+        [
+          {
+            "node": "Parse New File ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse New File ID": {
+      "main": [
+        [
+          {
+            "node": "Upload Report Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Report Content": {
+      "main": [
+        [
+          {
+            "node": "Build Client Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Log query": {
+      "main": [
+        [
+          {
+            "node": "Get Agent Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Agent Log": {
+      "main": [
+        [
+          {
+            "node": "Value stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Value stats": {
+      "main": [
+        [
+          {
+            "node": "Compile Phone/Invoice Sheet Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "errorWorkflow": "GKF6X82UvFFth43w"
+  },
+  "staticData": {
+    "node:Schedule Trigger (1st of month 08:00)": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": null,
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "uIusHeRCIBVactNt",
+      "projectId": "FrKmPeJlyYapT3T8",
+      "project": {
+        "id": "FrKmPeJlyYapT3T8",
+        "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-07-06T18:03:16.642Z",
+        "updatedAt": "2026-07-06T18:03:25.479Z"
+      },
+      "createdAt": "2026-09-08T00:29:34.954Z",
+      "updatedAt": "2026-09-08T00:29:34.954Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "cb7dc07d-4d43-4ffd-b5b1-0c778f0d0fe6",
+    "workflowId": "uIusHeRCIBVactNt",
+    "nodes": [
+      {
+        "id": "top-note",
+        "name": "Sticky Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -3000,
+          -1000
+        ],
+        "parameters": {
+          "content": "## Monthly Reporting - Stock Template\n\nRuns on the 1st of each month, for every active row in the Clients Registry (a new Google Sheet - see README), and compiles last calendar month's activity into a client-facing report emailed via Resend, plus an internal archive copy in Google Drive (one folder per client).\n\nReads data already produced by the existing systems rather than duplicating any of their logic:\n- Phone Booking -> that client's CallLog sheet (new - see workflows/ai-phone-booking/03-post-call-actions.json) for calls answered / bookings made.\n- Invoice Automation -> that client's Jobs sheet for invoices sent / cash jobs.\n- Collections/Reminders -> Xero Invoice History (same tagged COLLECTIONS_STAGE entries Collections itself writes) for invoices chased / paid.\n- Quoting -> not built yet; always skipped (usesQuoting is always false in the Registry today). Wired in now so nothing else needs to change when it exists.\n\nA client with a service flag OFF in the Registry has that whole section omitted from their report entirely (not shown as zero/N/A). A client with a service ON but genuinely zero activity that month still gets that section, worded gracefully (\"We didn't send any invoices this month.\") rather than a bare 0.\n\nThree triggers, same pattern as every other workflow in this project:\n- Schedule Trigger: real production path, 1st of the month at 08:00.\n- Manual Trigger + \"Sample Mock Clients\": click-to-test with 2 fictional trades businesses covering full-usage and partial-usage cases.\n- Webhook (POST /webhook/reporting/monthly-check): accepts { testMode: true, mockClients: [...] } for API testing - this is what was used for the pre-live test run (see README).\n\ntestMode bypasses the real Clients Registry/Xero/Sheets fetch entirely (mock clients already carry their own fully-formed stats) but still sends a real Resend email and creates a real Drive archive file, so delivery is actually proven end to end, not just simulated.\n\nSee README.md for the Clients Registry sheet structure, the Drive folder setup, and flagged parameter-shape uncertainties - this workflow is the first in the project to call Google Drive at all, the first to use the Sheets values:append verb, and the first to make authenticated API calls from inside a Code node (this.helpers.httpRequestWithAuthentication) rather than a native node - all unverified until a live test proves them.",
+          "height": 900,
+          "width": 700
+        }
+      },
+      {
+        "id": "schedule-trigger",
+        "name": "Schedule Trigger (1st of month 08:00)",
+        "notes": "Parameter-shape flag: the 'months'/triggerAtDayOfMonth field shape here is best-effort - only 'minutes' (Sheet Poller) and 'days'/triggerAtHour (Collections) have been proven live in this project so far. Verify the first scheduled run actually fires on the 1st.",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -3000,
+          -560
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "months",
+                "monthsInterval": 1,
+                "triggerAtDayOfMonth": 1,
+                "triggerAtHour": 8
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "code-production-input",
+        "name": "Production Run Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -2760,
+          -560
+        ],
+        "parameters": {
+          "jsCode": "return [{ json: { testMode: false, mockClients: [] } }];"
+        }
+      },
+      {
+        "id": "manual-trigger",
+        "name": "Manual Trigger",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -3000,
+          -280
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "code-sample-mock-clients",
+        "name": "Sample Mock Clients (Manual Test)",
+        "notes": "Two fixtures: Ridgeline uses every service with plausible mixed numbers (proves the normal case and graceful non-zero wording); Bright Spark uses only Invoice Automation with zero activity (proves both the 'skip unused service section entirely' rule AND the 'graceful zero wording for a used-but-quiet service' rule in one pass).",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -2760,
+          -280
+        ],
+        "parameters": {
+          "jsCode": "const mockClients = [\n  {\n    clientId: 'MOCK-RIDGELINE',\n    clientName: 'Ridgeline Plumbing & Heating',\n    contactEmail: 'keystoneconsultancy.co@gmail.com',\n    usesPhoneBooking: true,\n    usesInvoiceAutomation: true,\n    usesCollections: true,\n    usesQuoting: false,\n    callsAnswered: 47,\n    bookingsMade: 22,\n    quotesGiven: 0,\n    invoicesSent: 19,\n    invoicesChased: 5,\n    invoicesPaid: 3,\n    cashJobs: 6,\n  },\n  {\n    clientId: 'MOCK-BRIGHTSPARK',\n    clientName: 'Bright Spark Electrical',\n    contactEmail: 'keystoneconsultancy.co@gmail.com',\n    usesPhoneBooking: false,\n    usesInvoiceAutomation: true,\n    usesCollections: false,\n    usesQuoting: false,\n    callsAnswered: 0,\n    bookingsMade: 0,\n    quotesGiven: 0,\n    invoicesSent: 0,\n    invoicesChased: 0,\n    invoicesPaid: 0,\n    cashJobs: 0,\n  },\n];\n\nreturn [{ json: { testMode: true, mockClients } }];"
+        }
+      },
+      {
+        "id": "webhook-reporting-check",
+        "name": "Reporting Check Input",
+        "webhookId": "reporting-monthly-check",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -3000,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "reporting/monthly-check",
+          "responseMode": "lastNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "code-extract-webhook-input",
+        "name": "Extract Reporting Check Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -2760,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const body = $json.body || {};\nreturn [{ json: { testMode: !!body.testMode, mockClients: Array.isArray(body.mockClients) ? body.mockClients : [] } }];"
+        }
+      },
+      {
+        "id": "noop-reporting-run-in",
+        "name": "Reporting Run In",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          -2520,
+          -280
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "code-compute-period",
+        "name": "Compute Report Period",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -2280,
+          -280
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.item.json;\nconst now = new Date();\n\nconst firstOfThisMonthUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);\nconst firstOfLastMonth = new Date(firstOfThisMonthUTC);\nfirstOfLastMonth.setUTCMonth(firstOfLastMonth.getUTCMonth() - 1);\nconst lastOfLastMonth = new Date(firstOfThisMonthUTC - 86400000);\n\nfunction ymd(d) { return d.toISOString().slice(0, 10); }\n\nconst monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(firstOfLastMonth);\n\nreturn [{ json: {\n  ...input,\n  reportPeriodStart: ymd(firstOfLastMonth),\n  reportPeriodEnd: ymd(lastOfLastMonth),\n  monthLabel,\n  reportingRegistrySheetId: '1nZm1FLROmGQLyDm4T0p_Lli6WQYzJ6zHDJ2IsoEaWKs',\n  clientsTabName: 'Clients',\n  driveRootFolderId: '1U3BZHyNU-G1DNHN-picZkZAEXHaO66sW',\n  reportsFromEmail: 'onboarding@resend.dev',\n} }];"
+        }
+      },
+      {
+        "id": "if-test-mode",
+        "name": "Is Test Mode?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -2040,
+          -280
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.testMode }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "code-build-mock-clients",
+        "name": "Build Mock Clients",
+        "notes": "Mock clients already carry their own fully-formed stats (no Sheets/Xero calls at all in test mode) - explodes the mockClients array into one item per client, same shape the real path produces, so both paths share the same downstream report-formatting/email/Drive logic.",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1800,
+          -420
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.item.json;\nconst mockClients = input.mockClients || [];\n\nreturn mockClients.map(c => ({ json: {\n  clientId: c.clientId,\n  clientName: c.clientName,\n  contactEmail: c.contactEmail,\n  usesPhoneBooking: !!c.usesPhoneBooking,\n  usesInvoiceAutomation: !!c.usesInvoiceAutomation,\n  usesCollections: !!c.usesCollections,\n  usesQuoting: !!c.usesQuoting,\n  callsAnswered: Number(c.callsAnswered) || 0,\n  bookingsMade: Number(c.bookingsMade) || 0,\n  quotesGiven: Number(c.quotesGiven) || 0,\n  invoicesSent: Number(c.invoicesSent) || 0,\n  invoicesChased: Number(c.invoicesChased) || 0,\n  invoicesPaid: Number(c.invoicesPaid) || 0,\n  cashJobs: Number(c.cashJobs) || 0,\n  monthLabel: input.monthLabel,\n  reportPeriodStart: input.reportPeriodStart,\n  reportPeriodEnd: input.reportPeriodEnd,\n  testMode: true,\n  driveRootFolderId: input.driveRootFolderId,\n  reportsFromEmail: input.reportsFromEmail,\n} }));"
+        }
+      },
+      {
+        "id": "http-get-connections",
+        "name": "Xero - Get Connections",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1800,
+          -140
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.xero.com/connections",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "id": "code-extract-tenant",
+        "name": "Extract Tenant ID + Reporting Config",
+        "notes": "Reporting Config values (reportingRegistrySheetId, driveRootFolderId, reportsFromEmail) are hardcoded here rather than pulled from a per-client Client Config sub-workflow, since this workflow serves ALL clients at once, not one - there's no single 'client' context to Execute Workflow against. Fill these in once, directly on the live deployment (same REPLACE_WITH_* convention as everywhere else).",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1560,
+          -140
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Compute Report Period').item.json;\nreturn [{ json: {\n  ...prior,\n  xeroTenantId: tenantId,\n} }];"
+        }
+      },
+      {
+        "id": "http-get-clients-registry",
+        "name": "Get Clients Registry",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1320,
+          -140
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.airtable.com/v0/app8WDGaKEamwXTqh/tbl3vmAkTQlzaU9ac?maxRecords=100&filterByFormula=AND(%7BStatus%7D%3D'Active'%2C%7BReporting%20on%7D)",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "airtableTokenApi",
+          "sendHeaders": false,
+          "sendBody": false,
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "Z7PPfHB8c3BsuGME",
+            "name": "Keystone Airtable"
+          }
+        }
+      },
+      {
+        "id": "code-parse-active-clients",
+        "name": "Parse Active Clients",
+        "notes": "Explodes the Clients Registry response into one item per ACTIVE client. jobsSheetId/reportingSheetId are read directly from the Registry (a synced copy of the values already in each client's own Invoice Automation / Phone Booking Client Config) rather than fetched live via Execute Workflow per client - see README for why (avoids two unproven n8n mechanisms: dynamic per-item sub-workflow IDs, and Execute Workflow's own per-item batch behavior, neither of which has been exercised anywhere in this project).",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1080,
+          -140
+        ],
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID + Reporting Config').item.json;\nconst recs = (resp.body || resp).records || [];\nif (resp.statusCode && resp.statusCode >= 300) throw new Error('Monthly Reporting: could not read Airtable My Clients (' + resp.statusCode + ')');\nconst list = (s) => String(s || '').split(/[,;\\n]/).map((x) => x.trim()).filter(Boolean);\nreturn recs.map((r) => { const f = r.fields; return { json: {\n  clientId: f['Client ID'], clientName: f['Client name'],\n  contactEmail: f['Is demo/test'] ? 'khan.bilalbk408@gmail.com' : (list(f['Report recipients'])[0] || f['Contact email'] || ''),\n  usesPhoneBooking: !!f['Phone on'], usesInvoiceAutomation: !!f['Invoicing on'], usesCollections: false, usesQuoting: !!f['Quotes on'],\n  jobsSheetId: f['Jobs sheet ID'] || '', jobsSheetTabName: f['Jobs sheet tab'] || 'Jobs',\n  reportingSheetId: f['Call log sheet ID'] || '', callLogTabName: 'CallLog',\n  xeroTenantId: f['Xero organisation ID'] && !/^DEMO-/.test(f['Xero organisation ID']) ? f['Xero organisation ID'] : prior.xeroTenantId,\n  driveRootFolderId: prior.driveRootFolderId, reportsFromEmail: f['From email'] || prior.reportsFromEmail,\n  monthLabel: prior.monthLabel, reportPeriodStart: prior.reportPeriodStart, reportPeriodEnd: prior.reportPeriodEnd, testMode: false,\n} }; }).filter((x) => x.json.clientId);"
+        }
+      },
+      {
+        "id": "code-compile-sheet-stats",
+        "name": "Compile Phone/Invoice Sheet Stats",
+        "notes": "Parameter-shape flag: this.helpers.httpRequestWithAuthentication('googleSheetsOAuth2Api', ...) called from inside a Code node - unlike every other Code-node HTTP call in this project (Sheet Poller, Collections), which called n8n's own unauthenticated webhook, this needs a REAL OAuth2-authenticated external call from within Code. Never done anywhere else in this project. Also requires this Code node to have a googleSheetsOAuth2Api credential attached (also new - Code nodes have never carried a credential before). Unverified until a live test proves both the credential-attachment and the helper method signature.",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "onError": "continueRegularOutput",
+        "position": [
+          -840,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const client = $input.item.json;\n\nfunction inPeriod(dateStr) {\n  if (!dateStr) return false;\n  const d = String(dateStr).slice(0, 10);\n  return d >= client.reportPeriodStart && d <= client.reportPeriodEnd;\n}\nfunction parseSheetRows(resp) {\n  const values = resp.values || [];\n  const headers = values[0] || [];\n  return values.slice(1).map(row => {\n    const obj = {};\n    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n    return obj;\n  });\n}\n\nlet callsAnswered = 0;\nlet bookingsMade = 0;\n\nif (client.usesPhoneBooking && client.reportingSheetId) {\n  const resp = await this.helpers.httpRequestWithAuthentication.call(this, 'googleSheetsOAuth2Api', {\n    method: 'GET',\n    url: `https://sheets.googleapis.com/v4/spreadsheets/${client.reportingSheetId}/values/${client.callLogTabName}`,\n    json: true,\n  });\n  const rows = parseSheetRows(resp);\n  const thisMonth = rows.filter(r => inPeriod(r.timestamp));\n  callsAnswered = thisMonth.length;\n  bookingsMade = thisMonth.filter(r => String(r.bookingMade).toLowerCase() === 'true').length;\n}\n\nlet invoicesSent = 0;\nlet cashJobs = 0;\nlet invoiceReferencesToCheck = [];\n\nif (client.usesInvoiceAutomation && client.jobsSheetId) {\n  const resp = await this.helpers.httpRequestWithAuthentication.call(this, 'googleSheetsOAuth2Api', {\n    method: 'GET',\n    url: `https://sheets.googleapis.com/v4/spreadsheets/${client.jobsSheetId}/values/${client.jobsSheetTabName}`,\n    json: true,\n  });\n  const rows = parseSheetRows(resp);\n  const invoicedThisMonth = rows.filter(r => String(r.status || '').trim() === 'Invoiced' && inPeriod(r.processedAt));\n  const cashRows = invoicedThisMonth.filter(r => String(r.paymentMethod || '').trim() === 'Paid Cash');\n  const sentRows = invoicedThisMonth.filter(r => String(r.paymentMethod || '').trim() !== 'Paid Cash');\n  cashJobs = cashRows.length;\n  invoicesSent = sentRows.length;\n  invoiceReferencesToCheck = client.usesCollections ? sentRows.map(r => r.invoiceReference).filter(Boolean) : [];\n}\n\nreturn { json: {\n  ...client,\n  callsAnswered,\n  bookingsMade,\n  quotesGiven: (client.valueStats && client.valueStats.quotesDrafted) || 0,\n  invoicesSent,\n  cashJobs,\n  invoiceReferencesToCheck,\n} };"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "xKa0P1ACdrwcNgDR",
+            "name": "Google Sheets account"
+          }
+        }
+      },
+      {
+        "id": "code-compile-collections-stats",
+        "name": "Compile Collections Stats",
+        "notes": "Same this.helpers.httpRequestWithAuthentication uncertainty as the previous node, here with the xeroOAuth2Api credential type instead. One Xero call pair (Invoices by Reference + that invoice's History) per invoiced job last month - reuses the exact GET shapes already proven in 01-invoice-automation.json and 03-collections-reminders.json, just invoked from a Code node instead of a native httpRequest node.",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -600,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const client = $input.item.json;\n\nlet invoicesChased = 0;\nlet invoicesPaid = 0;\n\nif (client.usesCollections && Array.isArray(client.invoiceReferencesToCheck) && client.invoiceReferencesToCheck.length) {\n  for (const ref of client.invoiceReferencesToCheck) {\n    try {\n      const invResp = await this.helpers.httpRequestWithAuthentication.call(this, 'xeroOAuth2Api', {\n        method: 'GET',\n        url: 'https://api.xero.com/api.xro/2.0/Invoices',\n        qs: { where: `Reference==\"${ref}\"` },\n        headers: { 'xero-tenant-id': client.xeroTenantId, 'Accept': 'application/json' },\n        json: true,\n      });\n      const invoice = (invResp.Invoices || [])[0];\n      if (!invoice) continue;\n\n      const histResp = await this.helpers.httpRequestWithAuthentication.call(this, 'xeroOAuth2Api', {\n        method: 'GET',\n        url: `https://api.xero.com/api.xro/2.0/Invoices/${invoice.InvoiceID}/History`,\n        headers: { 'xero-tenant-id': client.xeroTenantId, 'Accept': 'application/json' },\n        json: true,\n      });\n      const records = histResp.HistoryRecords || [];\n      const wasChased = records.some(r => /COLLECTIONS_STAGE=\\d/.test(String(r.Details || '')));\n      if (wasChased) {\n        invoicesChased += 1;\n        if (Number(invoice.AmountDue) === 0) invoicesPaid += 1;\n      }\n    } catch (err) {\n      // One invoice failing to fetch shouldn't break this client's whole report - skip and continue.\n    }\n  }\n}\n\nconst { invoiceReferencesToCheck, ...rest } = client;\nreturn { json: { ...rest, invoicesChased, invoicesPaid } };"
+        },
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "id": "code-format-report",
+        "name": "Format Client Report",
+        "notes": "Gating rule: a service flag OFF (usesPhoneBooking/usesInvoiceAutomation/usesCollections/usesQuoting) omits that whole section - never shown as zero. A service ON but genuinely zero this month still shows, worded gracefully (\"We didn't send any invoices this month.\") rather than a bare 0. cashJobs specifically is only mentioned when > 0 (a supplementary detail, not a headline metric) - the one deliberate exception to that rule, documented here since it's a judgement call.",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -360,
+          -280
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const c = $input.item.json;\n\nfunction plural(n, s) { return n === 1 ? s : s + 's'; }\n\nconst parts = [];\n\nif (c.usesPhoneBooking) {\n  if (c.callsAnswered > 0) {\n    parts.push(`This month, we answered ${c.callsAnswered} ${plural(c.callsAnswered, 'call')} on your behalf, resulting in ${c.bookingsMade} booked ${plural(c.bookingsMade, 'job')}.`);\n  } else {\n    parts.push(`We didn't receive any calls on your behalf this month.`);\n  }\n  if (c.usesQuoting) {\n    if (c.quotesGiven > 0) {\n      parts.push(`We also provided ${c.quotesGiven} ${plural(c.quotesGiven, 'quote')} over the phone.`);\n    } else {\n      parts.push(`We didn't provide any phone quotes this month.`);\n    }\n  }\n}\n\nif (c.usesInvoiceAutomation) {\n  if (c.invoicesSent > 0) {\n    parts.push(`We sent ${c.invoicesSent} ${plural(c.invoicesSent, 'invoice')} this month.`);\n  } else {\n    parts.push(`We didn't send any invoices this month.`);\n  }\n  if (c.usesCollections) {\n    if (c.invoicesChased > 0) {\n      parts.push(`Of those, ${c.invoicesChased} needed a collections follow-up, and we successfully chased ${c.invoicesPaid} of them to full payment.`);\n    } else {\n      parts.push(`None of your invoices needed a collections follow-up this month.`);\n    }\n  }\n  if (c.cashJobs > 0) {\n    parts.push(`Separately, ${c.cashJobs} ${plural(c.cashJobs, 'job')} ${c.cashJobs === 1 ? 'was' : 'were'} paid in cash and logged directly.`);\n  }\n}\n\nconst v = c.valueStats || {};\nconst valueLines = [];\nif (v.aiInvoicesDrafted) valueLines.push('- ' + v.aiInvoicesDrafted + ' draft ' + plural(v.aiInvoicesDrafted, 'invoice') + ' prepared in Xero for your approval');\nif (v.invoicesCaughtForReview) valueLines.push('- ' + v.invoicesCaughtForReview + ' ' + plural(v.invoicesCaughtForReview, 'job') + ' with messy data caught and checked before invoicing');\nif (v.aiCallsHandled) valueLines.push('- ' + v.aiCallsHandled + ' ' + plural(v.aiCallsHandled, 'call') + ' handled by your AI assistant, ' + (v.aiBookings || 0) + ' booked or moved');\nif (v.urgentEscalated) valueLines.push('- ' + v.urgentEscalated + ' urgent ' + plural(v.urgentEscalated, 'call') + ' escalated to you straight away');\nif (v.quotesDrafted) valueLines.push('- ' + v.quotesDrafted + ' ' + plural(v.quotesDrafted, 'quote') + ' drafted');\nif (v.issuesAutoFixed) valueLines.push('- ' + v.issuesAutoFixed + ' ' + plural(v.issuesAutoFixed, 'issue') + ' fixed automatically');\nif (valueLines.length) parts.push('\\n\\nWhat Keystone did for you:\\n' + valueLines.join('\\n') + (v.hoursSaved ? '\\n\\nThat is about ' + v.hoursSaved + ' hours of admin time saved (roughly £' + Math.round(v.hoursSaved * 28) + ' at £28/hour).' : ''));\nconst bodyIntro = `Here's your Keystone performance summary for ${c.monthLabel}.`;\nconst bodyMiddle = parts.length ? parts.join(' ') : `We didn't have any activity to report for you this month.`;\nconst bodyOutro = `If you have any questions about this report, just get in touch.\\n\\nThanks for being a Keystone client.`;\n\nconst reportBodyText = `Hi ${c.clientName} team,\\n\\n${bodyIntro}\\n\\n${bodyMiddle}\\n\\n${bodyOutro}`;\nconst reportSubject = `Your Keystone Performance Report \\u2014 ${c.monthLabel}`;\n\nreturn { json: { ...c, reportSubject, reportBodyText } };"
+        }
+      },
+      {
+        "id": "if-has-contact-email",
+        "name": "Has Contact Email?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -120,
+          -280
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.contactEmail }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "http-send-report-email",
+        "name": "Send Report Email (Resend)",
+        "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential, same as every other Resend call in this project. reportsFromEmail is Keystone's own sending address (Reporting Config), not the client's confirmationFromEmail - this email is FROM Keystone TO the client, not the client's own outbound mail.",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "onError": "continueRegularOutput",
+        "position": [
+          120,
+          -380
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ from: $json.reportsFromEmail || 'onboarding@resend.dev', to: [$json.contactEmail], subject: $json.reportSubject, text: $json.reportBodyText }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "YHY8OwE9VDR10sYO",
+            "name": "Header Auth account 2"
+          }
+        }
+      },
+      {
+        "id": "code-mark-email-sent",
+        "name": "Mark Email Sent",
+        "notes": "References $('Has Contact Email?') for the report data, not $input - by this point $input.item.json is the Resend API response, not the client/report fields (they'd otherwise be silently wiped).",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          360,
+          -380
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Has Contact Email?').item.json;\nreturn { json: { ...prior, emailSent: true, emailMessageId: resp.id || null } };"
+        }
+      },
+      {
+        "id": "code-mark-email-skipped",
+        "name": "Mark Email Skipped",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          120,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "return { json: { ...$input.item.json, emailSent: false, emailSkippedReason: 'missing_contact_email' } };"
+        }
+      },
+      {
+        "id": "noop-report-email-handled",
+        "name": "Report Email Handled",
+        "notes": "Convergence point for the email-sent/email-skipped branches, same purpose as 'Folder Resolved' below - lets 'Parse Folder Search Result' safely reference one guaranteed-to-have-run node (with emailSent already set) instead of 'Has Contact Email?' (which predates emailSent) or either branch-specific node directly (only one of which ran).",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          600,
+          -280
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "http-find-drive-folder",
+        "name": "Find Client Drive Folder",
+        "notes": "Parameter-shape flag: first Google Drive API call anywhere in this project (only Calendar and Sheets have been used from Google so far). Needs a 'Google Drive OAuth2 API' credential in n8n - per the brief this should already exist alongside the Sheets/Calendar credentials, but that's unverified; if it doesn't exist, this needs the SAME underlying Google OAuth client granted Drive scope, or a separate Drive-scoped credential connecting the same Google account (still 'reusing existing auth', not a new provider).",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          600,
+          -280
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "q",
+                "value": "=name='{{ $json.clientName.replace(/'/g, \"\\\\'\") }}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{{ $json.driveRootFolderId }}' in parents"
+              },
+              {
+                "name": "fields",
+                "value": "files(id,name)"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "googleDriveOAuth2Api": {
+            "id": "9m1HoiMw2B8WVlpG",
+            "name": "Google Drive account"
+          }
+        }
+      },
+      {
+        "id": "code-parse-folder-search",
+        "name": "Parse Folder Search Result",
+        "notes": "References $('Has Contact Email?') for the base client/report data - that's the last node before the email/Drive fan-out that still carried the full item unchanged (both the email-sent and email-skipped branches passed through it without altering the fields this needs).",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          840,
+          -280
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const resp = $input.item.json;\nconst files = resp.files || [];\nreturn { json: { ...$('Report Email Handled').item.json, existingFolderId: files.length ? files[0].id : null } };"
+        }
+      },
+      {
+        "id": "if-folder-exists",
+        "name": "Folder Already Exists?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          -280
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.existingFolderId }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "http-create-drive-folder",
+        "name": "Create Client Drive Folder",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          -140
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ name: $json.clientName, mimeType: 'application/vnd.google-apps.folder', parents: [$json.driveRootFolderId] }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "googleDriveOAuth2Api": {
+            "id": "9m1HoiMw2B8WVlpG",
+            "name": "Google Drive account"
+          }
+        }
+      },
+      {
+        "id": "code-extract-new-folder-id",
+        "name": "Extract New Folder ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1560,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const resp = $input.item.json;\nreturn { json: { ...$('Parse Folder Search Result').item.json, resolvedFolderId: resp.id } };"
+        }
+      },
+      {
+        "id": "code-use-existing-folder-id",
+        "name": "Use Existing Folder ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          -380
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const d = $input.item.json;\nreturn { json: { ...d, resolvedFolderId: d.existingFolderId } };"
+        }
+      },
+      {
+        "id": "noop-folder-resolved",
+        "name": "Folder Resolved",
+        "notes": "Convergence point for the two folder-resolution branches (existing vs. just-created), same pattern as 'Contact Resolved' in 01-invoice-automation.json - lets downstream nodes safely reference $('Folder Resolved') regardless of which branch actually ran, instead of referencing one specific branch's node that might not have executed.",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1800,
+          -280
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "http-create-report-file",
+        "name": "Create Report File (metadata)",
+        "notes": "Two-step Drive upload (create metadata, then PATCH content below) rather than a single multipart/related upload call - n8n's httpRequest node doesn't have a built-in body type for Drive's specific multipart/related format, so this avoids hand-building that encoding.",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2040,
+          -280
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ name: `${$json.reportPeriodStart} - ${$json.monthLabel} Report.txt`, mimeType: 'text/plain', parents: [$json.resolvedFolderId] }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "googleDriveOAuth2Api": {
+            "id": "9m1HoiMw2B8WVlpG",
+            "name": "Google Drive account"
+          }
+        }
+      },
+      {
+        "id": "code-parse-new-file-id",
+        "name": "Parse New File ID",
+        "notes": "References $('Folder Resolved') - the shared convergence point - rather than either branch-specific node directly, since only one of those two ever actually runs per item.",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2280,
+          -280
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Folder Resolved').item.json;\nreturn { json: { ...prior, reportFileId: resp.id } };"
+        }
+      },
+      {
+        "id": "http-upload-report-content",
+        "name": "Upload Report Content",
+        "notes": "Raw-body upload confirmed live: the selector key is 'contentType: \"raw\"' (not 'specifyBody', which is only for the json/other body modes used elsewhere in this project) - 'rawContentType' + 'body' work as expected alongside it. Found via a live test after the first deploy silently uploaded a zero-byte file (no error, wrong parameter shape) - see README test results.",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2280,
+          -280
+        ],
+        "parameters": {
+          "method": "PATCH",
+          "url": "=https://www.googleapis.com/upload/drive/v3/files/{{ $json.reportFileId }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "uploadType",
+                "value": "media"
+              }
+            ]
+          },
+          "sendBody": true,
+          "rawContentType": "text/plain",
+          "body": "={{ `=== INTERNAL REFERENCE (not sent to client) ===\\nClient: ${$json.clientName} (${$json.clientId})\\nPeriod: ${$json.monthLabel} (${$json.reportPeriodStart} to ${$json.reportPeriodEnd})\\nCalls answered: ${$json.callsAnswered} | Bookings made: ${$json.bookingsMade} | Quotes given: ${$json.quotesGiven}\\nInvoices sent: ${$json.invoicesSent} | Chased: ${$json.invoicesChased} | Paid via chase: ${$json.invoicesPaid} | Cash jobs: ${$json.cashJobs}\\nReport emailed to: ${$json.contactEmail || '(none on file)'} | Email sent: ${$json.emailSent}\\n\\n=== CLIENT-FACING REPORT (as sent) ===\\nSubject: ${$json.reportSubject}\\n\\n${$json.reportBodyText}` }}",
+          "options": {},
+          "contentType": "raw"
+        },
+        "credentials": {
+          "googleDriveOAuth2Api": {
+            "id": "9m1HoiMw2B8WVlpG",
+            "name": "Google Drive account"
+          }
+        }
+      },
+      {
+        "id": "code-build-client-result",
+        "name": "Build Client Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2520,
+          -280
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const d = $('Parse New File ID').item.json;\nreturn { json: {\n  clientId: d.clientId,\n  clientName: d.clientName,\n  monthLabel: d.monthLabel,\n  usesPhoneBooking: d.usesPhoneBooking,\n  usesInvoiceAutomation: d.usesInvoiceAutomation,\n  usesCollections: d.usesCollections,\n  usesQuoting: d.usesQuoting,\n  callsAnswered: d.callsAnswered,\n  bookingsMade: d.bookingsMade,\n  quotesGiven: d.quotesGiven,\n  invoicesSent: d.invoicesSent,\n  invoicesChased: d.invoicesChased,\n  invoicesPaid: d.invoicesPaid,\n  cashJobs: d.cashJobs,\n  reportSubject: d.reportSubject,\n  reportBodyText: d.reportBodyText,\n  emailSent: !!d.emailSent,\n  emailSkippedReason: d.emailSkippedReason || null,\n  archivedFolderId: d.resolvedFolderId,\n  archivedFileId: d.reportFileId,\n  testMode: !!d.testMode,\n} };"
+        }
+      },
+      {
+        "id": "f1dcb239-c8d2-4a15-8b60-37e6a02e51f7",
+        "name": "Agent Log query",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -960,
+          80
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst c = $input.item.json;\nconst f = 'AND({Client ID} = ' + KS.log.formulaString(c.clientId) + \", IS_AFTER({Timestamp}, '\" + c.reportPeriodStart + \"T00:00:00Z'), IS_BEFORE({Timestamp}, DATEADD('\" + c.reportPeriodEnd + \"T00:00:00Z', 1, 'days')))\";\nreturn { json: { ...c, req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.agentLog, { formula: f, maxRecords: 100 }) } };\n"
+        }
+      },
+      {
+        "id": "cde33315-233c-46b7-ac32-496372543059",
+        "name": "Get Agent Log",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "onError": "continueRegularOutput",
+        "position": [
+          -740,
+          80
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.req.url }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "airtableTokenApi",
+          "sendHeaders": false,
+          "sendBody": false,
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "Z7PPfHB8c3BsuGME",
+            "name": "Keystone Airtable"
+          }
+        }
+      },
+      {
+        "id": "ee209039-cd78-42eb-af1c-643d43df5ed3",
+        "name": "Value stats",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -520,
+          80
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const c = $('Agent Log query').item.json;\nconst rows = (($json.body || {}).records || []).map((r) => r.fields);\nconst out = (r) => (r.Outcome && r.Outcome.name) || r.Outcome;\nconst ev = (r) => String(r.Event || '');\nconst v = {\n  aiInvoicesDrafted: rows.filter((r) => ev(r).startsWith('invoice_') && out(r) === 'Draft created').length,\n  invoicesCaughtForReview: rows.filter((r) => ev(r).startsWith('invoice_') && out(r) === 'Sent to review').length,\n  aiCallsHandled: rows.filter((r) => ev(r) === 'call_handled').length,\n  aiBookings: rows.filter((r) => ev(r) === 'booking_made' || ev(r) === 'reschedule').length,\n  urgentEscalated: rows.filter((r) => ev(r) === 'urgent_escalated').length,\n  quotesDrafted: rows.filter((r) => ev(r) === 'quote_drafted').length,\n  issuesAutoFixed: rows.filter((r) => out(r) === 'Auto-fixed').length,\n  minutesSaved: rows.reduce((s, r) => s + (Number(r['Minutes saved']) || 0), 0),\n};\nv.hoursSaved = Math.round(v.minutesSaved / 6) / 10;\nconst { req, ...client } = c;\nreturn { json: { ...client, valueStats: v } };\n"
+        }
+      }
+    ],
+    "connections": {
+      "Schedule Trigger (1st of month 08:00)": {
+        "main": [
+          [
+            {
+              "node": "Production Run Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Production Run Input": {
+        "main": [
+          [
+            {
+              "node": "Reporting Run In",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Manual Trigger": {
+        "main": [
+          [
+            {
+              "node": "Sample Mock Clients (Manual Test)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Sample Mock Clients (Manual Test)": {
+        "main": [
+          [
+            {
+              "node": "Reporting Run In",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reporting Check Input": {
+        "main": [
+          [
+            {
+              "node": "Extract Reporting Check Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Reporting Check Input": {
+        "main": [
+          [
+            {
+              "node": "Reporting Run In",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reporting Run In": {
+        "main": [
+          [
+            {
+              "node": "Compute Report Period",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compute Report Period": {
+        "main": [
+          [
+            {
+              "node": "Is Test Mode?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Test Mode?": {
+        "main": [
+          [
+            {
+              "node": "Build Mock Clients",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Xero - Get Connections",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Mock Clients": {
+        "main": [
+          [
+            {
+              "node": "Format Client Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Get Connections": {
+        "main": [
+          [
+            {
+              "node": "Extract Tenant ID + Reporting Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Tenant ID + Reporting Config": {
+        "main": [
+          [
+            {
+              "node": "Get Clients Registry",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Clients Registry": {
+        "main": [
+          [
+            {
+              "node": "Parse Active Clients",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Active Clients": {
+        "main": [
+          [
+            {
+              "node": "Agent Log query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compile Phone/Invoice Sheet Stats": {
+        "main": [
+          [
+            {
+              "node": "Compile Collections Stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compile Collections Stats": {
+        "main": [
+          [
+            {
+              "node": "Format Client Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Client Report": {
+        "main": [
+          [
+            {
+              "node": "Has Contact Email?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Contact Email?": {
+        "main": [
+          [
+            {
+              "node": "Send Report Email (Resend)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mark Email Skipped",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Report Email (Resend)": {
+        "main": [
+          [
+            {
+              "node": "Mark Email Sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark Email Sent": {
+        "main": [
+          [
+            {
+              "node": "Report Email Handled",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark Email Skipped": {
+        "main": [
+          [
+            {
+              "node": "Report Email Handled",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Report Email Handled": {
+        "main": [
+          [
+            {
+              "node": "Find Client Drive Folder",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Client Drive Folder": {
+        "main": [
+          [
+            {
+              "node": "Parse Folder Search Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Folder Search Result": {
+        "main": [
+          [
+            {
+              "node": "Folder Already Exists?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Folder Already Exists?": {
+        "main": [
+          [
+            {
+              "node": "Use Existing Folder ID",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create Client Drive Folder",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Client Drive Folder": {
+        "main": [
+          [
+            {
+              "node": "Extract New Folder ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Use Existing Folder ID": {
+        "main": [
+          [
+            {
+              "node": "Folder Resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract New Folder ID": {
+        "main": [
+          [
+            {
+              "node": "Folder Resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Folder Resolved": {
+        "main": [
+          [
+            {
+              "node": "Create Report File (metadata)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Report File (metadata)": {
+        "main": [
+          [
+            {
+              "node": "Parse New File ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse New File ID": {
+        "main": [
+          [
+            {
+              "node": "Upload Report Content",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upload Report Content": {
+        "main": [
+          [
+            {
+              "node": "Build Client Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Agent Log query": {
+        "main": [
+          [
+            {
+              "node": "Get Agent Log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Agent Log": {
+        "main": [
+          [
+            {
+              "node": "Value stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Value stats": {
+        "main": [
+          [
+            {
+              "node": "Compile Phone/Invoice Sheet Stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Bilal Khan",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-11-08T21:47:51.449Z",
+    "updatedAt": "2026-11-08T21:47:51.449Z",
+    "workflowPublishHistory": [
+      {
+        "id": 268,
+        "workflowId": "uIusHeRCIBVactNt",
+        "versionId": "cb7dc07d-4d43-4ffd-b5b1-0c778f0d0fe6",
+        "event": "activated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-11-08T21:47:51.630Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
