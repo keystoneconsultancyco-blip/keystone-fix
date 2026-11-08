@@ -1,0 +1,2816 @@
+{
+  "id": "MParifnFIYCIuXUs",
+  "name": "[Stock] Invoice Automation",
+  "description": null,
+  "active": true,
+  "activeVersionId": "517abddf-3802-4929-a835-9c4ef5a33a9d",
+  "createdAt": "2026-08-23T13:30:27.552Z",
+  "updatedAt": "2026-09-05T01:42:52.292Z",
+  "isArchived": false,
+  "versionId": "517abddf-3802-4929-a835-9c4ef5a33a9d",
+  "versionCounter": 11,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Invoice Automation - Stock Template\n\nTwo triggers feed the same pipeline:\n- Manual Trigger + \"Sample Job Data\" -> click-to-test in the n8n editor.\n- Webhook \"Job Completion Input\" -> POST real (or test) job-completion JSON here; also what a real job-management system would call.\n\nFlow: validate -> Client Config -> normalize paymentMethod -> branding/discount/payment options -> send-window check (queues via a Wait node if outside window) -> resolve Xero contact (search by AccountNumber == internal customerId; create if not found) -> duplicate check (by Reference on the invoice) -> branch on paymentMethod:\n- \"Send Invoice\" (or blank/unrecognized, defaulted with a warning) -> create Xero DRAFT invoice -> Resend confirmation email if we have one. Eligible for Collections/Reminders as normal.\n- \"Paid Cash\" -> create Xero AUTHORISED invoice -> record a full Xero Payment against it (xeroCashAccountCode) -> no email. AmountDue becomes 0, so Collections/Reminders' own where-filter (AmountDue>0) naturally excludes it - nothing else needed to keep it out of the chase.\n\nWebhook responds with whatever the final node in the branch that fired produced (responseMode: lastNode), so POSTing test payloads is a full round-trip test.",
+        "height": 400,
+        "width": 560
+      },
+      "id": "top-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2000,
+        -420
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2000,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  jobId: 'JOB-1001',\n  customerId: 'CUST-001',\n  customerName: 'Jane Doe',\n  customerEmail: 'jane@example.com',\n  jobDescription: 'Boiler service and safety check',\n  jobValue: 250.00,\n  paymentMethod: 'Send Invoice',\n  milestoneNumber: null,\n  milestoneLabel: null,\n  jobCompletedAt: new Date().toISOString(),\n} }];"
+      },
+      "id": "code-sample-job",
+      "name": "Sample Job Data (Manual Test)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice/job-completed",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-job-input",
+      "name": "Job Completion Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2000,
+        160
+      ],
+      "webhookId": "invoice-job-completed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: { ...body } }];"
+      },
+      "id": "code-extract-webhook",
+      "name": "Extract Job Data From Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-job-data-in",
+      "name": "Job Data In",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -1520,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.item.json;\nconst errors = [];\n\nif (!job.jobId) errors.push('MISSING_JOB_ID');\nif (!job.customerId) errors.push('MISSING_CUSTOMER_ID');\nif (!job.customerName) errors.push('MISSING_CUSTOMER_NAME');\n\nconst jobValueNum = Number(job.jobValue);\nconst jobValueInvalid = job.jobValue === undefined || job.jobValue === null || job.jobValue === '' || isNaN(jobValueNum) || jobValueNum <= 0;\nif (jobValueInvalid) errors.push('INVALID_JOB_VALUE');\n\nconst hasCustomerEmail = !!job.customerEmail;\n\nreturn [{\n  json: {\n    ...job,\n    jobValue: isNaN(jobValueNum) ? 0 : jobValueNum,\n    hasCustomerEmail,\n    isValid: errors.length === 0,\n    validationErrors: errors,\n  }\n}];"
+      },
+      "id": "code-validate",
+      "name": "Validate Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1040,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.item.json;\nreturn [{ json: {\n  status: 'rejected',\n  reason: 'validation_failed',\n  jobId: job.jobId || null,\n  errors: job.validationErrors,\n} }];"
+      },
+      "id": "code-validation-error",
+      "name": "Build Validation Error Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "s2riyS1tZ0jtVuSR",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst job = $('Validate Job Data').item.json;\nreturn [{ json: { ...job, ...config } }];"
+      },
+      "id": "code-merge-config-job",
+      "name": "Merge Config + Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst raw = (d.paymentMethod || '').toString().trim();\n\nlet effectivePaymentMethod;\nlet paymentMethodWarning = null;\n\nif (raw === 'Send Invoice') {\n  effectivePaymentMethod = 'send_invoice';\n} else if (raw === 'Paid Cash') {\n  effectivePaymentMethod = 'paid_cash';\n} else {\n  effectivePaymentMethod = 'send_invoice';\n  paymentMethodWarning = `Blank or unrecognized paymentMethod (\"${raw}\") for jobId ${d.jobId} - defaulted to \"Send Invoice\". Check the Jobs sheet row.`;\n}\n\nif (paymentMethodWarning) {\n  try {\n    this.logger.warn(paymentMethodWarning);\n  } catch (e) {\n    // this.logger may not be available on every n8n version - non-fatal, the warning is still carried on the item below.\n  }\n}\n\nreturn [{ json: { ...d, paymentMethod: raw, effectivePaymentMethod, paymentMethodWarning } }];"
+      },
+      "id": "code-normalize-payment-method",
+      "name": "Normalize Payment Method",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        160
+      ],
+      "notes": "Blank/unrecognized paymentMethod defaults to 'Send Invoice' behavior (not a validation failure - the job still gets invoiced) but is flagged via paymentMethodWarning, which flows through to the final result so it's visible in the response/execution, plus a best-effort this.logger.warn() call. Parameter-shape flag: this.logger's availability inside a Code node is unverified on this n8n version - wrapped in try/catch so it can never break the run either way."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.discountsSheetTabName }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {}
+      },
+      "id": "gsheet-check-discount",
+      "name": "Check Customer Discount",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -440,
+        160
+      ],
+      "notes": "Raw Sheets REST API call (values.get), not the native Google Sheets node - that node's column-mapping behavior proved unreliable in live testing (silently merged unrelated fields into written rows), while this raw pattern is the same proven-working approach used for Xero throughout this project. Reads the whole Discounts tab (expected small); matched against customerId in the next node.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xKa0P1ACdrwcNgDR",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Normalize Payment Method').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map(row => {\n  const obj = {};\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
+      },
+      "id": "code-match-discount",
+      "name": "Match Customer Discount",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        160
+      ],
+      "notes": "Falls back to Client Config's flat discountPercent if the customer has no row in the Discounts tab. discountSource is just for visibility/debugging - not used downstream."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst discountPercent = Number(d.discountPercent) || 0;\nconst rawValue = Number(d.jobValue) || 0;\nconst discountedValue = Math.round(rawValue * (1 - discountPercent / 100) * 100) / 100;\n\nconst useMilestone = !!(d.milestoneInvoicingEnabled && d.milestoneNumber);\nconst invoiceReference = useMilestone ? `${d.jobId}-M${d.milestoneNumber}` : `${d.jobId}`;\nconst milestoneLabelText = (useMilestone && d.milestoneLabel) ? ` (${d.milestoneLabel})` : '';\nconst lineDescription = `${d.jobDescription || 'Completed job'}${milestoneLabelText} - ${d.clientName}`;\n\nreturn [{\n  json: {\n    ...d,\n    lineAmount: discountedValue,\n    invoiceReference,\n    lineDescription,\n  }\n}];"
+      },
+      "id": "code-apply-branding",
+      "name": "Apply Branding, Discount, Payment Options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nconst tz = d.sendWindowTimezone || 'UTC';\nconst now = new Date();\n\nfunction getParts(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', {\n    timeZone, hour12: false,\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit'\n  });\n  const parts = {};\n  for (const p of dtf.formatToParts(date)) {\n    if (p.type !== 'literal') parts[p.type] = parseInt(p.value, 10);\n  }\n  if (parts.hour === 24) parts.hour = 0;\n  return parts;\n}\n\nfunction getOffsetMinutes(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });\n  const tzPart = dtf.formatToParts(date).find(p => p.type === 'timeZoneName').value;\n  const m = tzPart.match(/GMT([+-]\\d+)(?::(\\d+))?/);\n  if (!m) return 0;\n  const h = parseInt(m[1], 10);\n  const mm = m[2] ? parseInt(m[2], 10) : 0;\n  return h * 60 + (h < 0 ? -mm : mm);\n}\n\nconst nowParts = getParts(now, tz);\nconst nowMinutes = nowParts.hour * 60 + nowParts.minute;\n\nconst [startH, startM] = (d.sendWindowStart || '00:00').split(':').map(Number);\nconst [endH, endM] = (d.sendWindowEnd || '23:59').split(':').map(Number);\nconst startMinutes = startH * 60 + startM;\nconst endMinutes = endH * 60 + endM;\n\nconst inWindow = nowMinutes >= startMinutes && nowMinutes <= endMinutes;\n\nlet resumeAt = null;\nif (!inWindow) {\n  let targetY = nowParts.year, targetM = nowParts.month, targetD = nowParts.day;\n  if (nowMinutes > endMinutes) {\n    const nextDay = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + 1));\n    targetY = nextDay.getUTCFullYear(); targetM = nextDay.getUTCMonth() + 1; targetD = nextDay.getUTCDate();\n  }\n  const offsetMin = getOffsetMinutes(now, tz);\n  const utcMs = Date.UTC(targetY, targetM - 1, targetD, startH, startM) - offsetMin * 60000;\n  resumeAt = new Date(utcMs);\n}\n\nreturn [{ json: { ...d, inSendWindow: inWindow, resumeAt: resumeAt ? resumeAt.toISOString() : null } }];"
+      },
+      "id": "code-check-window",
+      "name": "Check Send-Time Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.inSendWindow }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-in-window",
+      "name": "In Send Window?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, queueStatus: 'queued_outside_send_window', queuedUntil: d.resumeAt } }];"
+      },
+      "id": "code-queue",
+      "name": "Queue Until Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.resumeAt }}"
+      },
+      "id": "wait-until-window",
+      "name": "Wait For Send Window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        320
+      ],
+      "webhookId": "invoice-wait-resume"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-get-connections",
+      "name": "Xero - Get Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        160
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Check Send-Time Window').item.json;\nreturn [{ json: { ...prior, xeroTenantId: tenantId } }];"
+      },
+      "id": "code-extract-tenant",
+      "name": "Extract Tenant ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "=Reference==\"{{ $json.invoiceReference }}\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-check-duplicate",
+      "name": "Xero - Check Existing Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        160
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID').item.json;\nconst invoices = resp.Invoices || [];\nreturn [{ json: { ...prior, isDuplicate: invoices.length > 0, existingInvoiceId: invoices[0] ? invoices[0].InvoiceID : null } }];"
+      },
+      "id": "code-is-duplicate",
+      "name": "Check Duplicate Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'skipped',\n  reason: 'duplicate_invoice',\n  jobId: d.jobId,\n  invoiceReference: d.invoiceReference,\n  existingInvoiceId: d.existingInvoiceId,\n} }];"
+      },
+      "id": "code-duplicate-result",
+      "name": "Build Duplicate Skipped Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "=Name==\"{{ $json.customerName }}\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-search-contact",
+      "name": "Xero - Search Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        280
+      ],
+      "notes": "Searches by Name, not AccountNumber/customerId - see 'Contact Search Result' for the email/phone disambiguation this requires. Xero itself enforces unique contact Names within an org (a same-Name POST updates the existing contact rather than creating a second one), which is exactly why a raw name match on its own is not a safe signal that it's the same person.",
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Check Duplicate Result').item.json;\nconst contacts = resp.Contacts || [];\n\nfunction normEmail(e) { return (e || '').trim().toLowerCase(); }\nfunction normPhone(p) { return (p || '').replace(/\\D/g, ''); }\nfunction contactPhones(c) {\n  return (c.Phones || []).map(p => normPhone(`${p.PhoneCountryCode || ''}${p.PhoneAreaCode || ''}${p.PhoneNumber || ''}`));\n}\n\nconst jobEmail = normEmail(prior.customerEmail);\nconst jobPhone = normPhone(prior.customerPhone);\n\nconst match = contacts.find(c => {\n  const emailMatch = !!jobEmail && normEmail(c.EmailAddress) === jobEmail;\n  const phoneMatch = !!jobPhone && contactPhones(c).some(p => p && p === jobPhone);\n  return emailMatch || phoneMatch;\n});\n\nreturn [{ json: {\n  ...prior,\n  contactFound: !!match,\n  existingContactId: match ? match.ContactID : null,\n  nameMatchedDifferentPerson: contacts.length > 0 && !match,\n} }];"
+      },
+      "id": "code-contact-found",
+      "name": "Contact Search Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        280
+      ],
+      "notes": "Name match alone is not enough to reuse a contact: also requires the existing Xero contact's stored email OR phone to match the current job's customerEmail/customerPhone. A name match with no email/phone overlap (or the stored contact has neither on file) is flagged via nameMatchedDifferentPerson and falls through to contact creation, treating it as a different person."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.contactFound }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-contact-found",
+      "name": "Contact Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2560,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, resolvedContactId: d.existingContactId, contactResolution: 'existing' } }];"
+      },
+      "id": "code-use-existing-contact",
+      "name": "Use Existing Contact ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Contacts: [{ Name: $json.nameMatchedDifferentPerson ? `${$json.customerName} (${$json.customerId})` : $json.customerName, EmailAddress: $json.customerEmail || undefined, Phones: $json.customerPhone ? [{ PhoneType: 'DEFAULT', PhoneNumber: $json.customerPhone }] : undefined, AccountNumber: $json.customerId }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-contact",
+      "name": "Xero - Create Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        380
+      ],
+      "notes": "Xero enforces unique contact Names within an org - POSTing an unmodified Name that already exists updates that existing contact instead of creating a second one (confirmed via live testing). When nameMatchedDifferentPerson is true (same name, no email/phone overlap - a different person), the Name is suffixed with the internal customerId so Xero actually creates a separate contact instead of silently merging into the wrong person's record. This is a visible, deliberate tradeoff: that customer's name shows with the suffix on this invoice/contact record.",
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Search Result').item.json;\nconst contact = (resp.Contacts || [])[0] || {};\nreturn [{ json: { ...prior, resolvedContactId: contact.ContactID || null, contactResolution: 'created' } }];"
+      },
+      "id": "code-extract-new-contact",
+      "name": "Extract New Contact ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        380
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-contact-resolved",
+      "name": "Contact Resolved",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.effectivePaymentMethod }}",
+              "rightValue": "paid_cash",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-paid-cash",
+      "name": "Is Paid Cash?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        280
+      ],
+      "notes": "Both branches share every node up to here (discount, branding, send-window, duplicate check by Reference, contact resolution) - only invoice creation and what happens after it differ. TRUE (Paid Cash): creates an AUTHORISED invoice + a Payment against xeroCashAccountCode, no email. FALSE (Send Invoice, or blank/unrecognized defaulted by 'Normalize Payment Method'): the original unchanged flow - DRAFT invoice (per invoiceStatus config) + Resend confirmation."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: 'AUTHORISED', DueDate: new Date().toISOString().slice(0,10) }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-invoice-cash",
+      "name": "Xero - Create Invoice (Cash Sale)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3760,
+        460
+      ],
+      "notes": "Status is hardcoded to AUTHORISED here regardless of the invoiceStatus Client Config value - a Payment cannot be applied to a DRAFT invoice in Xero. DueDate is today (already paid), not invoiceDueDays out.",
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Is Paid Cash?').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+      },
+      "id": "code-parse-invoice-cash",
+      "name": "Parse Cash Invoice Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Payments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoice: { InvoiceID: $json.invoiceId }, Account: { Code: $json.xeroCashAccountCode }, Date: new Date().toISOString().slice(0,10), Amount: $json.lineAmount }) }}",
+        "options": {}
+      },
+      "id": "http-create-payment",
+      "name": "Xero - Create Payment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4240,
+        460
+      ],
+      "notes": "Parameter-shape flag: this is a new Xero object type for this project (Payments, not Invoices/Contacts/History). Account.Code must be a real BANK or CASH type account in the client's chart of accounts (xeroCashAccountCode in Client Config) - posting against a REVENUE account (like xeroSalesAccountCode) is rejected by Xero. Unverified against real client chart-of-accounts data.",
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Parse Cash Invoice Result').item.json;\nconst payment = (resp.Payments || [])[0] || {};\nreturn [{ json: { ...prior, paymentId: payment.PaymentID || null, paymentStatus: payment.Status || null } }];"
+      },
+      "id": "code-parse-payment",
+      "name": "Parse Payment Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'paid_cash',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  paymentId: d.paymentId,\n  paymentRecorded: !!d.paymentId,\n  emailSent: false,\n  emailSkippedReason: 'paid_cash_no_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+      },
+      "id": "code-success-cash",
+      "name": "Build Success Result (Cash Sale)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4720,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "xero-tenant-id",
+              "value": "={{ $json.xeroTenantId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: $json.invoiceStatus, DueDate: new Date(Date.now() + (Number($json.invoiceDueDays) || 14) * 86400000).toISOString().slice(0,10) }] }) }}",
+        "options": {}
+      },
+      "id": "http-create-invoice",
+      "name": "Xero - Create Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        280
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "4p323BIqqLPBGyHS",
+          "name": "Xero account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Resolved').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+      },
+      "id": "code-parse-invoice",
+      "name": "Parse Invoice Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasCustomerEmail }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-email",
+      "name": "Has Customer Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4000,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.customerEmail], subject: `Your invoice from ${$json.clientName}`, text: `Hi ${$json.customerName},\\n\\nYour invoice for \"${$json.lineDescription}\" (${$json.invoiceNumber || $json.invoiceReference}) has been created.\\n\\nAmount: ${$json.lineAmount}\\nPayment options: ${$json.paymentOptions}\\n\\nThanks,\\n${$json.clientName}` }) }}",
+        "options": {}
+      },
+      "id": "http-send-email",
+      "name": "Send Confirmation Email (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4240,
+        200
+      ],
+      "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YHY8OwE9VDR10sYO",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Invoice Result').item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: true,\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+      },
+      "id": "code-success-emailed",
+      "name": "Build Success Result (Email Sent)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: false,\n  emailSkippedReason: 'missing_customer_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+      },
+      "id": "code-success-no-email",
+      "name": "Build Success Result (Email Skipped)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4240,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Sample Job Data (Manual Test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample Job Data (Manual Test)": {
+      "main": [
+        [
+          {
+            "node": "Job Data In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Completion Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Job Data From Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job Data From Webhook": {
+      "main": [
+        [
+          {
+            "node": "Job Data In",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Data In": {
+      "main": [
+        [
+          {
+            "node": "Validate Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Job Data": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Config + Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Config + Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payment Method",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payment Method": {
+      "main": [
+        [
+          {
+            "node": "Check Customer Discount",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Customer Discount": {
+      "main": [
+        [
+          {
+            "node": "Match Customer Discount",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Customer Discount": {
+      "main": [
+        [
+          {
+            "node": "Apply Branding, Discount, Payment Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Branding, Discount, Payment Options": {
+      "main": [
+        [
+          {
+            "node": "Check Send-Time Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Send-Time Window": {
+      "main": [
+        [
+          {
+            "node": "In Send Window?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In Send Window?": {
+      "main": [
+        [
+          {
+            "node": "Xero - Get Connections",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Until Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Until Window": {
+      "main": [
+        [
+          {
+            "node": "Wait For Send Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Send Window": {
+      "main": [
+        [
+          {
+            "node": "Xero - Get Connections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Get Connections": {
+      "main": [
+        [
+          {
+            "node": "Extract Tenant ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tenant ID": {
+      "main": [
+        [
+          {
+            "node": "Xero - Check Existing Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Check Existing Invoice": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate Result": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Build Duplicate Skipped Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Xero - Search Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Search Contact": {
+      "main": [
+        [
+          {
+            "node": "Contact Search Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Search Result": {
+      "main": [
+        [
+          {
+            "node": "Contact Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Found?": {
+      "main": [
+        [
+          {
+            "node": "Use Existing Contact ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Xero - Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Contact ID": {
+      "main": [
+        [
+          {
+            "node": "Contact Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Extract New Contact ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract New Contact ID": {
+      "main": [
+        [
+          {
+            "node": "Contact Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Resolved": {
+      "main": [
+        [
+          {
+            "node": "Is Paid Cash?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Paid Cash?": {
+      "main": [
+        [
+          {
+            "node": "Xero - Create Invoice (Cash Sale)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Xero - Create Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Create Invoice (Cash Sale)": {
+      "main": [
+        [
+          {
+            "node": "Parse Cash Invoice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Cash Invoice Result": {
+      "main": [
+        [
+          {
+            "node": "Xero - Create Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Create Payment": {
+      "main": [
+        [
+          {
+            "node": "Parse Payment Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Payment Result": {
+      "main": [
+        [
+          {
+            "node": "Build Success Result (Cash Sale)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero - Create Invoice": {
+      "main": [
+        [
+          {
+            "node": "Parse Invoice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Invoice Result": {
+      "main": [
+        [
+          {
+            "node": "Has Customer Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Customer Email?": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation Email (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Success Result (Email Skipped)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation Email (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Build Success Result (Email Sent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {},
+  "staticData": null,
+  "pinData": null,
+  "meta": null,
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "MParifnFIYCIuXUs",
+      "projectId": "FrKmPeJlyYapT3T8",
+      "project": {
+        "id": "FrKmPeJlyYapT3T8",
+        "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-07-06T18:03:16.642Z",
+        "updatedAt": "2026-07-06T18:03:25.479Z"
+      },
+      "createdAt": "2026-08-23T13:30:27.554Z",
+      "updatedAt": "2026-08-23T13:30:27.554Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "517abddf-3802-4929-a835-9c4ef5a33a9d",
+    "workflowId": "MParifnFIYCIuXUs",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Invoice Automation - Stock Template\n\nTwo triggers feed the same pipeline:\n- Manual Trigger + \"Sample Job Data\" -> click-to-test in the n8n editor.\n- Webhook \"Job Completion Input\" -> POST real (or test) job-completion JSON here; also what a real job-management system would call.\n\nFlow: validate -> Client Config -> normalize paymentMethod -> branding/discount/payment options -> send-window check (queues via a Wait node if outside window) -> resolve Xero contact (search by AccountNumber == internal customerId; create if not found) -> duplicate check (by Reference on the invoice) -> branch on paymentMethod:\n- \"Send Invoice\" (or blank/unrecognized, defaulted with a warning) -> create Xero DRAFT invoice -> Resend confirmation email if we have one. Eligible for Collections/Reminders as normal.\n- \"Paid Cash\" -> create Xero AUTHORISED invoice -> record a full Xero Payment against it (xeroCashAccountCode) -> no email. AmountDue becomes 0, so Collections/Reminders' own where-filter (AmountDue>0) naturally excludes it - nothing else needed to keep it out of the chase.\n\nWebhook responds with whatever the final node in the branch that fired produced (responseMode: lastNode), so POSTing test payloads is a full round-trip test.",
+          "height": 400,
+          "width": 560
+        },
+        "id": "top-note",
+        "name": "Sticky Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -2000,
+          -420
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-trigger",
+        "name": "Manual Trigger",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -2000,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return [{ json: {\n  jobId: 'JOB-1001',\n  customerId: 'CUST-001',\n  customerName: 'Jane Doe',\n  customerEmail: 'jane@example.com',\n  jobDescription: 'Boiler service and safety check',\n  jobValue: 250.00,\n  paymentMethod: 'Send Invoice',\n  milestoneNumber: null,\n  milestoneLabel: null,\n  jobCompletedAt: new Date().toISOString(),\n} }];"
+        },
+        "id": "code-sample-job",
+        "name": "Sample Job Data (Manual Test)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1760,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "invoice/job-completed",
+          "responseMode": "lastNode",
+          "options": {}
+        },
+        "id": "webhook-job-input",
+        "name": "Job Completion Input",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -2000,
+          160
+        ],
+        "webhookId": "invoice-job-completed"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $json.body || {};\nreturn [{ json: { ...body } }];"
+        },
+        "id": "code-extract-webhook",
+        "name": "Extract Job Data From Webhook",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1760,
+          160
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "noop-job-data-in",
+        "name": "Job Data In",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          -1520,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const job = $input.item.json;\nconst errors = [];\n\nif (!job.jobId) errors.push('MISSING_JOB_ID');\nif (!job.customerId) errors.push('MISSING_CUSTOMER_ID');\nif (!job.customerName) errors.push('MISSING_CUSTOMER_NAME');\n\nconst jobValueNum = Number(job.jobValue);\nconst jobValueInvalid = job.jobValue === undefined || job.jobValue === null || job.jobValue === '' || isNaN(jobValueNum) || jobValueNum <= 0;\nif (jobValueInvalid) errors.push('INVALID_JOB_VALUE');\n\nconst hasCustomerEmail = !!job.customerEmail;\n\nreturn [{\n  json: {\n    ...job,\n    jobValue: isNaN(jobValueNum) ? 0 : jobValueNum,\n    hasCustomerEmail,\n    isValid: errors.length === 0,\n    validationErrors: errors,\n  }\n}];"
+        },
+        "id": "code-validate",
+        "name": "Validate Job Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1280,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.isValid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Is Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -1040,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const job = $input.item.json;\nreturn [{ json: {\n  status: 'rejected',\n  reason: 'validation_failed',\n  jobId: job.jobId || null,\n  errors: job.validationErrors,\n} }];"
+        },
+        "id": "code-validation-error",
+        "name": "Build Validation Error Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -800,
+          -140
+        ]
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "s2riyS1tZ0jtVuSR",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "exec-client-config",
+        "name": "Get Client Config",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          -800,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $input.item.json;\nconst job = $('Validate Job Data').item.json;\nreturn [{ json: { ...job, ...config } }];"
+        },
+        "id": "code-merge-config-job",
+        "name": "Merge Config + Job",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -560,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nconst raw = (d.paymentMethod || '').toString().trim();\n\nlet effectivePaymentMethod;\nlet paymentMethodWarning = null;\n\nif (raw === 'Send Invoice') {\n  effectivePaymentMethod = 'send_invoice';\n} else if (raw === 'Paid Cash') {\n  effectivePaymentMethod = 'paid_cash';\n} else {\n  effectivePaymentMethod = 'send_invoice';\n  paymentMethodWarning = `Blank or unrecognized paymentMethod (\"${raw}\") for jobId ${d.jobId} - defaulted to \"Send Invoice\". Check the Jobs sheet row.`;\n}\n\nif (paymentMethodWarning) {\n  try {\n    this.logger.warn(paymentMethodWarning);\n  } catch (e) {\n    // this.logger may not be available on every n8n version - non-fatal, the warning is still carried on the item below.\n  }\n}\n\nreturn [{ json: { ...d, paymentMethod: raw, effectivePaymentMethod, paymentMethodWarning } }];"
+        },
+        "id": "code-normalize-payment-method",
+        "name": "Normalize Payment Method",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -500,
+          160
+        ],
+        "notes": "Blank/unrecognized paymentMethod defaults to 'Send Invoice' behavior (not a validation failure - the job still gets invoiced) but is flagged via paymentMethodWarning, which flows through to the final result so it's visible in the response/execution, plus a best-effort this.logger.warn() call. Parameter-shape flag: this.logger's availability inside a Code node is unverified on this n8n version - wrapped in try/catch so it can never break the run either way."
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.discountsSheetTabName }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {}
+        },
+        "id": "gsheet-check-discount",
+        "name": "Check Customer Discount",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -440,
+          160
+        ],
+        "notes": "Raw Sheets REST API call (values.get), not the native Google Sheets node - that node's column-mapping behavior proved unreliable in live testing (silently merged unrelated fields into written rows), while this raw pattern is the same proven-working approach used for Xero throughout this project. Reads the whole Discounts tab (expected small); matched against customerId in the next node.",
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "xKa0P1ACdrwcNgDR",
+            "name": "Google Sheets account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const prior = $('Normalize Payment Method').item.json;\nconst resp = $input.item.json;\nconst values = resp.values || [];\nconst headers = values[0] || [];\nconst rows = values.slice(1).map(row => {\n  const obj = {};\n  headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n  return obj;\n});\n\nconst match = rows.find(r => String(r.customerId || '').trim() === String(prior.customerId || '').trim());\nconst discountPercent = (match && match.discountPercent !== undefined && match.discountPercent !== '')\n  ? Number(match.discountPercent)\n  : (Number(prior.discountPercent) || 0);\n\nreturn [{ json: { ...prior, discountPercent, discountSource: match ? 'customer-override' : 'client-default' } }];"
+        },
+        "id": "code-match-discount",
+        "name": "Match Customer Discount",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -380,
+          160
+        ],
+        "notes": "Falls back to Client Config's flat discountPercent if the customer has no row in the Discounts tab. discountSource is just for visibility/debugging - not used downstream."
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nconst discountPercent = Number(d.discountPercent) || 0;\nconst rawValue = Number(d.jobValue) || 0;\nconst discountedValue = Math.round(rawValue * (1 - discountPercent / 100) * 100) / 100;\n\nconst useMilestone = !!(d.milestoneInvoicingEnabled && d.milestoneNumber);\nconst invoiceReference = useMilestone ? `${d.jobId}-M${d.milestoneNumber}` : `${d.jobId}`;\nconst milestoneLabelText = (useMilestone && d.milestoneLabel) ? ` (${d.milestoneLabel})` : '';\nconst lineDescription = `${d.jobDescription || 'Completed job'}${milestoneLabelText} - ${d.clientName}`;\n\nreturn [{\n  json: {\n    ...d,\n    lineAmount: discountedValue,\n    invoiceReference,\n    lineDescription,\n  }\n}];"
+        },
+        "id": "code-apply-branding",
+        "name": "Apply Branding, Discount, Payment Options",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -320,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nconst tz = d.sendWindowTimezone || 'UTC';\nconst now = new Date();\n\nfunction getParts(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', {\n    timeZone, hour12: false,\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit'\n  });\n  const parts = {};\n  for (const p of dtf.formatToParts(date)) {\n    if (p.type !== 'literal') parts[p.type] = parseInt(p.value, 10);\n  }\n  if (parts.hour === 24) parts.hour = 0;\n  return parts;\n}\n\nfunction getOffsetMinutes(date, timeZone) {\n  const dtf = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });\n  const tzPart = dtf.formatToParts(date).find(p => p.type === 'timeZoneName').value;\n  const m = tzPart.match(/GMT([+-]\\d+)(?::(\\d+))?/);\n  if (!m) return 0;\n  const h = parseInt(m[1], 10);\n  const mm = m[2] ? parseInt(m[2], 10) : 0;\n  return h * 60 + (h < 0 ? -mm : mm);\n}\n\nconst nowParts = getParts(now, tz);\nconst nowMinutes = nowParts.hour * 60 + nowParts.minute;\n\nconst [startH, startM] = (d.sendWindowStart || '00:00').split(':').map(Number);\nconst [endH, endM] = (d.sendWindowEnd || '23:59').split(':').map(Number);\nconst startMinutes = startH * 60 + startM;\nconst endMinutes = endH * 60 + endM;\n\nconst inWindow = nowMinutes >= startMinutes && nowMinutes <= endMinutes;\n\nlet resumeAt = null;\nif (!inWindow) {\n  let targetY = nowParts.year, targetM = nowParts.month, targetD = nowParts.day;\n  if (nowMinutes > endMinutes) {\n    const nextDay = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + 1));\n    targetY = nextDay.getUTCFullYear(); targetM = nextDay.getUTCMonth() + 1; targetD = nextDay.getUTCDate();\n  }\n  const offsetMin = getOffsetMinutes(now, tz);\n  const utcMs = Date.UTC(targetY, targetM - 1, targetD, startH, startM) - offsetMin * 60000;\n  resumeAt = new Date(utcMs);\n}\n\nreturn [{ json: { ...d, inSendWindow: inWindow, resumeAt: resumeAt ? resumeAt.toISOString() : null } }];"
+        },
+        "id": "code-check-window",
+        "name": "Check Send-Time Window",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -80,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.inSendWindow }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-in-window",
+        "name": "In Send Window?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          160,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, queueStatus: 'queued_outside_send_window', queuedUntil: d.resumeAt } }];"
+        },
+        "id": "code-queue",
+        "name": "Queue Until Window",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          400,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "resume": "specificTime",
+          "dateTime": "={{ $json.resumeAt }}"
+        },
+        "id": "wait-until-window",
+        "name": "Wait For Send Window",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          640,
+          320
+        ],
+        "webhookId": "invoice-wait-resume"
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.xero.com/connections",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "http-get-connections",
+        "name": "Xero - Get Connections",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          160
+        ],
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst first = items[0].json;\nconst list = Array.isArray(first) ? first : [first];\nconst tenantId = list[0] ? list[0].tenantId : null;\nconst prior = $('Check Send-Time Window').item.json;\nreturn [{ json: { ...prior, xeroTenantId: tenantId } }];"
+        },
+        "id": "code-extract-tenant",
+        "name": "Extract Tenant ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.xero.com/api.xro/2.0/Invoices",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "where",
+                "value": "=Reference==\"{{ $json.invoiceReference }}\""
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "http-check-duplicate",
+        "name": "Xero - Check Existing Invoice",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1360,
+          160
+        ],
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Extract Tenant ID').item.json;\nconst invoices = resp.Invoices || [];\nreturn [{ json: { ...prior, isDuplicate: invoices.length > 0, existingInvoiceId: invoices[0] ? invoices[0].InvoiceID : null } }];"
+        },
+        "id": "code-is-duplicate",
+        "name": "Check Duplicate Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1600,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.isDuplicate }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-duplicate",
+        "name": "Is Duplicate?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1840,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'skipped',\n  reason: 'duplicate_invoice',\n  jobId: d.jobId,\n  invoiceReference: d.invoiceReference,\n  existingInvoiceId: d.existingInvoiceId,\n} }];"
+        },
+        "id": "code-duplicate-result",
+        "name": "Build Duplicate Skipped Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2080,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.xero.com/api.xro/2.0/Contacts",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "where",
+                "value": "=Name==\"{{ $json.customerName }}\""
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "http-search-contact",
+        "name": "Xero - Search Contact",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2080,
+          280
+        ],
+        "notes": "Searches by Name, not AccountNumber/customerId - see 'Contact Search Result' for the email/phone disambiguation this requires. Xero itself enforces unique contact Names within an org (a same-Name POST updates the existing contact rather than creating a second one), which is exactly why a raw name match on its own is not a safe signal that it's the same person.",
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Check Duplicate Result').item.json;\nconst contacts = resp.Contacts || [];\n\nfunction normEmail(e) { return (e || '').trim().toLowerCase(); }\nfunction normPhone(p) { return (p || '').replace(/\\D/g, ''); }\nfunction contactPhones(c) {\n  return (c.Phones || []).map(p => normPhone(`${p.PhoneCountryCode || ''}${p.PhoneAreaCode || ''}${p.PhoneNumber || ''}`));\n}\n\nconst jobEmail = normEmail(prior.customerEmail);\nconst jobPhone = normPhone(prior.customerPhone);\n\nconst match = contacts.find(c => {\n  const emailMatch = !!jobEmail && normEmail(c.EmailAddress) === jobEmail;\n  const phoneMatch = !!jobPhone && contactPhones(c).some(p => p && p === jobPhone);\n  return emailMatch || phoneMatch;\n});\n\nreturn [{ json: {\n  ...prior,\n  contactFound: !!match,\n  existingContactId: match ? match.ContactID : null,\n  nameMatchedDifferentPerson: contacts.length > 0 && !match,\n} }];"
+        },
+        "id": "code-contact-found",
+        "name": "Contact Search Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2320,
+          280
+        ],
+        "notes": "Name match alone is not enough to reuse a contact: also requires the existing Xero contact's stored email OR phone to match the current job's customerEmail/customerPhone. A name match with no email/phone overlap (or the stored contact has neither on file) is flagged via nameMatchedDifferentPerson and falls through to contact creation, treating it as a different person."
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.contactFound }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-contact-found",
+        "name": "Contact Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2560,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nreturn [{ json: { ...d, resolvedContactId: d.existingContactId, contactResolution: 'existing' } }];"
+        },
+        "id": "code-use-existing-contact",
+        "name": "Use Existing Contact ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2800,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.xero.com/api.xro/2.0/Contacts",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ Contacts: [{ Name: $json.nameMatchedDifferentPerson ? `${$json.customerName} (${$json.customerId})` : $json.customerName, EmailAddress: $json.customerEmail || undefined, Phones: $json.customerPhone ? [{ PhoneType: 'DEFAULT', PhoneNumber: $json.customerPhone }] : undefined, AccountNumber: $json.customerId }] }) }}",
+          "options": {}
+        },
+        "id": "http-create-contact",
+        "name": "Xero - Create Contact",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2800,
+          380
+        ],
+        "notes": "Xero enforces unique contact Names within an org - POSTing an unmodified Name that already exists updates that existing contact instead of creating a second one (confirmed via live testing). When nameMatchedDifferentPerson is true (same name, no email/phone overlap - a different person), the Name is suffixed with the internal customerId so Xero actually creates a separate contact instead of silently merging into the wrong person's record. This is a visible, deliberate tradeoff: that customer's name shows with the suffix on this invoice/contact record.",
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Search Result').item.json;\nconst contact = (resp.Contacts || [])[0] || {};\nreturn [{ json: { ...prior, resolvedContactId: contact.ContactID || null, contactResolution: 'created' } }];"
+        },
+        "id": "code-extract-new-contact",
+        "name": "Extract New Contact ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3040,
+          380
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "noop-contact-resolved",
+        "name": "Contact Resolved",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          3280,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.effectivePaymentMethod }}",
+                "rightValue": "paid_cash",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-paid-cash",
+        "name": "Is Paid Cash?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3520,
+          280
+        ],
+        "notes": "Both branches share every node up to here (discount, branding, send-window, duplicate check by Reference, contact resolution) - only invoice creation and what happens after it differ. TRUE (Paid Cash): creates an AUTHORISED invoice + a Payment against xeroCashAccountCode, no email. FALSE (Send Invoice, or blank/unrecognized defaulted by 'Normalize Payment Method'): the original unchanged flow - DRAFT invoice (per invoiceStatus config) + Resend confirmation."
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.xero.com/api.xro/2.0/Invoices",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: 'AUTHORISED', DueDate: new Date().toISOString().slice(0,10) }] }) }}",
+          "options": {}
+        },
+        "id": "http-create-invoice-cash",
+        "name": "Xero - Create Invoice (Cash Sale)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3760,
+          460
+        ],
+        "notes": "Status is hardcoded to AUTHORISED here regardless of the invoiceStatus Client Config value - a Payment cannot be applied to a DRAFT invoice in Xero. DueDate is today (already paid), not invoiceDueDays out.",
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Is Paid Cash?').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+        },
+        "id": "code-parse-invoice-cash",
+        "name": "Parse Cash Invoice Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4000,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.xero.com/api.xro/2.0/Payments",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ Invoice: { InvoiceID: $json.invoiceId }, Account: { Code: $json.xeroCashAccountCode }, Date: new Date().toISOString().slice(0,10), Amount: $json.lineAmount }) }}",
+          "options": {}
+        },
+        "id": "http-create-payment",
+        "name": "Xero - Create Payment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          4240,
+          460
+        ],
+        "notes": "Parameter-shape flag: this is a new Xero object type for this project (Payments, not Invoices/Contacts/History). Account.Code must be a real BANK or CASH type account in the client's chart of accounts (xeroCashAccountCode in Client Config) - posting against a REVENUE account (like xeroSalesAccountCode) is rejected by Xero. Unverified against real client chart-of-accounts data.",
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Parse Cash Invoice Result').item.json;\nconst payment = (resp.Payments || [])[0] || {};\nreturn [{ json: { ...prior, paymentId: payment.PaymentID || null, paymentStatus: payment.Status || null } }];"
+        },
+        "id": "code-parse-payment",
+        "name": "Parse Payment Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4480,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'paid_cash',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  paymentId: d.paymentId,\n  paymentRecorded: !!d.paymentId,\n  emailSent: false,\n  emailSkippedReason: 'paid_cash_no_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+        },
+        "id": "code-success-cash",
+        "name": "Build Success Result (Cash Sale)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4720,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.xero.com/api.xro/2.0/Invoices",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "xeroOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "xero-tenant-id",
+                "value": "={{ $json.xeroTenantId }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ Invoices: [{ Type: 'ACCREC', Contact: { ContactID: $json.resolvedContactId }, LineAmountTypes: $json.invoiceLineAmountType || 'Inclusive', LineItems: [{ Description: $json.lineDescription, Quantity: 1, UnitAmount: $json.lineAmount, AccountCode: $json.xeroSalesAccountCode }], Reference: $json.invoiceReference, Status: $json.invoiceStatus, DueDate: new Date(Date.now() + (Number($json.invoiceDueDays) || 14) * 86400000).toISOString().slice(0,10) }] }) }}",
+          "options": {}
+        },
+        "id": "http-create-invoice",
+        "name": "Xero - Create Invoice",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3520,
+          280
+        ],
+        "credentials": {
+          "xeroOAuth2Api": {
+            "id": "4p323BIqqLPBGyHS",
+            "name": "Xero account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const resp = $input.item.json;\nconst prior = $('Contact Resolved').item.json;\nconst invoice = (resp.Invoices || [])[0] || {};\nreturn [{ json: { ...prior, invoiceId: invoice.InvoiceID || null, invoiceNumber: invoice.InvoiceNumber || null, invoiceStatusResult: invoice.Status || null } }];"
+        },
+        "id": "code-parse-invoice",
+        "name": "Parse Invoice Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3760,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.hasCustomerEmail }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-has-email",
+        "name": "Has Customer Email?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          4000,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.customerEmail], subject: `Your invoice from ${$json.clientName}`, text: `Hi ${$json.customerName},\\n\\nYour invoice for \"${$json.lineDescription}\" (${$json.invoiceNumber || $json.invoiceReference}) has been created.\\n\\nAmount: ${$json.lineAmount}\\nPayment options: ${$json.paymentOptions}\\n\\nThanks,\\n${$json.clientName}` }) }}",
+          "options": {}
+        },
+        "id": "http-send-email",
+        "name": "Send Confirmation Email (Resend)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          4240,
+          200
+        ],
+        "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "YHY8OwE9VDR10sYO",
+            "name": "Header Auth account 2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $('Parse Invoice Result').item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: true,\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+        },
+        "id": "code-success-emailed",
+        "name": "Build Success Result (Email Sent)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4480,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $input.item.json;\nreturn [{ json: {\n  status: 'success',\n  jobId: d.jobId,\n  paymentMethod: 'send_invoice',\n  invoiceId: d.invoiceId,\n  invoiceNumber: d.invoiceNumber,\n  invoiceReference: d.invoiceReference,\n  contactId: d.resolvedContactId,\n  contactResolution: d.contactResolution,\n  amount: d.lineAmount,\n  emailSent: false,\n  emailSkippedReason: 'missing_customer_email',\n  paymentMethodWarning: d.paymentMethodWarning || null,\n} }];"
+        },
+        "id": "code-success-no-email",
+        "name": "Build Success Result (Email Skipped)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4240,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Manual Trigger": {
+        "main": [
+          [
+            {
+              "node": "Sample Job Data (Manual Test)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Sample Job Data (Manual Test)": {
+        "main": [
+          [
+            {
+              "node": "Job Data In",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Job Completion Input": {
+        "main": [
+          [
+            {
+              "node": "Extract Job Data From Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Job Data From Webhook": {
+        "main": [
+          [
+            {
+              "node": "Job Data In",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Job Data In": {
+        "main": [
+          [
+            {
+              "node": "Validate Job Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Job Data": {
+        "main": [
+          [
+            {
+              "node": "Is Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Client Config",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Validation Error Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Client Config": {
+        "main": [
+          [
+            {
+              "node": "Merge Config + Job",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Config + Job": {
+        "main": [
+          [
+            {
+              "node": "Normalize Payment Method",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Payment Method": {
+        "main": [
+          [
+            {
+              "node": "Check Customer Discount",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Customer Discount": {
+        "main": [
+          [
+            {
+              "node": "Match Customer Discount",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Match Customer Discount": {
+        "main": [
+          [
+            {
+              "node": "Apply Branding, Discount, Payment Options",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply Branding, Discount, Payment Options": {
+        "main": [
+          [
+            {
+              "node": "Check Send-Time Window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Send-Time Window": {
+        "main": [
+          [
+            {
+              "node": "In Send Window?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "In Send Window?": {
+        "main": [
+          [
+            {
+              "node": "Xero - Get Connections",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Queue Until Window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Queue Until Window": {
+        "main": [
+          [
+            {
+              "node": "Wait For Send Window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait For Send Window": {
+        "main": [
+          [
+            {
+              "node": "Xero - Get Connections",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Get Connections": {
+        "main": [
+          [
+            {
+              "node": "Extract Tenant ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Tenant ID": {
+        "main": [
+          [
+            {
+              "node": "Xero - Check Existing Invoice",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Check Existing Invoice": {
+        "main": [
+          [
+            {
+              "node": "Check Duplicate Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Duplicate Result": {
+        "main": [
+          [
+            {
+              "node": "Is Duplicate?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Duplicate?": {
+        "main": [
+          [
+            {
+              "node": "Build Duplicate Skipped Result",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Xero - Search Contact",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Search Contact": {
+        "main": [
+          [
+            {
+              "node": "Contact Search Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Contact Search Result": {
+        "main": [
+          [
+            {
+              "node": "Contact Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Contact Found?": {
+        "main": [
+          [
+            {
+              "node": "Use Existing Contact ID",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Xero - Create Contact",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Use Existing Contact ID": {
+        "main": [
+          [
+            {
+              "node": "Contact Resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Create Contact": {
+        "main": [
+          [
+            {
+              "node": "Extract New Contact ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract New Contact ID": {
+        "main": [
+          [
+            {
+              "node": "Contact Resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Contact Resolved": {
+        "main": [
+          [
+            {
+              "node": "Is Paid Cash?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Paid Cash?": {
+        "main": [
+          [
+            {
+              "node": "Xero - Create Invoice (Cash Sale)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Xero - Create Invoice",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Create Invoice (Cash Sale)": {
+        "main": [
+          [
+            {
+              "node": "Parse Cash Invoice Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Cash Invoice Result": {
+        "main": [
+          [
+            {
+              "node": "Xero - Create Payment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Create Payment": {
+        "main": [
+          [
+            {
+              "node": "Parse Payment Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Payment Result": {
+        "main": [
+          [
+            {
+              "node": "Build Success Result (Cash Sale)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Xero - Create Invoice": {
+        "main": [
+          [
+            {
+              "node": "Parse Invoice Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Invoice Result": {
+        "main": [
+          [
+            {
+              "node": "Has Customer Email?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Customer Email?": {
+        "main": [
+          [
+            {
+              "node": "Send Confirmation Email (Resend)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Success Result (Email Skipped)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Confirmation Email (Resend)": {
+        "main": [
+          [
+            {
+              "node": "Build Success Result (Email Sent)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Bilal Khan",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-09-05T01:42:52.295Z",
+    "updatedAt": "2026-09-05T01:42:52.295Z",
+    "workflowPublishHistory": [
+      {
+        "id": 139,
+        "workflowId": "MParifnFIYCIuXUs",
+        "versionId": "517abddf-3802-4929-a835-9c4ef5a33a9d",
+        "event": "activated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-09-05T01:42:52.456Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}

@@ -1,0 +1,120 @@
+{
+  "id": "jKf0MxxjYCZlbNSL",
+  "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-08T12:34:27.168Z",
+  "updatedAt": "2026-11-08T12:36:37.151Z",
+  "isArchived": false,
+  "versionId": "4245e6ba-5be9-4312-999c-da0c3ddbe587",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "45b898df-58da-4544-a501-44035b2bb61e",
+      "name": "Force failure",
+      "webhookId": "3faac1e0-f2cb-45a0-ac66-2201f39aafda",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ks-test-force-failure",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "bc65d1f5-afaa-4f0d-a557-50653935146b",
+      "name": "Pretend client step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { clientId: 'KS-DEMO-01', step: 'calendar booking' } }];\n"
+      }
+    },
+    {
+      "id": "0c40770d-421b-478b-ac9b-6293c1e1d370",
+      "name": "Fail on purpose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = ($('Force failure').first().json.body || {}).run || 'x';\nthrow new Error('Request failed with status code 401 Unauthorized (forced test failure ' + run + ' for Google Calendar booking)');\n"
+      }
+    }
+  ],
+  "connections": {
+    "Force failure": {
+      "main": [
+        [
+          {
+            "node": "Pretend client step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pretend client step": {
+      "main": [
+        [
+          {
+            "node": "Fail on purpose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Europe/London",
+    "executionOrder": "v1",
+    "errorWorkflow": "GKF6X82UvFFth43w"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": null,
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "jKf0MxxjYCZlbNSL",
+      "projectId": "FrKmPeJlyYapT3T8",
+      "project": {
+        "id": "FrKmPeJlyYapT3T8",
+        "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-07-06T18:03:16.642Z",
+        "updatedAt": "2026-07-06T18:03:25.479Z"
+      },
+      "createdAt": "2026-11-08T12:34:27.184Z",
+      "updatedAt": "2026-11-08T12:34:27.184Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}

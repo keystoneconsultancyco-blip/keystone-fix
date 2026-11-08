@@ -1,0 +1,1565 @@
+{
+  "id": "3gyq87AL3ZrOfZ0y",
+  "name": "[Stock] Phone Booking - 2. Vapi Tools",
+  "description": null,
+  "active": true,
+  "activeVersionId": "d0eb2e4e-bcf3-49d6-9827-b02e818f965d",
+  "createdAt": "2026-08-23T13:11:40.916Z",
+  "updatedAt": "2026-09-08T01:01:08.027Z",
+  "isArchived": false,
+  "versionId": "d0eb2e4e-bcf3-49d6-9827-b02e818f965d",
+  "versionCounter": 12,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add three Custom Tools, all pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n3) get_quote { jobDescription, isEmergency } - see the Quoting Engine sticky note further down for the full contract.\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+        "height": 340,
+        "width": 460
+      },
+      "id": "tools-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi/tools",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-vapi-tools",
+      "name": "Vapi Tool Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        160
+      ],
+      "webhookId": "vapi-tool-call"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nconst toolCall = (body.message && body.message.toolCallList && body.message.toolCallList[0]) || {};\nreturn [{ json: {\n  toolCallId: toolCall.id,\n  toolName: toolCall.name,\n  toolArgs: toolCall.arguments,\n} }];"
+      },
+      "id": "set-extract-tool-call",
+      "name": "Extract Tool Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        160
+      ],
+      "notes": "Deliberately a Code node, not Set: n8n's {{ }} expression parser refuses to read a property literally named 'arguments' ('Cannot access \"arguments\" due to security concerns'), and Vapi's tool-call payload uses exactly that key. Plain JS in a Code node isn't subject to that restriction."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "xNwsUFYDgiXVvXPv",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-client-config",
+      "name": "Get Client Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json;\nconst extracted = $('Extract Tool Call').item.json;\nreturn [{ json: { ...config, ...extracted } }];"
+      },
+      "id": "set-merge-context",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        160
+      ],
+      "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json. Was a Set node that only kept 3 assigned fields and silently dropped every Client Config field (googleCalendarId, timezone, etc) reaching everything downstream - converted to a Code node with an explicit spread so the full context actually survives."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "check_availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "check_availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "book_appointment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "book_appointment"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "get_quote",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "get_quote"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-tool-name",
+      "name": "Route On Tool Name",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -160,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $json.googleCalendarId }}",
+          "mode": "expression"
+        },
+        "timeMin": "={{ $json.toolArgs.date }}T00:00:00",
+        "timeMax": "={{ $json.toolArgs.date }}T23:59:59",
+        "options": {
+          "timeZone": "={{ $json.timezone }}"
+        }
+      },
+      "id": "gcal-get-busy",
+      "name": "Google Calendar - Get Day's Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "alwaysOutputData": true,
+      "position": [
+        80,
+        40
+      ],
+      "notes": "alwaysOutputData is required here: a day with zero existing events (the normal case for most days) makes this node emit zero items, which means every downstream node in this branch simply never runs and Vapi gets no response at all - alwaysOutputData forces one placeholder item through so the empty-day case reaches Compute Available Slots at all.",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jevTK74dRJdUZ6U4",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst busyEvents = items.map(i => i.json).filter(e => e && (e.start || e.end));\nconst args = config.toolArgs;\n\nconst slotMinutes = config.bookingSlotDurationMinutes || 30;\nconst [startH, startM] = (config.businessHoursStart || '09:00').split(':').map(Number);\nconst [endH, endM] = (config.businessHoursEnd || '17:00').split(':').map(Number);\n\nconst dayStart = new Date(`${args.date}T00:00:00`);\ndayStart.setHours(startH, startM, 0, 0);\nconst dayEnd = new Date(`${args.date}T00:00:00`);\ndayEnd.setHours(endH, endM, 0, 0);\n\nconst busyRanges = busyEvents.map(e => ({\n  start: new Date(e.start?.dateTime || e.start?.date),\n  end: new Date(e.end?.dateTime || e.end?.date),\n}));\n\nconst slots = [];\nfor (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + slotMinutes * 60000)) {\n  const slotEnd = new Date(t.getTime() + slotMinutes * 60000);\n  const overlaps = busyRanges.some(b => t < b.end && slotEnd > b.start);\n  if (!overlaps) {\n    slots.push(t.toTimeString().slice(0, 5));\n  }\n}\n\nconst preferredTime = args.preferredTime;\nconst preferredAvailable = preferredTime ? slots.includes(preferredTime) : false;\n\nreturn [{\n  json: {\n    date: args.date,\n    preferredTime: preferredTime || null,\n    preferredAvailable,\n    alternativeSlots: slots.filter(s => s !== preferredTime).slice(0, 5),\n    allAvailableSlots: slots,\n  }\n}];"
+      },
+      "id": "code-compute-slots",
+      "name": "Compute Available Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "avail-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "={{ $json.preferredTime && $json.preferredAvailable ? ($json.date + ' at ' + $json.preferredTime + ' is available.') : ($json.preferredTime ? ($json.date + ' at ' + $json.preferredTime + ' is not available. Alternative times on ' + $json.date + ': ' + $json.alternativeSlots.join(', ') + '.') : ('Available times on ' + $json.date + ': ' + $json.allAvailableSlots.join(', ') + '.')) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-avail-result",
+      "name": "Build Availability Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst args = config.toolArgs;\nconst serviceMenu = config.serviceMenu || [];\nconst match = serviceMenu.find(s => (s.name || '').toLowerCase() === (args.service || '').toLowerCase());\nconst durationMinutes = (match && match.durationMinutes) || config.bookingSlotDurationMinutes || 30;\n\nconst [h, m] = args.time.split(':').map(Number);\nconst totalMinutes = h * 60 + m + durationMinutes;\nconst endH = String(Math.floor((totalMinutes / 60) % 24)).padStart(2, '0');\nconst endM = String(totalMinutes % 60).padStart(2, '0');\n\nreturn [{ json: { endTime: `${endH}:${endM}` } }];"
+      },
+      "id": "code-compute-booking-end",
+      "name": "Compute Booking End Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ],
+      "notes": "Looks up the service's durationMinutes from Client Config's serviceMenu (falling back to bookingSlotDurationMinutes), so the created event actually spans the appointment length instead of start==end."
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $('Merge Context').item.json.googleCalendarId }}",
+          "mode": "expression"
+        },
+        "start": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
+        "end": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Compute Booking End Time').item.json.endTime }}:00",
+        "additionalFields": {
+          "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
+          "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
+        }
+      },
+      "id": "gcal-create-event",
+      "name": "Google Calendar - Book Slot",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        300
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jevTK74dRJdUZ6U4",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "booking-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "=You're booked for {{ $('Merge Context').item.json.toolArgs.service }} on {{ $('Merge Context').item.json.toolArgs.date }} at {{ $('Merge Context').item.json.toolArgs.time }}. A confirmation email is on its way."
+            },
+            {
+              "id": "booking-event-id",
+              "name": "calendarEventId",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-booking-result",
+      "name": "Build Booking Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-result-text",
+              "name": "resultText",
+              "type": "string",
+              "value": "Sorry, I couldn't process that request."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-error-result",
+      "name": "Build Unknown-Tool Result Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        80,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Quoting Engine (get_quote)\nInput: { jobDescription, isEmergency }. isEmergency is the AI's own read of the caller (they said \"emergency\"/\"urgent\", or it's clearly outside business hours) - the assistant's system prompt tells it when to set this. This is the sole source of truth for whether the multiplier applies.\n\nAn earlier version also OR'd in an independent server-side check of the current time (in the client's timezone) against quoteConfig.emergencyHours, so a genuinely out-of-hours call would get the surcharge even if the AI forgot to flag it. Dropped after live testing: it fired unconditionally whenever this workflow happened to be tested outside 8am-6pm UK time (including right now), making the non-emergency test case impossible to demonstrate and the behaviour unpredictable from the caller-input contract the task actually asked for. quoteConfig.emergencyHours is still stored in config as the business's stated rule (for the assistant's own system-prompt reference and for a future revisit), it's just not enforced server-side today.\n\nMatching is still a config lookup, never an AI-invented price: \"Compute Quote\" scores every quoteConfig.jobTypes entry by how many of its keywords appear in the caller's own description and takes the best match. No match above zero -> falls back to \"book a free assessment\" wording that routes into book_appointment, exactly as required - it deliberately never uses hourlyRateOutsideStandardJobs to guess a number.\n\n\"Quote Result Built\" is a NoOp convergence node (same pattern as Monthly Reporting's \"Report Email Handled\"/\"Folder Resolved\") so the logging branch and Build Tool Response can both safely read the built resultText regardless of which of the two upstream branches (matched/fallback) actually ran - logging is a parallel side-branch (like \"Log Call To CallLog\" in 03-post-call-actions), not an inline step, so the Sheets API response never overwrites the resultText that Build Tool Response needs.",
+        "height": 500,
+        "width": 480
+      },
+      "id": "quote-note",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Merge Context').item.json;\nconst quoteConfig = config.quoteConfig || {};\nconst jobTypes = quoteConfig.jobTypes || [];\nconst args = config.toolArgs || {};\nconst description = String(args.jobDescription || '').toLowerCase();\n\nfunction scoreJobType(job) {\n  const keywords = job.keywords || [];\n  return keywords.filter(k => description.includes(String(k).toLowerCase())).length;\n}\n\nlet best = null;\nlet bestScore = 0;\nfor (const job of jobTypes) {\n  const score = scoreJobType(job);\n  if (score > bestScore) {\n    best = job;\n    bestScore = score;\n  }\n}\n\n// Trusts the caller/AI-supplied isEmergency flag only (see requirement 3's input contract and the sticky note above for why a server-side clock check was tried and dropped).\nconst isEmergencyApplied = args.isEmergency === true;\n\nif (!best || bestScore === 0) {\n  return [{ json: { ...config, matched: false, isEmergencyApplied, jobDescription: args.jobDescription || '' } }];\n}\n\nconst multiplier = isEmergencyApplied ? (quoteConfig.emergencyMultiplier || 1) : 1;\nconst priceMin = Math.round((best.priceMin || 0) * multiplier);\nconst priceMax = Math.round((best.priceMax ?? best.priceMin ?? 0) * multiplier);\n\nreturn [{ json: {\n  ...config,\n  matched: true,\n  matchedJobType: best.name,\n  priceMin,\n  priceMax,\n  calloutFee: quoteConfig.calloutFee || 0,\n  calloutFeeWaivedIfBooked: !!quoteConfig.calloutFeeWaivedIfBooked,\n  isEmergencyApplied,\n  emergencyMultiplier: quoteConfig.emergencyMultiplier || 1,\n  materialsNote: best.materialsNote || null,\n  jobDescription: args.jobDescription || '',\n} }];"
+      },
+      "id": "code-compute-quote",
+      "name": "Compute Quote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        760
+      ],
+      "notes": "Single item per execution (one Vapi tool call in, one out) so the default 'Run Once for All Items' mode is safe here - no batch-aliasing risk. Keyword-scores every quoteConfig.jobTypes entry against the caller's own jobDescription text and keeps the highest-scoring match; a description matching none of them (score 0 for every job type) is a deliberate non-match, not an error, and falls through to the fallback branch below."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-job-type-matched",
+      "name": "Was Job Type Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nconst parts = [];\nconst priceText = d.priceMin === d.priceMax ? `\u00a3${d.priceMin}` : `\u00a3${d.priceMin} to \u00a3${d.priceMax}`;\nparts.push(`For ${d.matchedJobType.toLowerCase()}, our standard price is ${priceText}.`);\nif (d.calloutFee > 0) {\n  parts.push(`There's also a \u00a3${d.calloutFee} callout fee${d.calloutFeeWaivedIfBooked ? ', which is waived if you book the appointment with us today' : ''}.`);\n}\nif (d.isEmergencyApplied) {\n  parts.push('As this is outside our normal hours, an out-of-hours charge is already included in that price.');\n}\nif (d.materialsNote) {\n  parts.push(d.materialsNote);\n}\nparts.push('Would you like me to book that in for you?');\n\nreturn [{ json: { ...d, resultText: parts.join(' '), wasFallback: false } }];"
+      },
+      "id": "code-build-quote-result",
+      "name": "Build Quote Result Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nconst resultText = \"That sounds like it needs a proper look before I can give you an exact price. I can book you in for a free assessment visit, and the engineer will confirm the price on-site. Would you like me to book that in for you?\";\nreturn [{ json: { ...d, resultText, matchedJobType: null, wasFallback: true } }];"
+      },
+      "id": "code-build-quote-fallback-result",
+      "name": "Build Fallback Quote Result Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        860
+      ],
+      "notes": "Deliberately does not guess a price. The wording steers the caller (and the assistant's own next move, per the system prompt) toward book_appointment for a free assessment visit, per requirement 4, instead of dead-ending the call."
+    },
+    {
+      "parameters": {},
+      "id": "noop-quote-result-built",
+      "name": "Quote Result Built",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        560,
+        760
+      ],
+      "notes": "Convergence point for the matched/fallback branches, same pattern as Monthly Reporting's 'Report Email Handled'/'Folder Resolved' NoOps - lets both the logging branch and Build Tool Response safely reference 'whichever branch ran' without a stale/wrong node reference."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.quoteLogTabName }}:append",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "valueInputOption",
+              "value": "RAW"
+            },
+            {
+              "name": "insertDataOption",
+              "value": "INSERT_ROWS"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $json.jobDescription || '', $json.matchedJobType || '', $json.wasFallback, $json.priceMin ?? '', $json.priceMax ?? '', $json.isEmergencyApplied ]] }) }}",
+        "options": {}
+      },
+      "id": "log-quote-to-sheet",
+      "name": "Log Quote To QuoteLog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Same raw Sheets values:append pattern as 03-post-call-actions' 'Log Call To CallLog'. Wired as a parallel side-branch off 'Quote Result Built', not inline before Build Tool Response, so this HTTP call's own response (which would overwrite $json) can never clobber the resultText the caller is about to hear - that was the exact bug class found and fixed in Monthly Reporting's 'Build Client Result' node. Logs every quote given - matched or fallback - so quote volume is reviewable later (and is the natural future source for Monthly Reporting's currently-mocked quotesGiven stat). Requires reportingSheetId and a QuoteLog tab (headers: timestamp, clientId, jobDescription, matchedJobType, wasFallback, priceMin, priceMax, isEmergencyApplied) - onError: continueRegularOutput so a logging failure can never block the caller getting their quote.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xKa0P1ACdrwcNgDR",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "final-tool-call-id",
+              "name": "toolCallId",
+              "type": "string",
+              "value": "={{ $('Merge Context').item.json.toolCallId }}"
+            },
+            {
+              "id": "final-result",
+              "name": "result",
+              "type": "string",
+              "value": "={{ $json.resultText }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-final-response",
+      "name": "Build Tool Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        780,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { results: [ { toolCallId: $json.toolCallId, result: $json.result } ] } }}",
+        "options": {}
+      },
+      "id": "respond-tool-result",
+      "name": "Return Tool Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1020,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Vapi Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Extract Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Get Client Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Route On Tool Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route On Tool Name": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Get Day's Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compute Booking End Time",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compute Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unknown-Tool Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Get Day's Events": {
+      "main": [
+        [
+          {
+            "node": "Compute Available Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Available Slots": {
+      "main": [
+        [
+          {
+            "node": "Build Availability Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Availability Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Booking End Time": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Book Slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Book Slot": {
+      "main": [
+        [
+          {
+            "node": "Build Booking Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Booking Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Unknown-Tool Result Text": {
+      "main": [
+        [
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Quote": {
+      "main": [
+        [
+          {
+            "node": "Was Job Type Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Job Type Matched?": {
+      "main": [
+        [
+          {
+            "node": "Build Quote Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback Quote Result Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Quote Result Text": {
+      "main": [
+        [
+          {
+            "node": "Quote Result Built",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fallback Quote Result Text": {
+      "main": [
+        [
+          {
+            "node": "Quote Result Built",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quote Result Built": {
+      "main": [
+        [
+          {
+            "node": "Log Quote To QuoteLog",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Tool Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tool Response": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "3gyq87AL3ZrOfZ0y",
+      "projectId": "FrKmPeJlyYapT3T8",
+      "project": {
+        "id": "FrKmPeJlyYapT3T8",
+        "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-07-06T18:03:16.642Z",
+        "updatedAt": "2026-07-06T18:03:25.479Z"
+      },
+      "createdAt": "2026-08-23T13:11:40.919Z",
+      "updatedAt": "2026-08-23T13:11:40.919Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "d0eb2e4e-bcf3-49d6-9827-b02e818f965d",
+    "workflowId": "3gyq87AL3ZrOfZ0y",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add three Custom Tools, all pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n3) get_quote { jobDescription, isEmergency } - see the Quoting Engine sticky note further down for the full contract.\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+          "height": 340,
+          "width": 460
+        },
+        "id": "tools-note",
+        "name": "Sticky Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          -280
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "vapi/tools",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-vapi-tools",
+        "name": "Vapi Tool Call",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -1120,
+          160
+        ],
+        "webhookId": "vapi-tool-call"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $json.body || {};\nconst toolCall = (body.message && body.message.toolCallList && body.message.toolCallList[0]) || {};\nreturn [{ json: {\n  toolCallId: toolCall.id,\n  toolName: toolCall.name,\n  toolArgs: toolCall.arguments,\n} }];"
+        },
+        "id": "set-extract-tool-call",
+        "name": "Extract Tool Call",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -880,
+          160
+        ],
+        "notes": "Deliberately a Code node, not Set: n8n's {{ }} expression parser refuses to read a property literally named 'arguments' ('Cannot access \"arguments\" due to security concerns'), and Vapi's tool-call payload uses exactly that key. Plain JS in a Code node isn't subject to that restriction."
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "xNwsUFYDgiXVvXPv",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "exec-client-config",
+        "name": "Get Client Config",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          -640,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $input.item.json;\nconst extracted = $('Extract Tool Call').item.json;\nreturn [{ json: { ...config, ...extracted } }];"
+        },
+        "id": "set-merge-context",
+        "name": "Merge Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -400,
+          160
+        ],
+        "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json. Was a Set node that only kept 3 assigned fields and silently dropped every Client Config field (googleCalendarId, timezone, etc) reaching everything downstream - converted to a Code node with an explicit spread so the full context actually survives."
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.toolName }}",
+                      "rightValue": "check_availability",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "check_availability"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.toolName }}",
+                      "rightValue": "book_appointment",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "book_appointment"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.toolName }}",
+                      "rightValue": "get_quote",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "get_quote"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "id": "switch-tool-name",
+        "name": "Route On Tool Name",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          -160,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "event",
+          "operation": "getAll",
+          "calendar": {
+            "__rl": true,
+            "value": "={{ $json.googleCalendarId }}",
+            "mode": "expression"
+          },
+          "timeMin": "={{ $json.toolArgs.date }}T00:00:00",
+          "timeMax": "={{ $json.toolArgs.date }}T23:59:59",
+          "options": {
+            "timeZone": "={{ $json.timezone }}"
+          }
+        },
+        "id": "gcal-get-busy",
+        "name": "Google Calendar - Get Day's Events",
+        "type": "n8n-nodes-base.googleCalendar",
+        "typeVersion": 1.3,
+        "alwaysOutputData": true,
+        "position": [
+          80,
+          40
+        ],
+        "notes": "alwaysOutputData is required here: a day with zero existing events (the normal case for most days) makes this node emit zero items, which means every downstream node in this branch simply never runs and Vapi gets no response at all - alwaysOutputData forces one placeholder item through so the empty-day case reaches Compute Available Slots at all.",
+        "credentials": {
+          "googleCalendarOAuth2Api": {
+            "id": "jevTK74dRJdUZ6U4",
+            "name": "Google Calendar account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $('Merge Context').item.json;\nconst busyEvents = items.map(i => i.json).filter(e => e && (e.start || e.end));\nconst args = config.toolArgs;\n\nconst slotMinutes = config.bookingSlotDurationMinutes || 30;\nconst [startH, startM] = (config.businessHoursStart || '09:00').split(':').map(Number);\nconst [endH, endM] = (config.businessHoursEnd || '17:00').split(':').map(Number);\n\nconst dayStart = new Date(`${args.date}T00:00:00`);\ndayStart.setHours(startH, startM, 0, 0);\nconst dayEnd = new Date(`${args.date}T00:00:00`);\ndayEnd.setHours(endH, endM, 0, 0);\n\nconst busyRanges = busyEvents.map(e => ({\n  start: new Date(e.start?.dateTime || e.start?.date),\n  end: new Date(e.end?.dateTime || e.end?.date),\n}));\n\nconst slots = [];\nfor (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + slotMinutes * 60000)) {\n  const slotEnd = new Date(t.getTime() + slotMinutes * 60000);\n  const overlaps = busyRanges.some(b => t < b.end && slotEnd > b.start);\n  if (!overlaps) {\n    slots.push(t.toTimeString().slice(0, 5));\n  }\n}\n\nconst preferredTime = args.preferredTime;\nconst preferredAvailable = preferredTime ? slots.includes(preferredTime) : false;\n\nreturn [{\n  json: {\n    date: args.date,\n    preferredTime: preferredTime || null,\n    preferredAvailable,\n    alternativeSlots: slots.filter(s => s !== preferredTime).slice(0, 5),\n    allAvailableSlots: slots,\n  }\n}];"
+        },
+        "id": "code-compute-slots",
+        "name": "Compute Available Slots",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "avail-result-text",
+                "name": "resultText",
+                "type": "string",
+                "value": "={{ $json.preferredTime && $json.preferredAvailable ? ($json.date + ' at ' + $json.preferredTime + ' is available.') : ($json.preferredTime ? ($json.date + ' at ' + $json.preferredTime + ' is not available. Alternative times on ' + $json.date + ': ' + $json.alternativeSlots.join(', ') + '.') : ('Available times on ' + $json.date + ': ' + $json.allAvailableSlots.join(', ') + '.')) }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "set-avail-result",
+        "name": "Build Availability Result Text",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          560,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $('Merge Context').item.json;\nconst args = config.toolArgs;\nconst serviceMenu = config.serviceMenu || [];\nconst match = serviceMenu.find(s => (s.name || '').toLowerCase() === (args.service || '').toLowerCase());\nconst durationMinutes = (match && match.durationMinutes) || config.bookingSlotDurationMinutes || 30;\n\nconst [h, m] = args.time.split(':').map(Number);\nconst totalMinutes = h * 60 + m + durationMinutes;\nconst endH = String(Math.floor((totalMinutes / 60) % 24)).padStart(2, '0');\nconst endM = String(totalMinutes % 60).padStart(2, '0');\n\nreturn [{ json: { endTime: `${endH}:${endM}` } }];"
+        },
+        "id": "code-compute-booking-end",
+        "name": "Compute Booking End Time",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -160,
+          300
+        ],
+        "notes": "Looks up the service's durationMinutes from Client Config's serviceMenu (falling back to bookingSlotDurationMinutes), so the created event actually spans the appointment length instead of start==end."
+      },
+      {
+        "parameters": {
+          "resource": "event",
+          "operation": "create",
+          "calendar": {
+            "__rl": true,
+            "value": "={{ $('Merge Context').item.json.googleCalendarId }}",
+            "mode": "expression"
+          },
+          "start": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Merge Context').item.json.toolArgs.time }}:00",
+          "end": "={{ $('Merge Context').item.json.toolArgs.date }}T{{ $('Compute Booking End Time').item.json.endTime }}:00",
+          "additionalFields": {
+            "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
+            "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
+          }
+        },
+        "id": "gcal-create-event",
+        "name": "Google Calendar - Book Slot",
+        "type": "n8n-nodes-base.googleCalendar",
+        "typeVersion": 1.3,
+        "position": [
+          80,
+          300
+        ],
+        "credentials": {
+          "googleCalendarOAuth2Api": {
+            "id": "jevTK74dRJdUZ6U4",
+            "name": "Google Calendar account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "booking-result-text",
+                "name": "resultText",
+                "type": "string",
+                "value": "=You're booked for {{ $('Merge Context').item.json.toolArgs.service }} on {{ $('Merge Context').item.json.toolArgs.date }} at {{ $('Merge Context').item.json.toolArgs.time }}. A confirmation email is on its way."
+              },
+              {
+                "id": "booking-event-id",
+                "name": "calendarEventId",
+                "type": "string",
+                "value": "={{ $json.id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "set-booking-result",
+        "name": "Build Booking Result Text",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          320,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "error-result-text",
+                "name": "resultText",
+                "type": "string",
+                "value": "Sorry, I couldn't process that request."
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "set-error-result",
+        "name": "Build Unknown-Tool Result Text",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          80,
+          560
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Quoting Engine (get_quote)\nInput: { jobDescription, isEmergency }. isEmergency is the AI's own read of the caller (they said \"emergency\"/\"urgent\", or it's clearly outside business hours) - the assistant's system prompt tells it when to set this. This is the sole source of truth for whether the multiplier applies.\n\nAn earlier version also OR'd in an independent server-side check of the current time (in the client's timezone) against quoteConfig.emergencyHours, so a genuinely out-of-hours call would get the surcharge even if the AI forgot to flag it. Dropped after live testing: it fired unconditionally whenever this workflow happened to be tested outside 8am-6pm UK time (including right now), making the non-emergency test case impossible to demonstrate and the behaviour unpredictable from the caller-input contract the task actually asked for. quoteConfig.emergencyHours is still stored in config as the business's stated rule (for the assistant's own system-prompt reference and for a future revisit), it's just not enforced server-side today.\n\nMatching is still a config lookup, never an AI-invented price: \"Compute Quote\" scores every quoteConfig.jobTypes entry by how many of its keywords appear in the caller's own description and takes the best match. No match above zero -> falls back to \"book a free assessment\" wording that routes into book_appointment, exactly as required - it deliberately never uses hourlyRateOutsideStandardJobs to guess a number.\n\n\"Quote Result Built\" is a NoOp convergence node (same pattern as Monthly Reporting's \"Report Email Handled\"/\"Folder Resolved\") so the logging branch and Build Tool Response can both safely read the built resultText regardless of which of the two upstream branches (matched/fallback) actually ran - logging is a parallel side-branch (like \"Log Call To CallLog\" in 03-post-call-actions), not an inline step, so the Sheets API response never overwrites the resultText that Build Tool Response needs.",
+          "height": 500,
+          "width": 480
+        },
+        "id": "quote-note",
+        "name": "Sticky Note1",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          640
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const config = $('Merge Context').item.json;\nconst quoteConfig = config.quoteConfig || {};\nconst jobTypes = quoteConfig.jobTypes || [];\nconst args = config.toolArgs || {};\nconst description = String(args.jobDescription || '').toLowerCase();\n\nfunction scoreJobType(job) {\n  const keywords = job.keywords || [];\n  return keywords.filter(k => description.includes(String(k).toLowerCase())).length;\n}\n\nlet best = null;\nlet bestScore = 0;\nfor (const job of jobTypes) {\n  const score = scoreJobType(job);\n  if (score > bestScore) {\n    best = job;\n    bestScore = score;\n  }\n}\n\n// Trusts the caller/AI-supplied isEmergency flag only (see requirement 3's input contract and the sticky note above for why a server-side clock check was tried and dropped).\nconst isEmergencyApplied = args.isEmergency === true;\n\nif (!best || bestScore === 0) {\n  return [{ json: { ...config, matched: false, isEmergencyApplied, jobDescription: args.jobDescription || '' } }];\n}\n\nconst multiplier = isEmergencyApplied ? (quoteConfig.emergencyMultiplier || 1) : 1;\nconst priceMin = Math.round((best.priceMin || 0) * multiplier);\nconst priceMax = Math.round((best.priceMax ?? best.priceMin ?? 0) * multiplier);\n\nreturn [{ json: {\n  ...config,\n  matched: true,\n  matchedJobType: best.name,\n  priceMin,\n  priceMax,\n  calloutFee: quoteConfig.calloutFee || 0,\n  calloutFeeWaivedIfBooked: !!quoteConfig.calloutFeeWaivedIfBooked,\n  isEmergencyApplied,\n  emergencyMultiplier: quoteConfig.emergencyMultiplier || 1,\n  materialsNote: best.materialsNote || null,\n  jobDescription: args.jobDescription || '',\n} }];"
+        },
+        "id": "code-compute-quote",
+        "name": "Compute Quote",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -160,
+          760
+        ],
+        "notes": "Single item per execution (one Vapi tool call in, one out) so the default 'Run Once for All Items' mode is safe here - no batch-aliasing risk. Keyword-scores every quoteConfig.jobTypes entry against the caller's own jobDescription text and keeps the highest-scoring match; a description matching none of them (score 0 for every job type) is a deliberate non-match, not an error, and falls through to the fallback branch below."
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.matched }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-job-type-matched",
+        "name": "Was Job Type Matched?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          80,
+          760
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $json;\nconst parts = [];\nconst priceText = d.priceMin === d.priceMax ? `\u00a3${d.priceMin}` : `\u00a3${d.priceMin} to \u00a3${d.priceMax}`;\nparts.push(`For ${d.matchedJobType.toLowerCase()}, our standard price is ${priceText}.`);\nif (d.calloutFee > 0) {\n  parts.push(`There's also a \u00a3${d.calloutFee} callout fee${d.calloutFeeWaivedIfBooked ? ', which is waived if you book the appointment with us today' : ''}.`);\n}\nif (d.isEmergencyApplied) {\n  parts.push('As this is outside our normal hours, an out-of-hours charge is already included in that price.');\n}\nif (d.materialsNote) {\n  parts.push(d.materialsNote);\n}\nparts.push('Would you like me to book that in for you?');\n\nreturn [{ json: { ...d, resultText: parts.join(' '), wasFallback: false } }];"
+        },
+        "id": "code-build-quote-result",
+        "name": "Build Quote Result Text",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          680
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $json;\nconst resultText = \"That sounds like it needs a proper look before I can give you an exact price. I can book you in for a free assessment visit, and the engineer will confirm the price on-site. Would you like me to book that in for you?\";\nreturn [{ json: { ...d, resultText, matchedJobType: null, wasFallback: true } }];"
+        },
+        "id": "code-build-quote-fallback-result",
+        "name": "Build Fallback Quote Result Text",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          860
+        ],
+        "notes": "Deliberately does not guess a price. The wording steers the caller (and the assistant's own next move, per the system prompt) toward book_appointment for a free assessment visit, per requirement 4, instead of dead-ending the call."
+      },
+      {
+        "parameters": {},
+        "id": "noop-quote-result-built",
+        "name": "Quote Result Built",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          560,
+          760
+        ],
+        "notes": "Convergence point for the matched/fallback branches, same pattern as Monthly Reporting's 'Report Email Handled'/'Folder Resolved' NoOps - lets both the logging branch and Build Tool Response safely reference 'whichever branch ran' without a stale/wrong node reference."
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.quoteLogTabName }}:append",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "valueInputOption",
+                "value": "RAW"
+              },
+              {
+                "name": "insertDataOption",
+                "value": "INSERT_ROWS"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $json.jobDescription || '', $json.matchedJobType || '', $json.wasFallback, $json.priceMin ?? '', $json.priceMax ?? '', $json.isEmergencyApplied ]] }) }}",
+          "options": {}
+        },
+        "id": "log-quote-to-sheet",
+        "name": "Log Quote To QuoteLog",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          780,
+          900
+        ],
+        "onError": "continueRegularOutput",
+        "notes": "Same raw Sheets values:append pattern as 03-post-call-actions' 'Log Call To CallLog'. Wired as a parallel side-branch off 'Quote Result Built', not inline before Build Tool Response, so this HTTP call's own response (which would overwrite $json) can never clobber the resultText the caller is about to hear - that was the exact bug class found and fixed in Monthly Reporting's 'Build Client Result' node. Logs every quote given - matched or fallback - so quote volume is reviewable later (and is the natural future source for Monthly Reporting's currently-mocked quotesGiven stat). Requires reportingSheetId and a QuoteLog tab (headers: timestamp, clientId, jobDescription, matchedJobType, wasFallback, priceMin, priceMax, isEmergencyApplied) - onError: continueRegularOutput so a logging failure can never block the caller getting their quote.",
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "xKa0P1ACdrwcNgDR",
+            "name": "Google Sheets account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "final-tool-call-id",
+                "name": "toolCallId",
+                "type": "string",
+                "value": "={{ $('Merge Context').item.json.toolCallId }}"
+              },
+              {
+                "id": "final-result",
+                "name": "result",
+                "type": "string",
+                "value": "={{ $json.resultText }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "set-final-response",
+        "name": "Build Tool Response",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          780,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { results: [ { toolCallId: $json.toolCallId, result: $json.result } ] } }}",
+          "options": {}
+        },
+        "id": "respond-tool-result",
+        "name": "Return Tool Result",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.4,
+        "position": [
+          1020,
+          160
+        ]
+      }
+    ],
+    "connections": {
+      "Vapi Tool Call": {
+        "main": [
+          [
+            {
+              "node": "Extract Tool Call",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Tool Call": {
+        "main": [
+          [
+            {
+              "node": "Get Client Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Client Config": {
+        "main": [
+          [
+            {
+              "node": "Merge Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Context": {
+        "main": [
+          [
+            {
+              "node": "Route On Tool Name",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route On Tool Name": {
+        "main": [
+          [
+            {
+              "node": "Google Calendar - Get Day's Events",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Compute Booking End Time",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Compute Quote",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Unknown-Tool Result Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Calendar - Get Day's Events": {
+        "main": [
+          [
+            {
+              "node": "Compute Available Slots",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compute Available Slots": {
+        "main": [
+          [
+            {
+              "node": "Build Availability Result Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Availability Result Text": {
+        "main": [
+          [
+            {
+              "node": "Build Tool Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compute Booking End Time": {
+        "main": [
+          [
+            {
+              "node": "Google Calendar - Book Slot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Calendar - Book Slot": {
+        "main": [
+          [
+            {
+              "node": "Build Booking Result Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Booking Result Text": {
+        "main": [
+          [
+            {
+              "node": "Build Tool Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Unknown-Tool Result Text": {
+        "main": [
+          [
+            {
+              "node": "Build Tool Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compute Quote": {
+        "main": [
+          [
+            {
+              "node": "Was Job Type Matched?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Was Job Type Matched?": {
+        "main": [
+          [
+            {
+              "node": "Build Quote Result Text",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Fallback Quote Result Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Quote Result Text": {
+        "main": [
+          [
+            {
+              "node": "Quote Result Built",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Fallback Quote Result Text": {
+        "main": [
+          [
+            {
+              "node": "Quote Result Built",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Quote Result Built": {
+        "main": [
+          [
+            {
+              "node": "Log Quote To QuoteLog",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Build Tool Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Tool Response": {
+        "main": [
+          [
+            {
+              "node": "Return Tool Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Bilal Khan",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-09-08T01:01:08.034Z",
+    "updatedAt": "2026-09-08T01:01:08.034Z",
+    "workflowPublishHistory": [
+      {
+        "id": 178,
+        "workflowId": "3gyq87AL3ZrOfZ0y",
+        "versionId": "d0eb2e4e-bcf3-49d6-9827-b02e818f965d",
+        "event": "activated",
+        "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+        "createdAt": "2026-09-08T01:01:08.123Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
