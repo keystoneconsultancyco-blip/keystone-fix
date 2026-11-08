@@ -33,6 +33,35 @@
     ]
   },
   {
+    "name": "KS Quote Calculator",
+    "file": "n8n/workflows/ks-quote-calculator.json",
+    "nodes": 39,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Quote form page",
+        "method": "GET",
+        "path": "ks-quote-form"
+      },
+      {
+        "node": "Quote request",
+        "method": "POST",
+        "path": "ks-quote"
+      },
+      {
+        "node": "Approve quote link",
+        "method": "GET",
+        "path": "ks-quote-approve"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
     "file": "n8n/workflows/ks-test-forced-failure-2-vapi-tools-simulation.json",
     "nodes": 3,

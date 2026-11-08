@@ -49,7 +49,7 @@ function truthy(v) { return v === true || ['yes', 'true', 'y', '1', 'on'].includ
 function calculate({ services, factors, client, input }) {
   const src = input.source || 'web';
   const svc = matchService(services, input);
-  if (!svc) return { matched: false, reason: 'no_matching_service', services: services.map((s) => s.name) };
+  if (!svc) return { matched: false, reason: 'no_matching_service', services: services.map((s) => s.name), lines: [], subtotal: 0, vat: 0, total: 0, cost: 0, marginPct: 0, minMarginPct: client.quotes.minMarginPct, belowMarginFloor: false, missing: [], followUps: [], notes: [] };
   const answers = Object.fromEntries(Object.entries(input.answers || {}).map(([k, v]) => [String(k).toLowerCase(), v]));
   const qty = input.quantity !== undefined && input.quantity !== '' ? Number(input.quantity) : (svc.unitName ? null : 0);
   const missing = [];
