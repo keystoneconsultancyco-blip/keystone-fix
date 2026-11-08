@@ -1,0 +1,159 @@
+[
+  {
+    "id": "3gyq87AL3ZrOfZ0y",
+    "name": "[Stock] Phone Booking - 2. Vapi Tools",
+    "active": true,
+    "nodes": 22,
+    "updatedAt": "2026-09-08T01:01:08.027Z",
+    "triggers": [
+      "webhook"
+    ],
+    "credentials": [
+      "Google Calendar account",
+      "Google Sheets account"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-phone-booking-2-vapi-tools__3gyq87AL3ZrOfZ0y.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "MParifnFIYCIuXUs",
+    "name": "[Stock] Invoice Automation",
+    "active": true,
+    "nodes": 44,
+    "updatedAt": "2026-09-05T01:42:52.292Z",
+    "triggers": [
+      "manualTrigger",
+      "webhook"
+    ],
+    "credentials": [
+      "Google Sheets account",
+      "Header Auth account 2",
+      "Xero account"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-invoice-automation__MParifnFIYCIuXUs.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "P1PTZaUWSSwNOFua",
+    "name": "[Stock] Phone Booking - 1. Inbound IVR",
+    "active": true,
+    "nodes": 24,
+    "updatedAt": "2026-08-26T09:04:45.381Z",
+    "triggers": [
+      "webhook",
+      "webhook",
+      "webhook"
+    ],
+    "credentials": [
+      "Header Auth account 2"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-phone-booking-1-inbound-ivr__P1PTZaUWSSwNOFua.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "PD8OAS7LPLoiGMkx",
+    "name": "[Stock] Invoice Automation - Collections Reminders",
+    "active": false,
+    "nodes": 37,
+    "updatedAt": "2026-09-02T22:15:32.457Z",
+    "triggers": [
+      "scheduleTrigger",
+      "manualTrigger",
+      "webhook"
+    ],
+    "credentials": [
+      "Header Auth account 2",
+      "Xero account"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-invoice-automation-collections-reminders__PD8OAS7LPLoiGMkx.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "SoTR9D5CjH1BGs4F",
+    "name": "[Stock] Phone Booking - 3. Post-Call Actions",
+    "active": true,
+    "nodes": 11,
+    "updatedAt": "2026-09-08T00:39:08.934Z",
+    "triggers": [
+      "webhook"
+    ],
+    "credentials": [
+      "Google Sheets account",
+      "Header Auth account 2"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-phone-booking-3-post-call-actions__SoTR9D5CjH1BGs4F.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "ai7GdjmZaEOF6Ich",
+    "name": "[Stock] Invoice Automation - Sheet Poller",
+    "active": true,
+    "nodes": 9,
+    "updatedAt": "2026-09-05T01:39:32.980Z",
+    "triggers": [
+      "scheduleTrigger",
+      "manualTrigger",
+      "webhook"
+    ],
+    "credentials": [
+      "Google Sheets account"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-invoice-automation-sheet-poller__ai7GdjmZaEOF6Ich.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "s2riyS1tZ0jtVuSR",
+    "name": "[Stock] Invoice Automation - Client Config",
+    "active": true,
+    "nodes": 3,
+    "updatedAt": "2026-09-05T01:39:13.539Z",
+    "triggers": [
+      "executeWorkflowTrigger"
+    ],
+    "credentials": [],
+    "errorWorkflow": null,
+    "file": "stock-invoice-automation-client-config__s2riyS1tZ0jtVuSR.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "uIusHeRCIBVactNt",
+    "name": "[Stock] Monthly Reporting",
+    "active": true,
+    "nodes": 34,
+    "updatedAt": "2026-09-08T00:36:49.682Z",
+    "triggers": [
+      "scheduleTrigger",
+      "manualTrigger",
+      "webhook"
+    ],
+    "credentials": [
+      "Google Drive account",
+      "Google Sheets account",
+      "Header Auth account 2",
+      "Xero account"
+    ],
+    "errorWorkflow": null,
+    "file": "stock-monthly-reporting__uIusHeRCIBVactNt.json",
+    "secretsRedacted": []
+  },
+  {
+    "id": "xNwsUFYDgiXVvXPv",
+    "name": "[Stock] Phone Booking - Client Config",
+    "active": true,
+    "nodes": 3,
+    "updatedAt": "2026-09-12T19:03:50.869Z",
+    "triggers": [
+      "executeWorkflowTrigger"
+    ],
+    "credentials": [],
+    "errorWorkflow": null,
+    "file": "stock-phone-booking-client-config__xNwsUFYDgiXVvXPv.json",
+    "secretsRedacted": []
+  }
+]
