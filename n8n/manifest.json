@@ -13,6 +13,29 @@
     ]
   },
   {
+    "name": "KS Audit Agent",
+    "file": "n8n/workflows/ks-audit-agent.json",
+    "nodes": 24,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Audit form page",
+        "method": "GET",
+        "path": "ks-audit-form"
+      },
+      {
+        "node": "Audit intake",
+        "method": "POST",
+        "path": "ks-audit-intake"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Xero account",
+      "Keystone Anthropic"
+    ]
+  },
+  {
     "name": "KS-01 Invoice Automation",
     "file": "n8n/workflows/ks-01-invoice-automation.json",
     "nodes": 43,
