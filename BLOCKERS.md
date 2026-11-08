@@ -6,6 +6,7 @@
 4. **Check Gmail Spam** for "[Keystone] Quote to approve ... (#8072)" and mark it Not spam.
 5. **Rotate the Resend key** (it was exposed in a chat earlier). You said you've updated "Header Auth account 2"; if that was a new key, this is done.
 6. **Move the API keys out of plain-text environment variables.** All three are currently in one `N8N_API_KEY` value. They work, but they're stored in plain text; ask me and I'll move them into the secure credential store.
-7. **Approve the pricing proposal** (`docs/PRICING_PROPOSAL.md`) before any prices go on the website.
+7. **Approve the pricing proposal** (`docs/PRICING_PROPOSAL.md`). The updated website is ready on the `launch-services` branch and its estimates use these prices; once you say OK, I merge it and it goes live.
 8. **Xero for real clients:** each client adds Keystone as a user in their Xero; then you reconnect the "Xero account" credential in n8n including their org, and put the org ID in My Clients > `Xero organisation ID`.
 9. **Client diagnosis/meeting document:** not found in Drive or Gmail. Send the link if it exists; otherwise the audit report template in `ops/lib/audit.js` replaces it.
+10. **Reconnect the Xero credential with report access.** n8n > Credentials > "Xero account" > reconnect, and make sure the `accounting.reports.read` scope is ticked. *Until then the weekly money email can't read profit and loss or bank balances (Xero returns 401). It still sends using invoices and Airtable data; income, costs and bank balance are left blank, and the Agent Log records why.*

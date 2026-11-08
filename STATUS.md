@@ -16,15 +16,15 @@
 | KS Quote Calculator (form, phone, manual, approve link) | ✅ | 7 live cases, including a real Claude estimate; approval emails arrived |
 | KS Ops Manager + KS Ops - Notify | ✅ email · 🟡 SMS | Evening summary, quote approval, YES link sent the quote, bad and reused codes refused |
 | Vapi assistant, tools and SIP address (demo client) | ✅ | Created by `ops/scripts/vapi-setup.js`; the IVR routes option 2 to it |
+| KS Weekly Money + Dashboard | ✅ (Xero reports 🟡, see BLOCKERS #10) | Monday 07:15 email per client from Xero + Airtable with a Claude plain-English explainer; private dashboard link per client (wrong token refused). Both demo clients' emails arrived; test rows removed |
+| KS Audit Agent | ✅ | Questionnaire form → halal screen → Xero snapshot → Claude-drafted report saved in Airtable Audit Intakes as "Draft ready for review". 3 live intakes (full, Xero, halal rejection); test rows removed |
 | [Stock] Collections Reminders | left off (out of scope) | untouched |
 
 ## Not built yet
 | Item | Status |
 |---|---|
-| Reporting dashboard page + weekly explainer email | 🟡 logic and templates in `ops/lib` (tested); workflow not deployed |
-| Finance Ops Audit agent workflow | 🟡 5-pillar logic and report builder tested; intake form and workflow not deployed |
-| Registry check / onboarding automation | 🟡 checklist logic tested; workflow not deployed |
-| Website update (launch services only) | ⬜ |
+| Website update (7 launch services, no forecasting or collections, live quote calculator and audit questionnaire linked) | 🟡 done and tested on branch `launch-services`; goes live once you approve pricing and I merge it to main |
+| Registry check / onboarding automation | 🟡 checklist logic tested; workflow not deployed (the manual checklist is in `docs/ONBOARDING.md`) |
 
 ## Decisions made (from your approvals)
 - Cash sales create a DRAFT; the automatic payment step is switched off (the node is kept but disabled).
