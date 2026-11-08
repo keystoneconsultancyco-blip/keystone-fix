@@ -69,7 +69,7 @@ async function deploy(names) {
     if (r.status >= 300) { results.push({ name: wf.name, error: r.status, detail: JSON.stringify(r.body).slice(0, 400) }); continue; }
     const id = r.body.id;
     if (!existing) live.push({ id, name: wf.name });
-    const hasTrigger = wf.nodes.some((x) => /webhook|scheduleTrigger|formTrigger|errorTrigger/.test(x.type));
+    const hasTrigger = wf.nodes.some((x) => /webhook|scheduleTrigger|formTrigger|errorTrigger|executeWorkflowTrigger/.test(x.type));
     let active = null;
     if (hasTrigger && !missing.length) {
       const a = await api('POST', `/workflows/${id}/activate`);

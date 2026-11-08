@@ -76,8 +76,13 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
     let outputs = [[]];
     const t = node.type.replace('n8n-nodes-base.', '');
     try {
-      if (['webhook', 'scheduleTrigger', 'manualTrigger', 'errorTrigger', 'noOp'].includes(t)) outputs = [input];
+      if (['webhook', 'scheduleTrigger', 'manualTrigger', 'errorTrigger', 'noOp', 'executeWorkflowTrigger'].includes(t)) outputs = [input];
       else if (t === 'code') outputs = [await runCode(node, input, state, wf.name)];
+      else if (t === 'executeWorkflow') {
+        const out = [];
+        for (const it of input) { result.calls.push({ node: name, req: it.json }); const res = mocks[name] ? await mocks[name](it.json) : { ok: true }; out.push({ json: res, lin: { ...it.lin } }); }
+        outputs = [out];
+      }
       else if (t === 'httpRequest' || t === 'twilio') {
         const out = [];
         for (const it of input) {

@@ -159,6 +159,12 @@ return out;`),
   return { nodes, edges };
 }
 
+// Calls the private KS Ops - Notify sub-workflow. Never blocks the caller if it fails.
+function notify(name) {
+  const id = require('../config/n8n.json').notifyWorkflowId;
+  return Object.assign(base(name, 'n8n-nodes-base.executeWorkflow', 1.2, { source: 'database', workflowId: { __rl: true, value: id, mode: 'id' }, mode: 'each', options: { waitForSubWorkflow: true } }), { onError: 'continueRegularOutput' });
+}
+
 function respond(name, kind = 'json') {
   const p = kind === 'xml'
     ? { respondWith: 'text', responseBody: '={{ $json.twiml }}', options: { responseHeaders: { entries: [{ name: 'Content-Type', value: 'text/xml' }] } } }
@@ -205,4 +211,4 @@ function workflow(name, nodes, edges, { errorWorkflow = true, tags = [] } = {}) 
   };
 }
 
-module.exports = { CREDS, AIRTABLE, uuid, bundle, code, webhook, schedule, manual, errorTrigger, noop, http, claudeHttp, airtableHttp, airtableWrite, xeroHttp, resendHttp, twilioSms, writesTail, iff, route, respond, workflow };
+module.exports = { CREDS, AIRTABLE, uuid, bundle, code, webhook, schedule, manual, errorTrigger, noop, http, claudeHttp, airtableHttp, airtableWrite, xeroHttp, resendHttp, twilioSms, writesTail, notify, iff, route, respond, workflow };

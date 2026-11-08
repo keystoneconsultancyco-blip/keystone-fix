@@ -124,10 +124,16 @@ return $input.all().map((it) => {
   else if (priced && pricedBy === 'rules') message = 'Your estimate is £' + q.total.toFixed(2) + (q.pricesIncludeVat ? ' including VAT' : ' (£' + q.subtotal.toFixed(2) + ' + VAT)') + '. We will email your confirmed quote shortly.';
   else if (priced) message = 'Thanks. This job needs a quick check by our team. Our rough estimate is £' + q.total.toFixed(2) + ' including VAT, and we will confirm by email.';
   else message = 'Thanks. We need a few more details to price this, and the team will be in touch.';
+  const approverIsBilal = approver.includes(Lg.OPS_EMAIL);
+  const notice = (status === 'Draft - awaiting client approval' && approverIsBilal && q.customerEmail)
+    ? { kind: 'quote_approval', clientId: client.clientId, clientName: client.clientName, audience: 'bilal', text: 'Quote ' + ref + ' for ' + (q.customerName || 'a customer') + ': ' + (q.service || q.description) + ', £' + q.total.toFixed(2) + ' inc VAT' + (q.belowMarginFloor ? ' (BELOW MARGIN ' + q.marginPct + '%)' : '') + '. Send it to the customer?', approval: { type: 'quote_send', ref, summary: 'Send quote ' + ref + ' (£' + q.total.toFixed(2) + ') to ' + (q.customerName || q.customerEmail), action: { approveUrl } } }
+    : (status === 'Needs more info' ? { kind: 'info', clientId: client.clientId, clientName: client.clientName, audience: 'bilal', text: 'Quote request ' + ref + ' (' + source + ') needs details: ' + (q.description || '') } : null);
   const response = { ok: true, ref, status, message, total: priced ? q.total : 0, subtotal: q.subtotal, vat: q.vat, lines: priced && pricedBy === 'rules' ? q.lines.map((l) => ({ description: l.description, amount: l.amount })) : [], questions, service: q.service || null, estimate: true };
-  return { json: { response, writes: W } };
+  return { json: { response, writes: W, notice } };
 });`, { libs: L }),
   n.respond('Quote: respond'),
+  n.code('Quote: ops notice', `return $input.all().filter((i) => i.json.notice).map((i) => ({ json: i.json.notice }));`),
+  n.notify('Tell Ops Manager'),
   n.respond('Quote: rejected'),
 
   // ---------- C. Approve ----------
@@ -174,7 +180,7 @@ const edges = [
   ['Quote request', 'Quote: client query'], ['Quote: client query', 'Quote: get client'], ['Quote: get client', 'Quote: check client'], ['Quote: check client', 'Quote: allowed?'],
   ['Quote: allowed?', 'Quote: get services', 0], ['Quote: allowed?', 'Quote: rejected', 1], ['Quote: get services', 'Quote: factors query'], ['Quote: factors query', 'Quote: get factors'],
   ['Quote: get factors', 'Quote: calculate'], ['Quote: calculate', 'Quote: priced by rules?'], ['Quote: priced by rules?', 'Quote: finalize', 0], ['Quote: priced by rules?', 'Quote: AI request', 1],
-  ['Quote: AI request', 'Quote: AI estimate'], ['Quote: AI estimate', 'Quote: read AI'], ['Quote: read AI', 'Quote: finalize'], ['Quote: finalize', 'Quote: respond'], ['Quote: respond', 'Fan out writes'],
+  ['Quote: AI request', 'Quote: AI estimate'], ['Quote: AI estimate', 'Quote: read AI'], ['Quote: read AI', 'Quote: finalize'], ['Quote: finalize', 'Quote: respond'], ['Quote: respond', 'Fan out writes'], ['Quote: respond', 'Quote: ops notice'], ['Quote: ops notice', 'Tell Ops Manager'],
   ['Approve quote link', 'Approve: quote query'], ['Approve: quote query', 'Approve: get quote'], ['Approve: get quote', 'Approve: check'], ['Approve: check', 'Approve: valid?'],
   ['Approve: valid?', 'Approve: get client', 0], ['Approve: valid?', 'Approve: rejected', 1], ['Approve: get client', 'Approve: send'], ['Approve: send', 'Approve: respond'], ['Approve: respond', 'Fan out writes'],
   ...tail.edges,

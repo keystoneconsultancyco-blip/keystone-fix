@@ -1,0 +1,985 @@
+{
+  "name": "KS Ops Manager",
+  "nodes": [
+    {
+      "name": "Morning 07:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        0
+      ],
+      "id": "91d94b72-4140-42ef-a4ba-673434e5ecae"
+    },
+    {
+      "name": "Evening 18:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * *"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        180
+      ],
+      "id": "9a29a40f-5c8b-4cd7-ade2-e25aa574190a"
+    },
+    {
+      "name": "Run summary now",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ks-ops-summary-now",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "9d9f0f75-e6d5-4336-a03f-59e889fa28f3",
+      "position": [
+        0,
+        360
+      ],
+      "id": "3f700ad0-937f-41ac-a638-11f876cc1047"
+    },
+    {
+      "name": "Which summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst j = $input.first().json;\nconst kind = j.body && j.body.kind ? j.body.kind : (new Date().getUTCHours() < 12 ? 'morning' : 'evening');\nreturn [{ json: { kind, fromWebhook: !!j.headers, reqs: [[\"settings\",\"tblpgFrCOqt5H5yFn\",\"\"],[\"clients\",\"tbl3vmAkTQlzaU9ac\",\"\"],[\"logs\",\"tbl2w5ClJO9aojS43\",\"IS_AFTER({Timestamp}, DATEADD(NOW(), -1, 'days'))\"],[\"calls\",\"tblq3eEhVkCGlYuTy\",\"IS_AFTER({Timestamp}, DATEADD(NOW(), -1, 'days'))\"],[\"quotes\",\"tbl1lUnKBBqk7NKt7\",\"IS_AFTER({Created}, DATEADD(NOW(), -1, 'days'))\"],[\"reviews\",\"tblI09VVKADnb8Ln0\",\"{Status} = 'Open'\"],[\"approvals\",\"tblMlJzPtGVEmpweo\",\"{Status} = 'Pending'\"]].map(([k, t, f]) => ({ key: k, req: KS.requests.airtableList(AIRTABLE.baseId, t, { formula: f || undefined, maxRecords: 100 }) })) } }];\n"
+      },
+      "position": [
+        260,
+        0
+      ],
+      "id": "e31ad3be-d20b-4380-a2ad-af84d22d7b4c"
+    },
+    {
+      "name": "One request per table",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.first().json.reqs.map((r) => ({ json: r }));\n"
+      },
+      "position": [
+        520,
+        0
+      ],
+      "id": "18f513ca-3a6d-466d-a9d0-d85b46d6d19e"
+    },
+    {
+      "name": "Read Airtable",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.req.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "",
+          "name": "Keystone Airtable"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "position": [
+        780,
+        0
+      ],
+      "id": "f9380ac5-5f52-4f66-a82d-2db8867b46b9"
+    },
+    {
+      "name": "Build summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst { opsmanager: O, requests: R, log: Lg } = KS;\nconst keys = $('One request per table').all().map((i) => i.json.key);\nconst data = {}; $input.all().forEach((it, i) => { data[keys[i]] = ((it.json.body || {}).records) || []; });\nconst S = O.settingsMap(data.settings);\nconst kind = $('Which summary').first().json.kind;\nconst now = new Date();\nconst from = new Date(now.getTime() - (kind === 'morning' ? 13.5 : 10.5) * 3600000);\nconst s = O.summarise(data, from, now);\nconst label = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/London' });\nconst text = O.summaryText(kind, s, label);\nconst ch = O.channels(S);\nconst W = [];\nif (ch.email) W.push(R.write.email(R.email({ from: S.email_from || R.EMAIL_FROM, to: (S.alert_email || Lg.OPS_EMAIL).split(',').map((x) => x.trim()), subject: '[Keystone] ' + (kind === 'morning' ? 'Morning' : 'Evening') + ' summary - ' + label, text, html: O.emailHtml({ kind: 'info', text }, null) })));\nif (ch.sms) W.push(R.write.sms(S.twilio_from, S.alert_sms_to, O.summarySms(kind, s)));\nreturn [{ json: { kind, summary: s, text, writes: W, route: $('Which summary').first().json.fromWebhook ? 0 : 1, response: { ok: true, kind, text } } }];\n"
+      },
+      "position": [
+        1040,
+        0
+      ],
+      "id": "b10c7d7c-6f63-4d57-a7da-476b25617e93"
+    },
+    {
+      "name": "Started from webhook?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.route }}",
+        "options": {}
+      },
+      "position": [
+        1300,
+        0
+      ],
+      "id": "933318bf-19e7-4e43-a351-42d1d61b32cf"
+    },
+    {
+      "name": "Summary response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.response) }}",
+        "options": {}
+      },
+      "position": [
+        1560,
+        0
+      ],
+      "id": "0f69e8bf-03bb-49dc-ad2f-f578af61bd20"
+    },
+    {
+      "name": "Scheduled run done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "parameters": {},
+      "position": [
+        1560,
+        180
+      ],
+      "id": "e539d290-eb87-4683-a7dd-15042fd64d4f"
+    },
+    {
+      "name": "Email reply link",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ks-ops-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "44ad21f3-8a2f-471c-aa26-e266753c128a",
+      "position": [
+        0,
+        540
+      ],
+      "id": "56d5f3a2-7c48-480b-aac3-96785c87bef8"
+    },
+    {
+      "name": "Read email reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const q = $json.query || {};\nreturn [{ json: { code: String(q.c || ''), decision: q.a === 'yes' ? 'yes' : q.a === 'no' ? 'no' : null, token: q.t || '', via: 'email', reply: 0 } }];\n"
+      },
+      "position": [
+        260,
+        180
+      ],
+      "id": "11ee2f09-573d-4d05-ad9f-96322dc4cf27"
+    },
+    {
+      "name": "Inbound SMS (Twilio)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ks-ops-sms",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "8da455b7-9e8f-47d7-a37b-9459b1043f76",
+      "position": [
+        0,
+        720
+      ],
+      "id": "3719d3bd-3278-4a13-a49b-932dc5d708cd"
+    },
+    {
+      "name": "Read SMS reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst b = $json.body || {};\nconst p = KS.opsmanager.parseReply(b.Body);\nreturn [{ json: { code: p.code || '', decision: p.decision, from: b.From || '', via: 'sms', reply: 1 } }];\n"
+      },
+      "position": [
+        260,
+        360
+      ],
+      "id": "ac50ade9-6e24-4bcd-a172-0f7de28fe70c"
+    },
+    {
+      "name": "Find approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst x = $input.first().json;\nreturn [{ json: { ...x, req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.opsApprovals, { formula: '{Code} = ' + KS.log.formulaString(x.code), maxRecords: 5 }) } }];\n"
+      },
+      "position": [
+        520,
+        180
+      ],
+      "id": "b0c91825-b70b-4f32-a324-6b4afa838472"
+    },
+    {
+      "name": "Get approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.req.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "",
+          "name": "Keystone Airtable"
+        }
+      },
+      "position": [
+        780,
+        180
+      ],
+      "id": "eea2eca9-92e7-4770-a773-33244a5bd5fb"
+    },
+    {
+      "name": "Prepare settings for reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nreturn [{ json: { req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.settings, { maxRecords: 50 }) } }];\n"
+      },
+      "position": [
+        1040,
+        180
+      ],
+      "id": "8652cf7f-3a04-4323-a73a-53af3ce03109"
+    },
+    {
+      "name": "Get settings (reply)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.req.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "",
+          "name": "Keystone Airtable"
+        }
+      },
+      "position": [
+        1300,
+        180
+      ],
+      "id": "47afdeb1-5cfc-4209-a668-67cd89c4c752"
+    },
+    {
+      "name": "Check approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst { opsmanager: O, registry: Rg } = KS;\nconst x = $('Find approval').first().json;\nconst S = O.settingsMap((($('Get settings (reply)').first().json.body || {}).records || []));\nconst recs = (($('Get approval').first().json.body || {}).records || []).filter((r) => ((r.fields.Status && r.fields.Status.name) || r.fields.Status) === 'Pending');\nlet problem = null;\nif (!x.decision) problem = 'Reply YES or NO followed by the 4-digit code.';\nelse if (recs.length !== 1) problem = 'No pending approval with code ' + (x.code || '?') + '.';\nelse if (x.via === 'email' && recs[0].fields['Reply token'] !== x.token) problem = 'This link is not valid.';\nelse if (x.via === 'sms' && Rg.normalizePhone(x.from) !== Rg.normalizePhone(S.alert_sms_to)) problem = 'Replies are only accepted from Bilal\\'s phone.';\nif (problem) return [{ json: { ok: false, route: 3, message: problem, via: x.via, reply: x.reply } }];\nconst r = recs[0];\nconst type = (r.fields.Type && r.fields.Type.name) || r.fields.Type;\nconst action = JSON.parse(r.fields['Action JSON'] || '{}');\nconst route = x.decision === 'no' ? 2 : type === 'quote_send' ? 0 : type === 'invoice_resubmit' ? 1 : 3;\nconst req = route === 0 ? { method: 'GET', url: action.approveUrl } : route === 1 ? { method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', body: { ...action.job, approvedByBilal: true } } : null;\nreturn [{ json: { ok: true, route, record: r, type, decision: x.decision, via: x.via, reply: x.reply, req } }];\n"
+      },
+      "position": [
+        1560,
+        360
+      ],
+      "id": "5d48d791-ff50-4ef3-a192-21835f9d70d9"
+    },
+    {
+      "name": "Do what?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ $json.route }}",
+        "options": {}
+      },
+      "position": [
+        1820,
+        0
+      ],
+      "id": "a53cce93-9cd1-4d8b-a219-4b481a6f36a4"
+    },
+    {
+      "name": "Send the quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.req.url }}",
+        "authentication": "none",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "position": [
+        2080,
+        0
+      ],
+      "id": "b18374ca-fc6d-4c7b-ae32-74ce8b8223d4"
+    },
+    {
+      "name": "Re-submit job as DRAFT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.req.url }}",
+        "authentication": "none",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "position": [
+        2080,
+        180
+      ],
+      "id": "30cc0892-d5b2-4db3-a4c3-71c73e239952"
+    },
+    {
+      "name": "Finish approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (£${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { opsmanager: __KS('./opsmanager'), log: __KS('./log'), requests: __KS('./requests'), registry: __KS('./registry') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst { requests: R } = KS;\nconst x = $('Check approval').first().json;\nlet result, status;\nif (!x.ok) { result = x.message; status = null; }\nelse if (x.decision === 'no') { result = 'Rejected. Nothing was sent.'; status = 'Rejected'; }\nelse {\n  const res = $input.first().json;\n  const good = res && res.statusCode >= 200 && res.statusCode < 300 && !(res.body && (res.body.status === 'rejected' || res.body.ok === false));\n  result = good ? (x.type === 'quote_send' ? 'Approved. The quote has been emailed to the customer.' : 'Approved. The job was re-submitted and created as a Xero DRAFT' + (res.body && res.body.invoiceNumber ? ' (' + res.body.invoiceNumber + ')' : '') + '.') : 'Approved, but the action failed (' + (res && res.statusCode) + '). Please check it by hand.';\n  status = good ? 'Approved' : 'Failed';\n}\nconst W = status ? [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.opsApprovals, [{ id: x.record.id, fields: { 'Status': status, 'Decided at': new Date().toISOString(), 'Decided via': x.via, 'Result': result, 'Reply token': '' } }]))] : [];\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');\nreturn [{ json: { route: x.reply, writes: W, html: '<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><div style=\"font-family:Arial;max-width:520px;margin:40px auto;padding:20px\"><h2>Keystone</h2><p style=\"font-size:17px\">' + esc(result) + '</p></div>', twiml: '<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>' + esc('Keystone: ' + result) + '</Message></Response>' } }];\n"
+      },
+      "position": [
+        2340,
+        0
+      ],
+      "id": "27edf857-64d4-46fc-a2fc-e4c491289457"
+    },
+    {
+      "name": "Reply how?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.route }}",
+        "options": {}
+      },
+      "position": [
+        2600,
+        0
+      ],
+      "id": "7f31105f-199c-430f-a25b-d442e2c9ea1a"
+    },
+    {
+      "name": "Reply page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode || 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "position": [
+        2860,
+        0
+      ],
+      "id": "5996956e-f1cd-4142-af5e-5bc162f36512"
+    },
+    {
+      "name": "Reply SMS",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "position": [
+        2860,
+        180
+      ],
+      "id": "62ad92b9-3bcd-465e-a0d4-51cda23e700b"
+    },
+    {
+      "name": "Fan out writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: w.kind === 'email' ? 1 : w.kind === 'sms' ? 2 : 0 } });\nreturn out;\n"
+      },
+      "position": [
+        3120,
+        0
+      ],
+      "id": "73993506-e82c-4419-a4b9-6ce4d407b576"
+    },
+    {
+      "name": "Write kind",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ $json.route }}",
+        "options": {}
+      },
+      "position": [
+        3380,
+        0
+      ],
+      "id": "f69fe243-0b83-4e9f-a4ee-71c7fc326e8b"
+    },
+    {
+      "name": "Airtable write",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "={{ $json.req.method }}",
+        "url": "={{ $json.req.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "",
+          "name": "Keystone Airtable"
+        }
+      },
+      "position": [
+        3640,
+        0
+      ],
+      "id": "ca99c242-335a-47f3-a25a-580561833db5"
+    },
+    {
+      "name": "Send email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.req.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Header Auth account 2"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "position": [
+        3640,
+        180
+      ],
+      "id": "d17faa3c-a1f0-4839-a360-7c20520839c4"
+    },
+    {
+      "name": "Send SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "parameters": {
+        "from": "={{ $json.sms.from }}",
+        "to": "={{ $json.sms.to }}",
+        "message": "={{ $json.sms.message }}",
+        "options": {}
+      },
+      "credentials": {
+        "twilioApi": {
+          "id": "",
+          "name": "Twilio"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "position": [
+        3640,
+        360
+      ],
+      "id": "dda45015-6e79-4c12-a2a6-2211a60528cd"
+    }
+  ],
+  "connections": {
+    "Morning 07:30": {
+      "main": [
+        [
+          {
+            "node": "Which summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evening 18:00": {
+      "main": [
+        [
+          {
+            "node": "Which summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run summary now": {
+      "main": [
+        [
+          {
+            "node": "Which summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which summary": {
+      "main": [
+        [
+          {
+            "node": "One request per table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One request per table": {
+      "main": [
+        [
+          {
+            "node": "Read Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Airtable": {
+      "main": [
+        [
+          {
+            "node": "Build summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build summary": {
+      "main": [
+        [
+          {
+            "node": "Fan out writes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Started from webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Started from webhook?": {
+      "main": [
+        [
+          {
+            "node": "Summary response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scheduled run done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email reply link": {
+      "main": [
+        [
+          {
+            "node": "Read email reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inbound SMS (Twilio)": {
+      "main": [
+        [
+          {
+            "node": "Read SMS reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read email reply": {
+      "main": [
+        [
+          {
+            "node": "Find approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read SMS reply": {
+      "main": [
+        [
+          {
+            "node": "Find approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find approval": {
+      "main": [
+        [
+          {
+            "node": "Get approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get approval": {
+      "main": [
+        [
+          {
+            "node": "Prepare settings for reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare settings for reply": {
+      "main": [
+        [
+          {
+            "node": "Get settings (reply)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get settings (reply)": {
+      "main": [
+        [
+          {
+            "node": "Check approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check approval": {
+      "main": [
+        [
+          {
+            "node": "Do what?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do what?": {
+      "main": [
+        [
+          {
+            "node": "Send the quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Re-submit job as DRAFT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finish approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finish approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send the quote": {
+      "main": [
+        [
+          {
+            "node": "Finish approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-submit job as DRAFT": {
+      "main": [
+        [
+          {
+            "node": "Finish approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish approval": {
+      "main": [
+        [
+          {
+            "node": "Reply how?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply how?": {
+      "main": [
+        [
+          {
+            "node": "Reply page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply page": {
+      "main": [
+        [
+          {
+            "node": "Fan out writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply SMS": {
+      "main": [
+        [
+          {
+            "node": "Fan out writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan out writes": {
+      "main": [
+        [
+          {
+            "node": "Write kind",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write kind": {
+      "main": [
+        [
+          {
+            "node": "Airtable write",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveManualExecutions": true
+  },
+  "tags": [
+    {
+      "name": "keystone"
+    },
+    {
+      "name": "ops"
+    }
+  ],
+  "meta": {
+    "keystone": true,
+    "generatedFrom": "ops/workflows"
+  }
+}

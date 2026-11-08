@@ -33,9 +33,49 @@
     ]
   },
   {
+    "name": "KS Ops Manager",
+    "file": "n8n/workflows/ks-ops-manager.json",
+    "nodes": 31,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run summary now",
+        "method": "POST",
+        "path": "ks-ops-summary-now"
+      },
+      {
+        "node": "Email reply link",
+        "method": "GET",
+        "path": "ks-ops-reply"
+      },
+      {
+        "node": "Inbound SMS (Twilio)",
+        "method": "POST",
+        "path": "ks-ops-sms"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Ops - Notify",
+    "file": "n8n/workflows/ks-ops-notify.json",
+    "nodes": 10,
+    "attachErrorWorkflow": true,
+    "webhooks": [],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Quote Calculator",
     "file": "n8n/workflows/ks-quote-calculator.json",
-    "nodes": 39,
+    "nodes": 41,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -74,6 +114,22 @@
       }
     ],
     "credentials": []
+  },
+  {
+    "name": "KS Util - Vapi helper",
+    "file": "n8n/workflows/ks-util-vapi-helper.json",
+    "nodes": 7,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Vapi helper",
+        "method": "POST",
+        "path": "ks-util-vapi-helper"
+      }
+    ],
+    "credentials": [
+      "Vapi AP1"
+    ]
   },
   {
     "name": "KS Test - Xero helper",

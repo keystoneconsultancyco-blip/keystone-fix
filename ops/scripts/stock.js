@@ -26,7 +26,7 @@ async function patch(id, modify, label) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
   const file = path.join(BACKUP_DIR, `${stamp}__${id}__before-${label}.json`);
-  fs.writeFileSync(file, JSON.stringify(live, null, 2));
+  fs.writeFileSync(file, JSON.stringify(live, null, 2).replace(/ksops_[A-Za-z0-9_-]{16,}/g, '<REDACTED ops token>'));
   const w = JSON.parse(JSON.stringify(live));
   const creds = await credIds();
   await modify(w, { creds });
