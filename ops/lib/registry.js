@@ -3,7 +3,8 @@
 // and decides whether a given service may run for that client.
 // Rule: every workflow calls gate() first and exits cleanly if it isn't ok.
 
-const TEST_INBOX = 'keystoneconsultancy.co@gmail.com';
+// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.
+const TEST_INBOX = 'khan.bilalbk408@gmail.com';
 
 const SERVICE_TOGGLES = {
   invoicing: 'Invoicing on',

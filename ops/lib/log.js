@@ -1,7 +1,7 @@
 'use strict';
 // One shape for every Agent Log row. Every agent or workflow decision goes through this.
 
-const OPS_EMAIL = 'keystoneconsultancy.co@gmail.com'; // Bilal's ops inbox
+const OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)
 
 // Conservative admin-time estimates (minutes a person would have spent). Used for value reports.
 const MINUTES_SAVED = {

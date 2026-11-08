@@ -45,7 +45,7 @@ test('demo client: clean job creates a simulated DRAFT, updates the job, logs, a
   const log = writes.find((w) => w.req.url && w.req.url.includes('tbl2w5ClJO9aojS43'));
   assert.equal(log.req.body.records[0].fields.Outcome, 'Draft created');
   const email = writes.find((w) => w.kind === 'email');
-  assert.deepEqual(email.req.body.to, ['keystoneconsultancy.co@gmail.com']);
+  assert.deepEqual(email.req.body.to, ['khan.bilalbk408@gmail.com']);
 });
 
 test('live client: Xero DRAFT path with contact disambiguation; payload is DRAFT; tenant header scoped', async () => {

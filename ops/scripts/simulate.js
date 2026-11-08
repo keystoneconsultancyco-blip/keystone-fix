@@ -33,7 +33,8 @@ function evalExpr(value, ctx) {
 function runCode(node, items, state, wfName) {
   const { mode, jsCode } = node.parameters;
   const base = {
-    console, require, Buffer, URL, URLSearchParams, setTimeout,
+    // Match n8n's Code sandbox: no URL/URLSearchParams globals.
+    console, require, Buffer, setTimeout,
     $execution: { id: 'sim-' + state.execId, mode: 'test', customData: { set: (k, v) => { state.customData[k] = v; }, get: (k) => state.customData[k] } },
     $workflow: { name: wfName, id: 'sim-wf' },
     $getWorkflowStaticData: () => state.staticData,

@@ -1,0 +1,49 @@
+[
+  {
+    "name": "KS Ops - Failure Alerts",
+    "file": "n8n/workflows/ks-ops-failure-alerts.json",
+    "nodes": 13,
+    "attachErrorWorkflow": false,
+    "webhooks": [],
+    "credentials": [
+      "Keystone n8n API",
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS-01 Invoice Automation",
+    "file": "n8n/workflows/ks-01-invoice-automation.json",
+    "nodes": 43,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Job intake webhook",
+        "method": "POST",
+        "path": "ks-job-completed"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Xero account",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
+    "file": "n8n/workflows/ks-test-forced-failure-2-vapi-tools-simulation.json",
+    "nodes": 3,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Force failure",
+        "method": "POST",
+        "path": "ks-test-force-failure"
+      }
+    ],
+    "credentials": []
+  }
+]

@@ -1,0 +1,92 @@
+{
+  "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
+  "nodes": [
+    {
+      "name": "Force failure",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ks-test-force-failure",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "3faac1e0-f2cb-45a0-ac66-2201f39aafda",
+      "position": [
+        0,
+        0
+      ],
+      "id": "45b898df-58da-4544-a501-44035b2bb61e"
+    },
+    {
+      "name": "Pretend client step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { clientId: 'KS-DEMO-01', step: 'calendar booking' } }];\n"
+      },
+      "position": [
+        260,
+        0
+      ],
+      "id": "bc65d1f5-afaa-4f0d-a557-50653935146b"
+    },
+    {
+      "name": "Fail on purpose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = ($('Force failure').first().json.body || {}).run || 'x';\nthrow new Error('Request failed with status code 401 Unauthorized (forced test failure ' + run + ' for Google Calendar booking)');\n"
+      },
+      "position": [
+        520,
+        0
+      ],
+      "id": "0c40770d-421b-478b-ac9b-6293c1e1d370"
+    }
+  ],
+  "connections": {
+    "Force failure": {
+      "main": [
+        [
+          {
+            "node": "Pretend client step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pretend client step": {
+      "main": [
+        [
+          {
+            "node": "Fail on purpose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveManualExecutions": true
+  },
+  "tags": [
+    {
+      "name": "keystone"
+    },
+    {
+      "name": "test"
+    }
+  ],
+  "meta": {
+    "keystone": true,
+    "generatedFrom": "ops/workflows"
+  }
+}

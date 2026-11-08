@@ -8,13 +8,18 @@ const AIRTABLE_API = 'https://api.airtable.com/v0';
 // Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.
 const EMAIL_FROM = 'Keystone <onboarding@resend.dev>';
 
+function qs(pairs) {
+  // n8n's Code sandbox has no URLSearchParams, so encode by hand.
+  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+}
+
 function airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {
-  const q = new URLSearchParams();
-  if (formula) q.set('filterByFormula', formula);
-  if (maxRecords) q.set('maxRecords', String(maxRecords));
-  (fields || []).forEach((f) => q.append('fields[]', f));
-  (sort || []).forEach((s, i) => { q.set(`sort[${i}][field]`, s.field); q.set(`sort[${i}][direction]`, s.direction || 'asc'); });
-  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${q.toString()}` };
+  const q = [];
+  if (formula) q.push(['filterByFormula', formula]);
+  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);
+  (fields || []).forEach((f) => q.push(['fields[]', f]));
+  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });
+  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };
 }
 
 function airtableCreate(baseId, tableId, fieldsList) {
@@ -63,4 +68,4 @@ const write = {
 
 function ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }
 
-module.exports = { write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };
+module.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };
