@@ -102,6 +102,22 @@
     ]
   },
   {
+    "name": "KS Test - Calendar helper",
+    "file": "n8n/workflows/ks-test-calendar-helper.json",
+    "nodes": 7,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Calendar helper",
+        "method": "POST",
+        "path": "ks-test-calendar-helper"
+      }
+    ],
+    "credentials": [
+      "Google Calendar account"
+    ]
+  },
+  {
     "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
     "file": "n8n/workflows/ks-test-forced-failure-2-vapi-tools-simulation.json",
     "nodes": 3,

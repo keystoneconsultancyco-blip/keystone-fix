@@ -108,7 +108,7 @@ function hintFrom(json, service) {
   const b = j.body || {};
   const msg = b.message || {};
   const call = msg.call || {};
-  const md = (call.assistant && call.assistant.metadata) || call.metadata || {};
+  const md = (call.assistant && call.assistant.metadata) || (msg.assistant && msg.assistant.metadata) || call.metadata || {};
   const sip = (call.phoneCallProviderDetails && call.phoneCallProviderDetails.sipHeaders) || {};
   return {
     clientId: j.clientId || b.clientId || md.clientId || sip['X-Keystone-Client'] || sip['x-clientId'] || null,
