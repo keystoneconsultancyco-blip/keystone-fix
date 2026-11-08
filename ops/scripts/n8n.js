@@ -13,13 +13,14 @@ const AIRTABLE = require('../config/airtable.json');
 // Credential names Bilal creates or already has in n8n.
 const CREDS = {
   airtable: { type: 'airtableTokenApi', name: 'Keystone Airtable' },
-  xero: { type: 'xeroOAuth2Api', name: 'Keystone Xero' },
+  xero: { type: 'xeroOAuth2Api', name: 'Xero account' },
   anthropic: { type: 'httpHeaderAuth', name: 'Keystone Anthropic' },
-  resend: { type: 'httpHeaderAuth', name: 'Resend' },
+  resend: { type: 'httpHeaderAuth', name: 'Header Auth account 2' },
   vapi: { type: 'httpHeaderAuth', name: 'Vapi AP1' },
   gcal: { type: 'googleCalendarOAuth2Api', name: 'Google Calendar account' },
-  twilio: { type: 'twilioApi', name: 'Twilio account' },
+  twilio: { type: 'twilioApi', name: 'Twilio' },
   n8n: { type: 'n8nApi', name: 'Keystone n8n API' },
+  sheets: { type: 'googleSheetsOAuth2Api', name: 'Google Sheets account' },
 };
 
 function uuid(seed) {
@@ -151,8 +152,8 @@ for (const it of $input.all()) for (const w of (it.json.writes || [])) out.push(
 return out;`),
     route('Write kind', 3),
     airtableWrite('Airtable write'),
-    resendHttp('Send email'),
-    twilioSms('Send SMS'),
+    Object.assign(resendHttp('Send email'), { onError: 'continueRegularOutput' }),
+    Object.assign(twilioSms('Send SMS'), { onError: 'continueRegularOutput' }),
   ];
   const edges = [['Fan out writes', 'Write kind'], ['Write kind', 'Airtable write', 0], ['Write kind', 'Send email', 1], ['Write kind', 'Send SMS', 2]];
   return { nodes, edges };

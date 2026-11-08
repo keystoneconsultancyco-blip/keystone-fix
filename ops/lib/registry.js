@@ -83,6 +83,8 @@ function normalizeClient(record) {
     },
     quotes: {
       pricingRules: pricing,
+      pricesIncludeVat: !!f['Prices include VAT'],
+      validDays: Number(f['Quote valid days']) || 30,
       minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),
       approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',
     },

@@ -36,9 +36,9 @@ function byClientFormula(clientId, extra) {
   return extra ? `AND(${base}, ${extra})` : base;
 }
 
-function email({ to, subject, html, text, replyTo }) {
+function email({ to, subject, html, text, replyTo, from }) {
   const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
-  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };
+  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };
 }
 
 function xero(client, method, pathAndQuery, body) {
