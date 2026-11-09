@@ -93,7 +93,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
           else {
             req = { method: evalExpr(node.parameters.method, ctx), url: evalExpr(node.parameters.url, ctx), headers: {} };
             for (const h of (node.parameters.headerParameters && node.parameters.headerParameters.parameters) || []) req.headers[h.name] = evalExpr(h.value, ctx);
-            if (node.parameters.sendBody) req.body = JSON.parse(evalExpr(node.parameters.jsonBody, ctx));
+            if (node.parameters.sendBody) req.body = node.parameters.contentType === 'raw' ? evalExpr(node.parameters.body, ctx) : JSON.parse(evalExpr(node.parameters.jsonBody, ctx));
             req.credential = node.credentials ? Object.values(node.credentials)[0].name : null;
           }
           result.calls.push({ node: name, req });

@@ -16,7 +16,7 @@ return [
   ['settings', list('settings', { maxRecords: 100 })],
   ['agents', list('agents', { maxRecords: 50 })],
   ['log', list('teamLog', { formula: "IS_AFTER({Timestamp}, DATEADD(NOW(), -7, 'days'))", fields: ['Agent', 'Kind', 'Summary', 'Timestamp'], maxRecords: 100, sort: [{ field: 'Timestamp', direction: 'desc' }] })],
-  ['approvals', list('opsApprovals', { formula: "{Status} = 'Pending'", fields: ['Code', 'Type', 'Summary', 'Created', 'Status'], maxRecords: 50 })],
+  ['approvals', list('opsApprovals', { formula: "{Status} = 'Pending'", fields: ['Code', 'Type', 'Summary', 'Created', 'Status', 'Reply token'], maxRecords: 50 })],
   ['clients', list('clients', { formula: "AND({Status} = 'Active', NOT({Is demo/test}))", fields: ['Client ID'], maxRecords: 100 })],
 ].map(([key, req]) => ({ json: { key, token, req } }));`, { libs: L }),
   Object.assign(n.airtableHttp('Read Airtable', 'GET'), { onError: 'continueRegularOutput' }),

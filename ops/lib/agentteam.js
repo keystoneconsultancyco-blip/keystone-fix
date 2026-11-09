@@ -130,7 +130,7 @@ function buildFeed({ agents = [], log = [], approvals = [], settings = {}, activ
       currentWork: row.status !== 'Live' ? (a.threshold ? `Switched off until ${a.threshold} active clients (now ${activeClients}).` : 'Paused.') : (lastRun ? `Last: ${lastRun.Summary}` : 'Waiting for its first run.'),
       lastRunAt: lastRun ? lastRun.Timestamp : row.lastRun || null,
       completedToday: c.dayN, completedWeek: c.weekN, completedMonth: c.monthN,
-      awaitingApproval: A.filter((x) => sel(x.Status) === 'Pending' && APPROVAL_OWNER[sel(x.Type)] === a.slug).map((x) => ({ code: x.Code, type: sel(x.Type), summary: x.Summary, created: x.Created })),
+      awaitingApproval: A.filter((x) => sel(x.Status) === 'Pending' && APPROVAL_OWNER[sel(x.Type)] === a.slug).map((x) => ({ code: x.Code, type: sel(x.Type), summary: x.Summary, created: x.Created, token: x['Reply token'] || undefined })),
       errors: mine.filter((x) => sel(x.Kind) === 'Error' && after(x.Timestamp, new Date(t.getTime() - 7 * 864e5))).slice(0, 10).map((x) => ({ at: x.Timestamp, summary: x.Summary })),
       aiCost: { today: round2(c.costDay), week: round2(c.costWeek), month: round2(c.costMonth) },
       recent: mine.slice(0, 8).map((x) => ({ at: x.Timestamp, kind: sel(x.Kind), summary: x.Summary })),

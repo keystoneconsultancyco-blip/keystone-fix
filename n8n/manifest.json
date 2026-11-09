@@ -390,6 +390,24 @@
     ]
   },
   {
+    "name": "KS Switch-On",
+    "file": "n8n/workflows/ks-switch-on.json",
+    "nodes": 30,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Check now",
+        "method": "POST",
+        "path": "ks-switch-check"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Test - Calendar helper",
     "file": "n8n/workflows/ks-test-calendar-helper.json",
     "nodes": 7,
