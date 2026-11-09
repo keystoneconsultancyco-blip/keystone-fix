@@ -56,7 +56,7 @@ function runCode(node, items, state, wfName) {
     const r = (res || []).map((x) => (x && x.json !== undefined ? x : { json: x }));
     return r.map((x, i) => {
       const src = typeof x.pairedItem === 'number' ? items[x.pairedItem] : x.pairedItem && typeof x.pairedItem.item === 'number' ? items[x.pairedItem.item] : r.length === items.length ? items[i] : items[0];
-      return { json: x.json, lin: { ...(src ? src.lin : {}) } };
+      return { json: x.json, binary: x.binary, lin: { ...(src ? src.lin : {}) } };
     });
   });
 }
@@ -121,7 +121,8 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
         }
       } else if (t === 'respondToWebhook') {
         const it = input[0];
-        const body = evalExpr(node.parameters.responseBody, { $json: it.json, $: makeDollar(state, it.lin) });
+        const rw = node.parameters.respondWith;
+        const body = rw === 'binary' ? it.binary : rw === 'redirect' ? evalExpr(node.parameters.redirectURL, { $json: it.json, $: makeDollar(state, it.lin) }) : evalExpr(node.parameters.responseBody, { $json: it.json, $: makeDollar(state, it.lin) });
         result.responses.push({ node: name, body, respondWith: node.parameters.respondWith, headers: node.parameters.options && node.parameters.options.responseHeaders });
         outputs = [input];
       } else throw new Error(`simulate: unsupported node type ${node.type}`);
@@ -135,7 +136,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
     state.branches[name] = outputs;
     const conns = (wf.connections[name] && wf.connections[name].main) || [];
     conns.forEach((targets, outIdx) => {
-      for (const tgt of targets || []) if (outputs[outIdx] && outputs[outIdx].length) queue.push({ node: tgt.node, items: outputs[outIdx].map((x) => ({ json: x.json, lin: x.lin })) });
+      for (const tgt of targets || []) if (outputs[outIdx] && outputs[outIdx].length) queue.push({ node: tgt.node, items: outputs[outIdx].map((x) => ({ json: x.json, binary: x.binary, lin: x.lin })) });
     });
   }
   return result;

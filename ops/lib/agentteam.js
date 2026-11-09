@@ -18,8 +18,8 @@ const TEAM = [
     role: 'When a discovery call is booked it writes the call brief and a 10-minute qualifying script (5 questions). It re-checks Lead value from your call answers (downgrades to the £100 audit if they contradict it), and once you approve an audit it drafts the proposal at the approved prices (Opus) with the one-third-of-loss sense check.',
     goal: 'Walk into every call prepared; turn every approved audit into a proposal the same day.', metric: 'sales_docs_ready', target: 3, period: 'Week' },
   { slug: 'nurture', name: 'Nurture', live: true, tier: 'No AI', schedule: 'Daily 10:20',
-    role: 'Sends consented website leads a short sequence (4 emails over 3 weeks: value, case-style example, audit offer, last call) from templates you approve. Only once your email domain is verified; every email has an unsubscribe link.',
-    goal: 'Every consented website lead hears from Keystone and gets the audit offer.', metric: 'nurture_emails_sent', target: 10, period: 'Week' },
+    role: 'Emails consented website leads: 4 emails over 3 weeks, then 1 a month for up to 12 months (a useful tip + the audit offer), from templates you approve. Stops the moment they book, reply, unsubscribe or become a client. Tracks opens, clicks and bookings per email. Only sends once your email domain is verified.',
+    goal: 'Every consented website lead gets useful, honest emails and the audit offer until they book, reply or unsubscribe.', metric: 'nurture_emails_sent', target: 10, period: 'Week' },
   { slug: 'ops-monitor', name: 'Ops Monitor', live: true, tier: 'No AI', schedule: 'Hourly',
     role: 'Checks every live workflow every hour (still switched on, recent failures) on top of the instant failure alerts, and alerts Bilal if anything is off.',
     goal: 'Every client workflow healthy, every failure noticed within the hour.', metric: 'health_checks', target: 168, period: 'Week' },
@@ -114,7 +114,21 @@ function periodStart(period, now) {
 }
 
 // Everything the Jarvis agent pages show. Inputs are raw Airtable records.
-function buildFeed({ agents = [], log = [], approvals = [], settings = {}, activeClients = 0, now }) {
+// Per-email results for the Nurture page: one row per template (real sends only; previews are not counted).
+function nurtureStats(templates = [], leads = []) {
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const rows = templates.map(f).map((x) => ({ name: x.Name, kind: sel(x.Kind) || 'Sequence', step: num(x.Step), approved: !!x.Approved,
+    sent: num(x.Sent), opened: num(x.Opened), clicked: num(x.Clicked), bookings: num(x.Bookings) }))
+    .sort((a, b) => (a.kind === b.kind ? a.step - b.step : a.kind === 'Sequence' ? -1 : 1))
+    .map((r) => ({ ...r, openRate: pct(r.opened, r.sent), clickRate: pct(r.clicked, r.sent) }));
+  const tot = rows.reduce((t, r) => ({ sent: t.sent + r.sent, opened: t.opened + r.opened, clicked: t.clicked + r.clicked, bookings: t.bookings + r.bookings }), { sent: 0, opened: 0, clicked: 0, bookings: 0 });
+  const L = leads.map(f);
+  return { emails: rows, totals: { ...tot, openRate: pct(tot.opened, tot.sent), clickRate: pct(tot.clicked, tot.sent) },
+    approved: rows.filter((r) => r.approved).length, activeLeads: L.filter((x) => sel(x['Nurture status']) === 'Active').length,
+    stopped: L.filter((x) => /^Stopped/.test(sel(x['Nurture status']) || '')).length };
+}
+
+function buildFeed({ agents = [], log = [], approvals = [], settings = {}, activeClients = 0, nurture = null, now }) {
   const t = now ? new Date(now) : new Date();
   const rows = agentRows(agents);
   const L = log.map(f), A = approvals.map((r) => ({ id: r.id, ...f(r) }));
@@ -137,6 +151,7 @@ function buildFeed({ agents = [], log = [], approvals = [], settings = {}, activ
       errors: mine.filter((x) => sel(x.Kind) === 'Error' && after(x.Timestamp, new Date(t.getTime() - 7 * 864e5))).slice(0, 10).map((x) => ({ at: x.Timestamp, summary: x.Summary })),
       aiCost: { today: round2(c.costDay), week: round2(c.costWeek), month: round2(c.costMonth) },
       recent: mine.slice(0, 8).map((x) => ({ at: x.Timestamp, kind: sel(x.Kind), summary: x.Summary })),
+      ...(a.slug === 'nurture' && nurture ? { stats: nurtureStats(nurture.templates, nurture.leads) } : {}),
     };
   });
   const monthSpend = num(settings.ai_spend_month) === 0 && settings.ai_spend_month !== dayKey(t).slice(0, 7) ? 0 : num(settings.ai_spend_usd);
@@ -159,4 +174,4 @@ function briefText(title, sections) {
   return [title, ''].concat(...sections.map((s) => [s.heading + ':', ...(s.items || []).map((i) => '- ' + i), ''])).join('\n');
 }
 
-module.exports = { TEAM, APPROVAL_OWNER, bySlug, agentRows, isLive, logRow, thresholdsReached, periodStart, dayKey, bumpCounters, readCounters, buildFeed, briefHtml, briefText };
+module.exports = { nurtureStats, TEAM, APPROVAL_OWNER, bySlug, agentRows, isLive, logRow, thresholdsReached, periodStart, dayKey, bumpCounters, readCounters, buildFeed, briefHtml, briefText };

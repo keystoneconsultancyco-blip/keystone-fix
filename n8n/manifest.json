@@ -340,6 +340,29 @@
     ]
   },
   {
+    "name": "KS Nurture Tracking",
+    "file": "n8n/workflows/ks-nurture-tracking.json",
+    "nodes": 18,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Open",
+        "method": "GET",
+        "path": "ks-nurture-open"
+      },
+      {
+        "node": "Click",
+        "method": "GET",
+        "path": "ks-nurture-click"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Ops Manager",
     "file": "n8n/workflows/ks-ops-manager.json",
     "nodes": 34,

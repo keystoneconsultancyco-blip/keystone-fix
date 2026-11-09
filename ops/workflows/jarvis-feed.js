@@ -17,6 +17,8 @@ return [
   ['agents', list('agents', { maxRecords: 50 })],
   ['log', list('teamLog', { formula: "IS_AFTER({Timestamp}, DATEADD(NOW(), -7, 'days'))", fields: ['Agent', 'Kind', 'Summary', 'Timestamp'], maxRecords: 100, sort: [{ field: 'Timestamp', direction: 'desc' }] })],
   ['approvals', list('opsApprovals', { formula: "{Status} = 'Pending'", fields: ['Code', 'Type', 'Summary', 'Created', 'Status', 'Reply token'], maxRecords: 50 })],
+  ['nurtureTemplates', list('nurtureTemplates', { fields: ['Name', 'Kind', 'Step', 'Approved', 'Sent', 'Opened', 'Clicked', 'Bookings'], maxRecords: 50 })],
+  ['nurtureLeads', list('prospects', { formula: "AND({Source} = 'Website', {Nurture status} != '')", fields: ['Nurture status'], maxRecords: 100 })],
   ['clients', list('clients', { formula: "AND({Status} = 'Active', NOT({Is demo/test}))", fields: ['Client ID'], maxRecords: 100 })],
 ].map(([key, req]) => ({ json: { key, token, req } }));`, { libs: L }),
   Object.assign(n.airtableHttp('Read Airtable', 'GET'), { onError: 'continueRegularOutput' }),
@@ -27,7 +29,7 @@ const D = {};
 $input.all().forEach((it, i) => { D[plan[i].json.key] = ((it.json.body || {}).records) || []; });
 const S = O.settingsMap(D.settings);
 if (!S.jarvis_feed_token || plan[0].json.token !== S.jarvis_feed_token) return [{ json: { statusCode: 403, response: { ok: false, error: 'Not allowed' } } }];
-const feed = T.buildFeed({ agents: D.agents, log: D.log, approvals: D.approvals, settings: S, activeClients: D.clients.length });
+const feed = T.buildFeed({ agents: D.agents, log: D.log, approvals: D.approvals, settings: S, activeClients: D.clients.length, nurture: { templates: D.nurtureTemplates, leads: D.nurtureLeads } });
 return [{ json: { statusCode: 200, response: { ok: true, ...feed } } }];`, { libs: L }),
   Object.assign(n.respond('Reply'), { parameters: { respondWith: 'json', responseBody: '={{ JSON.stringify($json.response) }}', options: { responseCode: '={{ $json.statusCode }}' } } }),
 ];

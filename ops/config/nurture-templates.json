@@ -1,0 +1,96 @@
+[
+  {
+    "Name": "S1. The hidden cost (day 0)",
+    "Kind": "Sequence",
+    "Step": 1,
+    "Send on day": 0,
+    "Subject": "{first_name}, what admin is really costing {company}",
+    "Body": "Hi {first_name},\n\nThanks for using the Keystone estimate for {company}. Before we talk about prices, here is what usually matters more: what the current way of working is already costing.\n\n{loss_line}\n\nNone of this shows up on a profit and loss report, which is why it is so easy to miss.\n\nOne tip you can use today: send every invoice the same day the job is finished, with the due date and your bank details in the first line, not at the bottom. Customers pay what is easy to pay.\n\n{proof_block}\n\nIf you want the real figures for {company}, we can work them out together. {audit_line}\n\n{slots_line}\n\nBilal\nKeystone",
+    "Notes": "Value + sourced loss framing + tip + anchored audit offer. Sent the day they sign up.",
+    "Approved": false
+  },
+  {
+    "Name": "S2. Missed calls (day 5)",
+    "Kind": "Sequence",
+    "Step": 2,
+    "Send on day": 5,
+    "Subject": "The calls {company} never hears about",
+    "Body": "Hi {first_name},\n\nWhen you are on a job, the phone still rings. In a survey of over 220 UK tradespeople, 34% said they had lost work because they could not answer the phone (Fix Radio). Most callers who reach voicemail simply ring the next business on the list.\n\nA tip that costs nothing: change your voicemail to promise a call-back time (for example \"we will call you back within the hour\"), then keep that promise. A specific time keeps far more callers waiting for you than \"leave a message\".\n\nThe bigger fix is making sure every call is answered. Our AI phone assistant answers when you cannot, books straight into your calendar, flags emergencies to you in seconds, and is always honest that it is an assistant.\n\n{proof_block}\n\nAn audit shows how many calls and jobs {company} is losing each month, and what fixing that is worth. {audit_line}\n\n{slots_line}\n\nBilal\nKeystone",
+    "Notes": "The 34% figure is a Fix Radio survey of 220+ UK tradespeople as reported in trade press; I could not read the original release. Remove that sentence if you prefer only primary sources.",
+    "Approved": false
+  },
+  {
+    "Name": "S3. The audit offer (day 12)",
+    "Kind": "Sequence",
+    "Step": 3,
+    "Send on day": 12,
+    "Subject": "{first_name}: the £750 audit, for {company}",
+    "Body": "Hi {first_name},\n\nThe estimate on our website is a starting point. To get exact numbers for a business turning over {revenue_band}, we run a Finance Ops Audit.\n\nIn two weeks we review five areas (invoicing and getting paid, cash flow, reporting, bookings and admin, and planning), look at read-only Xero figures, and show you how much time and money {company} loses each month, what fixes each leak, and what it would cost. You keep the report whatever you decide.\n\n{audit_line}\n\n{slots_line}\n\nOne tip while you decide: once a week, spend 15 minutes writing down three numbers: cash in the bank, money owed to you, and money you owe. Watching those three every Friday catches most cash surprises weeks early.\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Anchoring (normally £750, yours £100 or free if they qualify) + real urgency (only when audit_slots_per_month is set) + tip.",
+    "Approved": false
+  },
+  {
+    "Name": "S4. Last call (day 21)",
+    "Kind": "Sequence",
+    "Step": 4,
+    "Send on day": 21,
+    "Subject": "Shall I keep a place for {company}, {first_name}?",
+    "Body": "Hi {first_name},\n\nThis is the last email in this short series. After this I will send just one useful tip a month, and you can stop those with one click.\n\nIf finding the money {company} loses to slow invoicing, missed calls or slow quotes is on your list for the next few months, now is a good time to look.\n\n{audit_line}\n\n{slots_line}\n\nA final tip: if a customer has not paid by the day after the due date, call them rather than email. A friendly call on day one usually gets paid far faster than a reminder email on day ten, and it keeps the relationship good.\n\n{proof_block}\n\nThanks for reading,\nBilal\nKeystone",
+    "Notes": "Closing email of the sequence. Monthly emails follow every 30 days.",
+    "Approved": false
+  },
+  {
+    "Name": "M1. Automatic reminders in Xero",
+    "Kind": "Monthly",
+    "Step": 5,
+    "Subject": "A 5-minute Xero setting that gets {company} paid sooner",
+    "Body": "Hi {first_name},\n\nThis month's tip: if you use Xero, switch on automatic invoice reminders. Xero then emails customers before and after the due date for you, politely and on time, so nobody has to remember to chase.\n\n{loss_line}\n\nWhen you want the full picture of where {company} is losing time and money, the Finance Ops Audit is the quickest way to find it. {audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 1.",
+    "Approved": false
+  },
+  {
+    "Name": "M2. Deposits on bigger jobs",
+    "Kind": "Monthly",
+    "Step": 6,
+    "Subject": "Protect {company}'s cash on bigger jobs",
+    "Body": "Hi {first_name},\n\nThis month's tip: on any job above a set amount, ask for a deposit when the customer accepts the quote, and invoice the rest at the stages you agreed. It protects your cash flow, covers materials up front, and filters out customers who were never going to pay on time.\n\n{loss_line}\n\nIf you want to see exactly where cash is getting stuck at {company}, the Finance Ops Audit maps it out. {audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 2.",
+    "Approved": false
+  },
+  {
+    "Name": "M3. Quote follow-up",
+    "Kind": "Monthly",
+    "Step": 7,
+    "Subject": "The 48-hour quote habit, {first_name}",
+    "Body": "Hi {first_name},\n\nThis month's tip: follow up every quote within 48 hours with a short call or message (\"Did the quote make sense? Any questions?\"). Plenty of customers simply go with whoever gets back to them first, and a quick follow-up often makes that you.\n\nEven better is quoting the same day. Our Quote Calculator turns your own prices and rules into instant quotes by phone, web form or manual entry, approved by you with one click.\n\n{audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 3.",
+    "Approved": false
+  },
+  {
+    "Name": "M4. Three-option quotes",
+    "Kind": "Monthly",
+    "Step": 8,
+    "Subject": "One quote, three options",
+    "Body": "Hi {first_name},\n\nThis month's tip: on larger jobs, offer three clear options instead of one price (for example standard, recommended and premium). Customers then compare your options with each other rather than with a competitor, and many choose the middle one.\n\n{loss_line}\n\nIf you would like the exact numbers for {company}, the Finance Ops Audit gives you them in two weeks. {audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 4.",
+    "Approved": false
+  },
+  {
+    "Name": "M5. Weekly bank reconciliation",
+    "Kind": "Monthly",
+    "Step": 9,
+    "Subject": "Ten minutes a week that saves a month-end headache",
+    "Body": "Hi {first_name},\n\nThis month's tip: reconcile your bank feed every week instead of at month end. Ten minutes a week stops the pile-up, catches mistakes and missed payments while they are still easy to fix, and means your figures are always ready when you need them.\n\nOur Reporting Dashboard goes one step further: live figures and a plain-English money email every Monday morning, straight from Xero.\n\n{audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 5.",
+    "Approved": false
+  },
+  {
+    "Name": "M6. The missed-call list",
+    "Kind": "Monthly",
+    "Step": 10,
+    "Subject": "What happens when {company} misses a call",
+    "Body": "Hi {first_name},\n\nThis month's tip: check your missed-call list every evening and call back anyone who did not leave a message. Many people who hang up without a message were still ready to book, and a same-day call-back often wins the job.\n\nIf that list is long, our AI phone assistant can answer those calls for you, book them in and flag anything urgent.\n\n{audit_line}\n\n{slots_line}\n\n{proof_block}\n\nBilal\nKeystone",
+    "Notes": "Monthly rotation 6.",
+    "Approved": false
+  }
+]

@@ -73,7 +73,9 @@ Audit free, 50% off setup, in exchange for a written case study and testimonial.
 - Free-mail addresses are allowed but flagged in Airtable.
 - After verification: "from £X" ranges for setup and monthly (×1.0 band) only, with "Exact price depends on business size", then the CTA "Get your exact quote with a Finance Ops Audit – £100 (normally £750). Qualifying businesses may receive it free."
 - Every verified submission is saved to Prospects (Source = Website), scored on the 3 checks, with Lead value and Audit offer set.
-- Consented leads get the Nurture sequence (4 emails over 3 weeks: value, case-style example, audit offer, last call). Bilal approves the templates before anything sends.
+- Consented leads get Nurture emails: 4 over 3 weeks (day 0, 5, 12, 21), then 1 a month (rotating tips + the audit offer) for up to 12 months. Bilal approves every template before it sends (Airtable > Nurture Templates > Approved).
+- Honest persuasion only: the audit anchor (normally £750, £100 for them, free if they qualify); loss figures only from named sources (AmEx SME Barometer 2026, ONS ASHE 2025, DBT late-payments research 2025) plus plain arithmetic on their revenue band; one real tip per email; the "limited audits" line only when `audit_slots_per_month` is set, with the true number left this month; a testimonial block that stays hidden until `nurture_social_proof` holds a real one (never invented); one "Book my audit" button.
+- Emails stop at once when the lead books, replies, unsubscribes or becomes a client (Prospects > Nurture status says why). Opens, clicks and bookings are tracked per email (Nurture Sends, and totals on each template) and shown on the Jarvis Nurture page.
 - Verification emails only switch on once the email domain is verified in Resend (automatic; Bilal is told).
 
 ## 8. Presentation and admin

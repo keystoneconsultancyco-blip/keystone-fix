@@ -116,7 +116,7 @@ const rec = ((($json.body) || {}).records || [])[0];
 const ok = !!(rec && rec.fields['Unsubscribe token'] && q.t === rec.fields['Unsubscribe token']);
 const page = (msg) => '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><div style="font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:20px"><h2>Keystone</h2><p style="font-size:17px">' + msg + '</p></div>';
 return [{ json: { statusCode: ok ? 200 : 400, html: page(ok ? 'You are unsubscribed. You will not get any more emails from us.' : 'This unsubscribe link is not valid. Reply to any of our emails with "unsubscribe" and we will remove you.'),
-  writes: ok ? [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: rec.id, fields: { 'Marketing consent': false, 'Nurture step': 9, 'Your notes': 'Unsubscribed ' + new Date().toISOString().slice(0, 10) } }]))] : [] } }];`, { libs: L }),
+  writes: ok ? [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: rec.id, fields: { 'Marketing consent': false, 'Nurture status': 'Stopped - unsubscribed', 'Unsubscribed at': new Date().toISOString() } }]))] : [] } }];`, { libs: L }),
   cors('Unsub: respond', 'html'),
 
   // ---------- daily clean-up: the privacy notice promises request records are deleted after 30 days ----------
