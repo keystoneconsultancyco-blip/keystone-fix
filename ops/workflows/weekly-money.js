@@ -70,9 +70,10 @@ const pf = prevRec ? prevRec.fields : null;
 const prev = pf ? { revenue: pf['Revenue'], costs: pf['Costs'], netProfit: pf['Net profit'], cash: pf['Cash balance'], receivables: pf['Receivables'], overdueCount: pf['Overdue count'], overdueValue: pf['Overdue value'] } : null;
 const f = c.fin;
 const cur = { revenue: f.revenue, costs: f.costs, netProfit: f.netProfit, cash: f.cash, receivables: f.receivables, overdueCount: f.overdueCount, overdueValue: f.overdueValue, topOverdue: f.topOverdue };
-const req = A.buildClaudeRequest({ system: Rp.EXPLAINER_SYSTEM, prompt: Rp.explainerPrompt(c.client, cur, prev, activity), schema: Rp.EXPLAINER_SCHEMA, effort: 'low', maxTokens: 3000 });
+const req = A.buildClaudeRequest({ task: 'weekly_explainer',  system: Rp.EXPLAINER_SYSTEM, prompt: Rp.explainerPrompt(c.client, cur, prev, activity), schema: Rp.EXPLAINER_SCHEMA, effort: 'low', maxTokens: 3000 });
 return { json: { ...c, cur, prev, activity, req: { url: req.url, method: 'POST', body: req.body } } };`, { libs: L, mode: 'runOnceForEachItem' }),
   Object.assign(n.claudeHttp('Explainer (Claude)'), { onError: 'continueRegularOutput' }),
+  n.aiUsageLogger('Log AI usage', 'weekly_explainer', 'KS Weekly Money + Dashboard', "$('Build metrics').item.json.client.clientId"),
   n.code('Weekly writes', `
 const { reporting: Rp, render: Rn, registry: Rg, requests: R, agent: A, log: Lg } = KS;
 const c = $('Build metrics').item.json;
@@ -121,7 +122,7 @@ const edges = [
   ['One item per client', 'Real Xero?'], ['Real Xero?', 'P&L request', 0], ['Real Xero?', 'Demo figures', 1],
   ['P&L request', 'Xero P&L'], ['Xero P&L', 'Bank request'], ['Bank request', 'Xero bank summary'], ['Xero bank summary', 'Invoices request'], ['Invoices request', 'Xero money owed'], ['Xero money owed', 'Xero figures'],
   ['Xero figures', 'Activity request'], ['Demo figures', 'Activity request'], ['Activity request', 'Get week activity'], ['Get week activity', 'Last week request'], ['Last week request', 'Get last week'],
-  ['Get last week', 'Build metrics'], ['Build metrics', 'Explainer (Claude)'], ['Explainer (Claude)', 'Weekly writes'], ['Weekly writes', 'Fan out writes'], ...tail.edges,
+  ['Get last week', 'Build metrics'], ['Build metrics', 'Explainer (Claude)'], ['Explainer (Claude)', 'Weekly writes'], ['Weekly writes', 'Fan out writes'], ['Explainer (Claude)', 'Log AI usage'], ['Log AI usage', 'Fan out writes'], ...tail.edges,
   ['Dashboard page', 'Dashboard: client query'], ['Dashboard: client query', 'Dashboard: get client'], ['Dashboard: get client', 'Dashboard: check token'], ['Dashboard: check token', 'Dashboard: allowed?'],
   ['Dashboard: allowed?', 'Dashboard: get metrics', 0], ['Dashboard: allowed?', 'Dashboard: refused', 1], ['Dashboard: get metrics', 'Dashboard: render'], ['Dashboard: render', 'Dashboard: respond'],
 ];

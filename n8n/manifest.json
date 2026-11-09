@@ -1,8 +1,255 @@
 [
   {
+    "name": "KS Agent - Keystone CFO",
+    "file": "n8n/workflows/ks-agent-keystone-cfo.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-cfo"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Chief of Staff",
+    "file": "n8n/workflows/ks-agent-chief-of-staff.json",
+    "nodes": 21,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-chief-of-staff"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Client Success",
+    "file": "n8n/workflows/ks-agent-client-success.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-client-success"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Compliance",
+    "file": "n8n/workflows/ks-agent-compliance.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-compliance"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Content",
+    "file": "n8n/workflows/ks-agent-content.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-content"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Lead Researcher",
+    "file": "n8n/workflows/ks-agent-lead-researcher.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-lead-researcher"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Onboarding",
+    "file": "n8n/workflows/ks-agent-onboarding.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-onboarding"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Ops Monitor",
+    "file": "n8n/workflows/ks-agent-ops-monitor.json",
+    "nodes": 23,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-ops-monitor"
+      }
+    ],
+    "credentials": [
+      "Keystone n8n API",
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Outreach",
+    "file": "n8n/workflows/ks-agent-outreach.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-outreach"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Sales Prep",
+    "file": "n8n/workflows/ks-agent-sales-prep.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-sales-prep"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent Switch",
+    "file": "n8n/workflows/ks-agent-switch.json",
+    "nodes": 18,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Switch request",
+        "method": "POST",
+        "path": "ks-switch-agent"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone n8n API",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Systems Builder",
+    "file": "n8n/workflows/ks-agent-systems-builder.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-systems-builder"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS AI Budget",
+    "file": "n8n/workflows/ks-ai-budget.json",
+    "nodes": 19,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Check now",
+        "method": "POST",
+        "path": "ks-ai-budget-now"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Ops - Failure Alerts",
     "file": "n8n/workflows/ks-ops-failure-alerts.json",
-    "nodes": 13,
+    "nodes": 16,
     "attachErrorWorkflow": false,
     "webhooks": [],
     "credentials": [
@@ -15,7 +262,7 @@
   {
     "name": "KS Audit Agent",
     "file": "n8n/workflows/ks-audit-agent.json",
-    "nodes": 24,
+    "nodes": 33,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -32,13 +279,15 @@
     "credentials": [
       "Keystone Airtable",
       "Xero account",
-      "Keystone Anthropic"
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
     ]
   },
   {
     "name": "KS-01 Invoice Automation",
     "file": "n8n/workflows/ks-01-invoice-automation.json",
-    "nodes": 43,
+    "nodes": 46,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -56,9 +305,25 @@
     ]
   },
   {
+    "name": "KS Jarvis Feed",
+    "file": "n8n/workflows/ks-jarvis-feed.json",
+    "nodes": 5,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Feed request",
+        "method": "GET",
+        "path": "ks-jarvis-feed"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable"
+    ]
+  },
+  {
     "name": "KS Ops Manager",
     "file": "n8n/workflows/ks-ops-manager.json",
-    "nodes": 31,
+    "nodes": 34,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -86,7 +351,7 @@
   {
     "name": "KS Ops - Notify",
     "file": "n8n/workflows/ks-ops-notify.json",
-    "nodes": 10,
+    "nodes": 13,
     "attachErrorWorkflow": true,
     "webhooks": [],
     "credentials": [
@@ -98,7 +363,7 @@
   {
     "name": "KS Quote Calculator",
     "file": "n8n/workflows/ks-quote-calculator.json",
-    "nodes": 41,
+    "nodes": 45,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -205,7 +470,7 @@
   {
     "name": "KS Weekly Money + Dashboard",
     "file": "n8n/workflows/ks-weekly-money-dashboard.json",
-    "nodes": 35,
+    "nodes": 39,
     "attachErrorWorkflow": true,
     "webhooks": [
       {

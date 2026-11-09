@@ -67,6 +67,7 @@ const core = Au.runAuditCore({ ...x.intake, answers, xero: x.xero });
 const req = A.buildClaudeRequest({ system: Au.AUDIT_SYSTEM, prompt: Au.auditPrompt({ ...x.intake, answers }, core.diagnosis) + (x.xero ? '\\nXero snapshot (last 6 months): ' + JSON.stringify(x.xero) : '\\nNo Xero data; figures are from the questionnaire.'), schema: Au.AUDIT_REPORT_SCHEMA, effort: 'medium', maxTokens: 8000 });
 return [{ json: { ...x, answers, core, req: { url: req.url, method: 'POST', body: req.body } } }];`, { libs: L }),
   Object.assign(n.claudeHttp('Audit writer (Claude)'), { onError: 'continueRegularOutput' }),
+  n.aiUsageLogger('Log AI usage', 'audit_report', 'KS Audit Agent'),
   n.code('Build report', `
 const { audit: Au, agent: A, requests: R } = KS;
 const x = $('Diagnose').first().json;
@@ -88,6 +89,8 @@ return [{ json: { response: { ok: true, message: 'Thank you, ' + (x.intake.conta
   n.code('Pick notice', `return $input.all().filter((i) => i.json.notice).map((i) => ({ json: i.json.notice }));`),
   n.notify('Tell Bilal'),
 ];
+const tail = n.writesTail();
+nodes.push(...tail.nodes);
 const edges = [
   ['Audit form page', 'Render audit form'], ['Render audit form', 'Return audit form'],
   ['Audit intake', 'Read intake'], ['Read intake', 'Valid?'], ['Valid?', 'Save intake', 0], ['Valid?', 'Save intake', 1], ['Valid?', 'Save intake', 2], ['Valid?', 'Reply invalid', 3],
@@ -97,5 +100,6 @@ const edges = [
   ['Xero snapshot request', 'Xero invoices (read-only)'], ['Xero invoices (read-only)', 'Xero snapshot'], ['Xero snapshot', 'Diagnose'], ['No Xero', 'Diagnose'],
   ['Diagnose', 'Audit writer (Claude)'], ['Audit writer (Claude)', 'Build report'], ['Build report', 'Save report draft'], ['Save report draft', 'Report done'],
   ['Report done', 'Reply to prospect'], ['Reply to prospect', 'Pick notice'], ['Pick notice', 'Tell Bilal'],
+  ['Audit writer (Claude)', 'Log AI usage'], ['Log AI usage', 'Fan out writes'], ...tail.edges,
 ];
 module.exports = n.workflow('KS Audit Agent', nodes, edges, { tags: ['keystone', 'audit'] });

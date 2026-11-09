@@ -77,9 +77,10 @@ return [{ json: { route, client, source, b, input, quote, services, factors, pri
   n.route('Quote: priced by rules?', 2),
   n.code('Quote: AI request', `
 const { quotecalc: Qc, agent: A } = KS;
-const req = A.buildClaudeRequest({ system: Qc.AI_QUOTE_SYSTEM, prompt: Qc.aiQuotePrompt({ client: $json.client, services: $json.services, factors: $json.factors, input: $json.input }), schema: Qc.AI_QUOTE_SCHEMA, effort: 'medium', maxTokens: 4000 });
+const req = A.buildClaudeRequest({ task: 'quote_estimate',  system: Qc.AI_QUOTE_SYSTEM, prompt: Qc.aiQuotePrompt({ client: $json.client, services: $json.services, factors: $json.factors, input: $json.input }), schema: Qc.AI_QUOTE_SCHEMA, effort: 'medium', maxTokens: 4000 });
 return { json: { ...$json, req: { url: req.url, method: 'POST', body: req.body } } };`, { libs: L, mode: 'runOnceForEachItem' }),
   Object.assign(n.claudeHttp('Quote: AI estimate'), { onError: 'continueRegularOutput' }),
+  n.aiUsageLogger('Log AI usage', 'quote_estimate', 'KS Quote Calculator', "$('Quote: AI request').item.json.client.clientId"),
   n.code('Quote: read AI', `
 const { quotecalc: Qc, agent: A, requests: R } = KS;
 const ctx = $('Quote: AI request').item.json;
@@ -183,6 +184,6 @@ const edges = [
   ['Quote: AI request', 'Quote: AI estimate'], ['Quote: AI estimate', 'Quote: read AI'], ['Quote: read AI', 'Quote: finalize'], ['Quote: finalize', 'Quote: respond'], ['Quote: respond', 'Fan out writes'], ['Quote: respond', 'Quote: ops notice'], ['Quote: ops notice', 'Tell Ops Manager'],
   ['Approve quote link', 'Approve: quote query'], ['Approve: quote query', 'Approve: get quote'], ['Approve: get quote', 'Approve: check'], ['Approve: check', 'Approve: valid?'],
   ['Approve: valid?', 'Approve: get client', 0], ['Approve: valid?', 'Approve: rejected', 1], ['Approve: get client', 'Approve: send'], ['Approve: send', 'Approve: respond'], ['Approve: respond', 'Fan out writes'],
-  ...tail.edges,
+  ['Quote: AI estimate', 'Log AI usage'], ['Log AI usage', 'Fan out writes'], ...tail.edges,
 ];
 module.exports = n.workflow('KS Quote Calculator', nodes, edges, { tags: ['keystone', 'quotes'] });

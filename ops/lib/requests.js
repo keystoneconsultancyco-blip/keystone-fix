@@ -69,6 +69,8 @@ const write = {
   airtable: (req) => ({ kind: 'airtable', req }),
   email: (req) => ({ kind: 'email', req }),
   sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),
+  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).
+  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),
 };
 
 function ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }

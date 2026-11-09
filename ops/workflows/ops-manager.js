@@ -74,8 +74,10 @@ if (problem) return [{ json: { ok: false, route: 3, message: problem, via: x.via
 const r = recs[0];
 const type = (r.fields.Type && r.fields.Type.name) || r.fields.Type;
 const action = JSON.parse(r.fields['Action JSON'] || '{}');
-const route = x.decision === 'no' ? 2 : type === 'quote_send' ? 0 : type === 'invoice_resubmit' ? 1 : 3;
-const req = route === 0 ? { method: 'GET', url: action.approveUrl } : route === 1 ? { method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', body: { ...action.job, approvedByBilal: true } } : null;
+// Any approval can carry action.webhook: on YES we call that Keystone webhook (agents use this).
+const route = x.decision === 'no' ? 2 : type === 'quote_send' ? 0 : (type === 'invoice_resubmit' || action.webhook) ? 1 : 3;
+const hook = action.webhook ? { method: action.method || 'POST', url: action.webhook, body: { ...(action.body || {}), approvedByBilal: true, approvalCode: r.fields.Code, ...((action.webhook.includes('/ks-agent-') || action.webhook.includes('/ks-switch-')) ? { token: S.agent_run_token } : {}) } } : null;
+const req = route === 0 ? { method: 'GET', url: action.approveUrl } : route === 1 ? (hook || { method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', body: { ...action.job, approvedByBilal: true } }) : null;
 return [{ json: { ok: true, route, record: r, type, decision: x.decision, via: x.via, reply: x.reply, req } }];`, { libs: L }),
   n.route('Do what?', 4),
   Object.assign(n.http('Send the quote', null, { method: 'GET', sendBody: false }), { onError: 'continueRegularOutput' }),
@@ -89,7 +91,7 @@ else if (x.decision === 'no') { result = 'Rejected. Nothing was sent.'; status =
 else {
   const res = $input.first().json;
   const good = res && res.statusCode >= 200 && res.statusCode < 300 && !(res.body && (res.body.status === 'rejected' || res.body.ok === false));
-  result = good ? (x.type === 'quote_send' ? 'Approved. The quote has been emailed to the customer.' : 'Approved. The job was re-submitted and created as a Xero DRAFT' + (res.body && res.body.invoiceNumber ? ' (' + res.body.invoiceNumber + ')' : '') + '.') : 'Approved, but the action failed (' + (res && res.statusCode) + '). Please check it by hand.';
+  result = good ? (x.req && x.req.url && x.type !== 'invoice_resubmit' && x.type !== 'quote_send' ? 'Approved. ' + ((res.body && res.body.message && !/Workflow was started/i.test(res.body.message)) ? res.body.message : 'Keystone is doing it now.') : x.type === 'quote_send' ? 'Approved. The quote has been emailed to the customer.' : 'Approved. The job was re-submitted and created as a Xero DRAFT' + (res.body && res.body.invoiceNumber ? ' (' + res.body.invoiceNumber + ')' : '') + '.') : 'Approved, but the action failed (' + (res && res.statusCode) + '). Please check it by hand.';
   status = good ? 'Approved' : 'Failed';
 }
 const W = status ? [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.opsApprovals, [{ id: x.record.id, fields: { 'Status': status, 'Decided at': new Date().toISOString(), 'Decided via': x.via, 'Result': result, 'Reply token': '' } }]))] : [];

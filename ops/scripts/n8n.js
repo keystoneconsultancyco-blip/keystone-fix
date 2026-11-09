@@ -144,19 +144,49 @@ function twilioSms(name) {
 }
 
 // Shared tail: a Code node emits $json.writes = [{kind, req|sms}], and this fans them out.
+// kinds: airtable | email | sms | webhook (calls one of our own n8n webhooks, no auth).
+// Emails still using the Resend test sender get the verified sender from Keystone Settings (email_from)
+// as soon as the domain is verified, so no workflow needs changing at go-live.
 function writesTail() {
+  const senderSettings = http('Email sender settings', 'airtable', { method: 'GET', sendBody: false });
+  senderSettings.parameters.url = `https://api.airtable.com/v0/${AIRTABLE.baseId}/${AIRTABLE.tables.settings}?maxRecords=100`;
+  senderSettings.onError = 'continueRegularOutput';
   const nodes = [
     code('Fan out writes', `
+const R = { email: 1, sms: 2, webhook: 3 };
 const out = [];
-for (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: w.kind === 'email' ? 1 : w.kind === 'sms' ? 2 : 0 } });
+for (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: R[w.kind] || 0 } });
 return out;`),
-    route('Write kind', 3),
+    route('Write kind', 4),
     airtableWrite('Airtable write'),
+    senderSettings,
+    code('Set sender', `
+const S = {};
+for (const r of (($json.body || {}).records || [])) if (r.fields && r.fields.Setting) S[r.fields.Setting] = String(r.fields.Value || '').trim();
+const verified = S.email_from && !/@resend\\.dev/i.test(S.email_from) ? S.email_from : null;
+const it = $('Write kind').item.json;
+const req = JSON.parse(JSON.stringify(it.req || {}));
+if (verified && req.body && /@resend\\.dev/i.test(String(req.body.from || ''))) req.body.from = verified;
+return { json: { ...it, req } };`, { mode: 'runOnceForEachItem' }),
     Object.assign(resendHttp('Send email'), { onError: 'continueRegularOutput' }),
     Object.assign(twilioSms('Send SMS'), { onError: 'continueRegularOutput' }),
+    Object.assign(http('Call webhook', null, { method: '={{ $json.req.method || "POST" }}', timeout: 120000 }), { onError: 'continueRegularOutput' }),
   ];
-  const edges = [['Fan out writes', 'Write kind'], ['Write kind', 'Airtable write', 0], ['Write kind', 'Send email', 1], ['Write kind', 'Send SMS', 2]];
+  const edges = [['Fan out writes', 'Write kind'], ['Write kind', 'Airtable write', 0], ['Write kind', 'Email sender settings', 1], ['Email sender settings', 'Set sender'], ['Set sender', 'Send email'],
+    ['Write kind', 'Send SMS', 2], ['Write kind', 'Call webhook', 3]];
   return { nodes, edges };
+}
+
+// Runs alongside a Claude HTTP node: writes the AI Usage row (model, tokens, cost) via the shared tail.
+function aiUsageLogger(name, task, workflowName, clientIdExpr = "''") {
+  return code(name, `
+const { ai: AI, requests: R } = KS;
+const res = $json;
+const body = res && res.body;
+let clientId = '';
+try { clientId = ${clientIdExpr} || ''; } catch (e) { clientId = ''; }
+const ok = res && res.statusCode >= 200 && res.statusCode < 300;
+return { json: { writes: [R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.aiUsage, [AI.usageRecord({ response: body, task: ${JSON.stringify(task)}, workflow: ${JSON.stringify(workflowName)}, clientId, executionId: $execution.id, outcome: ok ? 'OK' : 'HTTP ' + (res && res.statusCode) })]))] } };`, { libs: ['ai', 'requests'], mode: 'runOnceForEachItem' });
 }
 
 // Calls the private KS Ops - Notify sub-workflow. Never blocks the caller if it fails.
@@ -176,7 +206,7 @@ function respond(name, kind = 'json') {
 
 // ----- workflow assembly -----
 // edges: [from, to] or [from, to, outputIndex]
-function workflow(name, nodes, edges, { errorWorkflow = true, tags = [] } = {}) {
+function workflow(name, nodes, edges, { errorWorkflow = true, tags = [], inactive = false } = {}) {
   const byName = Object.fromEntries(nodes.map((n) => [n.name, n]));
   // layout: breadth-first columns from triggers
   const incoming = {};
@@ -206,9 +236,10 @@ function workflow(name, nodes, edges, { errorWorkflow = true, tags = [] } = {}) 
     settings: { executionOrder: 'v1', timezone: 'Europe/London', saveManualExecutions: true },
     // errorWorkflow is set by scripts/deploy.js (needs the Error Handler's n8n ID after import).
     __wantsErrorWorkflow: errorWorkflow,
+    __inactive: inactive,
     tags: tags.map((t) => ({ name: t })),
     meta: { keystone: true, generatedFrom: 'ops/workflows' },
   };
 }
 
-module.exports = { CREDS, AIRTABLE, uuid, bundle, code, webhook, schedule, manual, errorTrigger, noop, http, claudeHttp, airtableHttp, airtableWrite, xeroHttp, resendHttp, twilioSms, writesTail, notify, iff, route, respond, workflow };
+module.exports = { CREDS, AIRTABLE, uuid, bundle, code, webhook, schedule, manual, errorTrigger, noop, http, claudeHttp, airtableHttp, airtableWrite, xeroHttp, resendHttp, twilioSms, writesTail, aiUsageLogger, notify, iff, route, respond, workflow };

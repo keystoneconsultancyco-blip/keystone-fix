@@ -11,7 +11,8 @@ function makeDollar(state, lineage) {
     const out = state.outputs[name];
     if (!out) throw new Error(`Referenced node "${name}" has not run`);
     return {
-      all: () => out.map((i) => ({ json: i.json })),
+      // all(branchIndex) returns one output branch, like n8n.
+      all: (branch) => (branch === undefined ? out : ((state.branches[name] || [])[branch] || [])).map((i) => ({ json: i.json })),
       first: () => ({ json: out[0] && out[0].json }),
       get item() {
         if (!lineage || lineage[name] === undefined) throw new Error(`No paired item from "${name}"`);
@@ -62,7 +63,7 @@ function runCode(node, items, state, wfName) {
 
 async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, now = new Date(), maxSteps = 500 } = {}) {
   const nodes = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
-  const state = { outputs: {}, staticData, customData: {}, now, execId: Math.floor(Math.random() * 1e6) };
+  const state = { outputs: {}, branches: {}, staticData, customData: {}, now, execId: Math.floor(Math.random() * 1e6) };
   const result = { responses: [], calls: [], ran: [], errors: [], state };
   const queue = [{ node: start, items: items.map((j) => ({ json: j, lin: {} })) }];
   let steps = 0;
@@ -85,7 +86,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
       }
       else if (t === 'httpRequest' || t === 'twilio') {
         const out = [];
-        for (const it of input) {
+        for (const it of (node.executeOnce ? input.slice(0, 1) : input)) {
           const ctx = { $json: it.json, $: makeDollar(state, it.lin) };
           let req;
           if (t === 'twilio') req = { to: evalExpr(node.parameters.to, ctx), from: evalExpr(node.parameters.from, ctx), message: evalExpr(node.parameters.message, ctx) };
@@ -96,7 +97,8 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
             req.credential = node.credentials ? Object.values(node.credentials)[0].name : null;
           }
           result.calls.push({ node: name, req });
-          const mock = mocks[name];
+          // The shared tail's sender lookup defaults to "no verified sender" unless a test mocks it.
+          const mock = mocks[name] || (name === 'Email sender settings' ? () => ({ records: [] }) : null);
           if (!mock) throw new Error(`No mock for HTTP node "${name}" (${req.url || req.to})`);
           const res = await mock(req, it.json);
           const json = t === 'twilio' ? (res || { sid: 'SMsim' }) : { statusCode: res && res.statusCode !== undefined ? res.statusCode : 200, body: res && res.body !== undefined ? res.body : res, headers: {} };
@@ -130,6 +132,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
     // tag lineage with this node's own output
     outputs.forEach((arr) => arr.forEach((it) => { it.lin = { ...it.lin, [name]: it.json }; }));
     state.outputs[name] = outputs.flat();
+    state.branches[name] = outputs;
     const conns = (wf.connections[name] && wf.connections[name].main) || [];
     conns.forEach((targets, outIdx) => {
       for (const tgt of targets || []) if (outputs[outIdx] && outputs[outIdx].length) queue.push({ node: tgt.node, items: outputs[outIdx].map((x) => ({ json: x.json, lin: x.lin })) });

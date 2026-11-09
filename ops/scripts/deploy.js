@@ -56,13 +56,27 @@ async function deploy(names) {
     if (wf.name !== 'KS Ops - Failure Alerts' && errorTarget) settings.errorWorkflow = errorTarget.id;
     const body = { name: wf.name, nodes: keptNodes, connections, settings };
     const existing = live.find((w) => w.name === wf.name);
+    if (existing) {
+      // Back up the live version first (never overwrite without a copy).
+      const cur = await api('GET', '/workflows/' + existing.id);
+      if (cur.status >= 300) { results.push({ name: wf.name, error: 'backup failed ' + cur.status }); continue; }
+      const fs = require('fs'), path = require('path');
+      const dir = path.join(__dirname, '..', '..', 'n8n', 'backups', 'patches');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
+      fs.writeFileSync(path.join(dir, `${stamp}__${existing.id}__before-deploy.json`), JSON.stringify(cur.body, null, 1));
+    }
     const r = existing ? await api('PUT', '/workflows/' + existing.id, body) : await api('POST', '/workflows', body);
     if (r.status >= 300) { results.push({ name: wf.name, error: r.status, detail: JSON.stringify(r.body).slice(0, 400) }); continue; }
     const id = r.body.id;
     if (!existing) live.push({ id, name: wf.name });
     const hasTrigger = wf.nodes.some((x) => /webhook|scheduleTrigger|formTrigger|errorTrigger|executeWorkflowTrigger/.test(x.type));
     let active = null;
-    if (hasTrigger && !missing.length) {
+    if (wf.__inactive && !process.env.KS_DEPLOY_ALL_ACTIVE) {
+      // Built but switched off (e.g. agents waiting for a client-count threshold).
+      if (existing) await api('POST', `/workflows/${id}/deactivate`);
+      active = 'kept off on purpose';
+    } else if (hasTrigger && !missing.length) {
       const a = await api('POST', `/workflows/${id}/activate`);
       active = a.status < 300 ? a.body.active : `activate failed ${a.status}: ${JSON.stringify(a.body).slice(0, 200)}`;
     }
