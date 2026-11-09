@@ -160,15 +160,18 @@ function buildAuditReportMarkdown(intake, diagnosis, agentReport, proposal) {
     lines.push('');
   }
   if (agentReport && agentReport.quickWins.length) lines.push('## Quick wins (this month, no cost)', '', ...agentReport.quickWins.map((q) => `- ${q}`), '');
-  lines.push('## Recommended Keystone services', '');
-  lines.push('| Service | Fixes | One-off setup (est.) |', '|---|---|---|');
-  for (const l of proposal.setupLines) {
+  lines.push('## Recommended Keystone package', '');
+  lines.push('| Service | Fixes | One-off setup |', '|---|---|---|');
+  for (const l of proposal.setup.lines) {
     const fixes = diagnosis.findings.filter((f) => f.service === l.key).map((f) => f.title).join('; ');
-    lines.push(`| ${l.name} | ${fixes} | ${gbp(l.low)}–${gbp(l.high)} |`);
+    lines.push(`| ${l.name} | ${fixes} | ${gbp(l.fee)} |`);
   }
-  lines.push('', `Setup total (with ${proposal.setupDiscountPct}% multi-service discount): **${gbp(proposal.setupTotal.low)}–${gbp(proposal.setupTotal.high)}**  `);
-  lines.push(`Monthly Operations Management: **${proposal.tier.name}**, ${gbp(proposal.tier.low)}–${gbp(proposal.tier.high)}/month (${proposal.tier.includes}).  `);
-  lines.push(`Audit fee ${gbp(proposal.audit.fixed)}: ${proposal.audit.note}`, '');
+  lines.push('', `Setup total${proposal.setup.discountPct ? ` (with ${proposal.setup.discountPct}% multi-service discount)` : ''}: **${gbp(proposal.setup.total)}** (no VAT: Keystone is not VAT registered).  `);
+  lines.push(`Monthly package: **${proposal.package.name}, ${gbp(proposal.package.price)}/month** (${proposal.band.label} revenue band; ${proposal.package.includes}). Monitoring, fixes and alerts are included.  `);
+  lines.push(proposal.terms + '  ');
+  lines.push(`Audit fee: ${proposal.audit.note}`, '');
+  const sc = proposal.senseCheck;
+  lines.push(`_Sense check for Bilal: monthly fee ${gbp(sc.monthlyFee)} vs one-third of the monthly loss found ${gbp(sc.limit)}: ${sc.ok === null ? 'no loss figure' : sc.ok ? 'OK' : '**fee is above one-third of the monthly loss: review before presenting**'}${proposal.band.outOfRange ? '; revenue is outside the £500k–£10M bands, nearest band used' : ''}._`, '');
   if (agentReport && agentReport.questionsForMeeting.length) lines.push('## For Bilal: questions to ask in the meeting', '', ...agentReport.questionsForMeeting.map((q) => `- ${q}`), '');
   lines.push('---', '_Estimates are based on the answers provided and stated assumptions. Prices are estimates until confirmed in a proposal._');
   return lines.join('\n');
@@ -178,11 +181,7 @@ function runAuditCore(intake) {
   const screen = halalScreen(intake.industry, intake.sells, intake.businessName);
   if (!screen.pass) return { rejected: true, screen };
   const diagnosis = diagnose(intake.answers, { xero: intake.xero, calls: intake.calls });
-  const a = intake.answers || {};
-  const proposal = priceProposal(diagnosis.recommendedServices, {
-    revenue: intake.revenueBand || '2m-5m', scale: intake.staffBand || '11-50',
-    volume: n(a.invoices_per_month) > 50 || n(a.calls_per_week) > 50 ? '50plus' : n(a.invoices_per_month) < 20 ? 'under20' : '20-50',
-  });
+  const proposal = priceProposal(diagnosis.recommendedServices.filter((s) => s !== 'monitoring'), { revenue: intake.revenueBand, monthlyLoss: diagnosis.totalAnnualCost / 12 });
   return { rejected: false, screen, diagnosis, proposal };
 }
 

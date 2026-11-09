@@ -1,15 +1,15 @@
 # Keystone: your outsourced operations team
 
-We review how your business runs, then install and run AI-powered systems that sit on top of the tools you already use (Xero, your jobs sheet or job software, your calendar and phone line).
+We start with a **Finance Ops Audit** of how your business runs, then install and run AI systems on top of the tools you already use (Xero, your jobs sheet or job software, your calendar and phone line).
 
-| Service | What it does | What you get |
+| Service | What it does | Setup |
 |---|---|---|
-| **Finance Ops Audit** | Two-week review of invoicing, cash, reporting, bookings and planning | A costed list of where time and money leak, and what fixes each |
-| **System Setup** | We connect your Xero, jobs, calendar, phone and email | Everything running in 2 to 4 weeks, tested before go-live |
-| **Invoice Automation** | Finished jobs become Xero draft invoices automatically; messy jobs are checked by AI | Invoices ready the same day, and nothing sent without your OK |
-| **AI Phone Booking** | Answers when you can't, books, moves and prices jobs, and escalates emergencies instantly | No missed calls or lost jobs; urgent calls reach you in seconds |
-| **Quote Calculator** | Your prices and rules turned into instant quotes by phone, web form or manual entry | Same-day branded quotes that you approve with one click |
-| **Reporting** | Monthly value report, with a weekly plain-English money update coming next | Clear numbers without spreadsheets |
-| **Monthly Operations Management** | We monitor every workflow, fix issues and alert you | Peace of mind, with a monthly report of the hours we saved you |
+| **Finance Ops Audit** | Two-week review of invoicing and getting paid, cash flow, reporting, bookings and admin, and planning, with your money and time lost each month and what fixes it | £100 (normally £750), credited against setup; free for qualifying businesses |
+| **Invoice Automation** | Finished jobs become Xero draft invoices automatically, plus payment chasing | £1,750 |
+| **AI Phone Booking** | Answers calls, books jobs, flags urgent calls and complaints | £1,250 |
+| **Quote Calculator** | Instant quotes by phone, form or manually | £1,250 |
+| **Reporting Dashboard** | Live figures plus a weekly money email | £1,500 |
+
+**Monthly packages** (monitoring, fixes and alerts included): Starter from £750 (1 service) · **Growth from £1,500** (3 services + monthly review call) · Complete from £2,500 (all 4 + custom AI agent, quarterly growth review, 4-hour priority response). Pricing is based on business size. Minimum term 3 months.
 
 Every action is logged, every invoice stays a draft until you approve it, and if anything fails your customers still get through.

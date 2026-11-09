@@ -15,11 +15,11 @@
 
 ## 1. What this agreement covers
 
-1.1 We will provide the services in **Schedule 1** (for example a Finance Ops Audit, System Setup, Invoice Automation, AI Phone Booking, Quote Calculator, Reporting Dashboard and Monthly Operations Management).
+1.1 We will provide the services in **Schedule 1**: a Finance Ops Audit, then one or more of our four core services (Invoice Automation, AI Phone Booking, Quote Calculator, Reporting Dashboard), set up for you and run as a monthly package. Monitoring, fixes and alerts (Monthly Operations Management) are included in every package.
 
 1.2 Our systems sit on top of the tools you already use (for example Xero, your jobs sheet or job software, your calendar, phone line and email). You keep your own accounts for those tools.
 
-1.3 We do **not** provide accounting, tax, legal, financial or investment advice, debt collection or forecasting. Reports and suggestions are information to help you decide; the decisions are yours.
+1.3 We do **not** provide accounting, tax, legal, financial or investment advice. Payment chasing means polite reminders to your customers in your name; we do not act as a debt collector or take legal action. Reports and suggestions are information to help you decide; the decisions are yours.
 
 ## 2. How the work is done
 
@@ -33,15 +33,15 @@
 
 ## 3. Fees and payment
 
-3.1 Fees are set out in **Schedule 1**: a one-off setup fee, a monthly fee, and any audit fee.
+3.1 Fees are set out in **Schedule 1**: a one-off setup fee per service, a monthly package fee, and any audit fee. Monthly fees are only sold as packages (Starter, Growth or Complete) and are set by your annual revenue band; setup fees do not change with business size.
 
-3.2 **Audit fee.** The Finance Ops Audit fee is credited in full against your setup fee if you go ahead with setup within 30 days of receiving the audit report.
+3.2 **Audit fee.** The Finance Ops Audit is either free (where we have offered it free) or £100, paid by payment link before the audit is booked. A £100 audit fee is credited in full against your setup fee if you sign within 30 days of receiving the audit report.
 
 3.3 **When we invoice.** Setup fees: 50% on signing and 50% when your systems go live, unless Schedule 1 says otherwise. Monthly fees: in advance, on the [1st] of each month. Payment is due within **14 days** of the invoice.
 
-3.4 **VAT.** Keystone is [not currently VAT registered, so no VAT is charged / VAT registered: VAT is added at the current rate].
+3.4 **VAT.** Keystone is a sole trader and **not VAT registered**, so no VAT is charged. If Keystone registers for VAT we will tell you in writing at least 30 days before VAT is added to new invoices.
 
-3.5 **Third-party costs.** Your own subscriptions (for example Xero) stay yours. For AI phone booking, call and AI minutes above [500] a month are passed on at cost, shown on your invoice.
+3.5 **Third-party costs.** Your own subscriptions (for example Xero) stay yours. For AI Phone Booking, AI phone call costs above **500 minutes a month** are passed on at cost, shown on your invoice.
 
 3.6 **Late payment.** In line with our halal policy **we do not charge interest**. If an invoice is more than 30 days late we may pause the services (after giving you 7 days' written notice) until it is paid. Paused services can be restarted as soon as payment is received.
 
@@ -107,7 +107,7 @@
 
 ## 9. Term, notice and ending the agreement
 
-9.1 **Minimum term:** [3] months from the go-live date. After that the agreement continues month to month.
+9.1 **Minimum term:** 3 months from the go-live date. After that the agreement continues month to month (monthly rolling).
 
 9.2 **Notice:** either of us may end it by giving **one month's written notice** (email is fine), to end after the minimum term.
 
@@ -147,18 +147,32 @@ Signed for the Client: ______________________ Name / role: _____________________
 
 ## Schedule 1 – Services and fees
 
-| Service | Included | One-off fee | Monthly fee |
-|---|---|---|---|
-| Finance Ops Audit | [Yes/No] | £[750] (credited against setup within 30 days) | – |
-| System Setup | [list of systems] | £[ ] | – |
-| Invoice Automation | [Yes/No] | (in setup) | £[ ] |
-| AI Phone Booking | [Yes/No] | (in setup) | £[ ] (+ minutes above [500] at cost) |
-| Quote Calculator | [Yes/No] | (in setup) | £[ ] |
-| Reporting Dashboard | [Yes/No] | (in setup) | £[ ] |
-| Monthly Operations Management | Included with every plan | – | (included) |
-| **Plan** | [Essentials / Growth / Complete] | **£[ ]** | **£[ ]** |
+**Setup fees (one-off, per service, no VAT)**
 
-Multi-service setup discount applied: [ ]%. Go-live target date: [ ]. Case-study permission: [Yes/No].
+| Service | Included | Setup fee |
+|---|---|---|
+| Invoice Automation (invoices auto-drafted in Xero when a job is completed, plus payment chasing) | [Yes/No] | £1,750 |
+| AI Phone Booking (answers calls, books jobs, flags urgent calls and complaints) | [Yes/No] | £1,250 |
+| Quote Calculator (instant quotes by phone, form or manually) | [Yes/No] | £1,250 |
+| Reporting Dashboard (live figures plus a weekly money email) | [Yes/No] | £1,500 |
+
+Multi-service setup discount: 2 services 10%, 3 services 15%, 4 services 20%. Setup total after discount: **£[ ]**.
+
+**Monthly package (monitoring, fixes and alerts included in every package)**
+
+| Package | Includes | £500k–£1M revenue | £1M–£3M | £3M–£10M |
+|---|---|---|---|---|
+| Starter | 1 core service | £600 | £750 | £1,125 |
+| Growth | 3 core services + monthly review call | £1,200 | £1,500 | £2,250 |
+| Complete | All 4 core services + monthly review call + a custom AI agent built for your business, quarterly growth review, 4-hour priority response | £2,000 | £2,500 | £3,750 |
+
+Your package: **[Starter / Growth / Complete]**, revenue band **[ ]**: **£[ ] per month**, paid monthly in advance. Minimum term 3 months, then monthly rolling. AI phone call costs above 500 minutes a month are passed on at cost.
+
+**Finance Ops Audit:** [Free / £100 (credited against setup if you sign within 30 days)].
+
+**Pilot client (first client only, if applicable):** [Yes/No]. If yes: the audit is free and setup fees are 50% off, in exchange for a written case study and testimonial Keystone may publish; minimum term 3 months.
+
+Go-live target date: [ ]. Case-study permission: [Yes/No].
 
 ## Schedule 2 – Data processing details
 

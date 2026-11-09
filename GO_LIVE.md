@@ -32,6 +32,9 @@ Everything created by the test was deleted afterwards (Airtable rows, Xero draft
 
 All six are built, deployed and tested once each. When a threshold is hit, the Chief of Staff emails you a YES/NO; YES switches the agent on.
 
+## Pricing (approved 9 Nov)
+All prices follow `docs/PRICING.md`; the website is live at https://keystoneconsultancyco-blip.github.io/keystone-website-v3/ with the audit offer, setup fees, packages and the email-verified estimate calculator.
+
 ## Your steps, in order
 | # | Step | Link | What happens next |
 |---|---|---|---|
@@ -39,8 +42,8 @@ All six are built, deployed and tested once each. When a threshold is hit, the C
 | 2 | Delete the old `N8N_API_KEY` environment variable | Claude cloud environment menu > Edit > Environment variables | Keys now live in network secrets and n8n credentials (`docs/SECURITY.md`) |
 | 3 | Rotate the Twilio auth token, then update the n8n "Twilio" credential | [Twilio console](https://console.twilio.com/) > Account > API keys & tokens · [n8n credentials](https://keystoneconsultancy.app.n8n.cloud/home/credentials) | A Twilio API reply exposed the token in one n8n run log (deleted straight away); rotating is the safe step |
 | 4 | Register as self-employed with HMRC, and pay the ICO data protection fee | [HMRC](https://www.gov.uk/register-for-self-assessment) · [ICO fee](https://ico.org.uk/for-organisations/data-protection-fee/) | Required before taking money and handling client data |
-| 5 | Approve the prices (`docs/PRICING_PROPOSAL.md`) | [Website changes](https://github.com/keystoneconsultancyco-blip/keystone-website-v3/compare/main...launch-services) | I merge the website and it goes live |
-| 6 | Buy a domain, then put it in `sending_domain` | [Keystone Settings](https://airtable.com/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn) | You get an email with the exact DNS records; once Resend verifies them, every email switches sender, and approved outreach and proposals go out |
+| 5 | Approve the 4 Nurture email templates (tick Approved) and choose the £100 audit payment provider (I suggest Stripe Payment Links: no monthly fee, about 1.5% + 20p; put the link in `audit_payment_link`) | [Nurture Templates](https://airtable.com/app8WDGaKEamwXTqh/tbli4PIHaOkU6UdeZ) · [Keystone Settings](https://airtable.com/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn) | Nurture can send once the domain is verified; Sales Prep includes the payment link for £100 audits |
+| 6 | Buy a domain, then put it in `sending_domain` (this also switches on the website calculator's verification emails) | [Keystone Settings](https://airtable.com/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn) | You get an email with the exact DNS records; once Resend verifies them, every email switches sender, and approved outreach and proposals go out |
 | 7 | Buy a UK Twilio number; fill `twilio_from`, `twilio_account_sid`, `alert_sms_to` | [Twilio numbers](https://console.twilio.com/us1/develop/phone-numbers/manage/search) | Number auto-connects to the phone menu + SMS approvals; SMS alerts switch on |
 | 8 | Add Vapi credits, then follow `docs/VAPI_GO_LIVE.md` | [Vapi billing](https://dashboard.vapi.ai/) | Ask me to re-run the Vapi setup to enable transfer to a person |
 | 9 | Make the 12 test calls in `docs/PHONE_LIVE_TEST.md` | – | Phone is proven on a real line |

@@ -25,7 +25,7 @@ input,select{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d0d
 <label for="bn">Business name</label><input id="bn" name="businessName" required><label for="cn">Your name</label><input id="cn" name="contactName" required>
 <label for="ce">Email</label><input id="ce" name="contactEmail" type="email" required><label for="in">Industry</label><input id="in" name="industry" required placeholder="e.g. plumbing and heating">
 <label for="se">What do you sell?</label><input id="se" name="sells" required placeholder="e.g. boiler installs and servicing">
-<label for="rb">Annual revenue</label><select id="rb" name="revenueBand" required><option value=""></option><option value="under500k">Under £500K</option><option value="500k-2m">£500K-£2M</option><option value="2m-5m">£2M-£5M</option><option value="5m-10m">£5M-£10M</option><option value="10mplus">£10M+</option></select>
+<label for="rb">Annual revenue</label><select id="rb" name="revenueBand" required><option value=""></option><option value="under500k">Under £500k</option><option value="500k-1m">£500k–£1M</option><option value="1m-3m">£1M–£3M</option><option value="3m-10m">£3M–£10M</option><option value="over10m">Over £10M</option></select>
 <label for="sb">Staff</label><select id="sb" name="staffBand" required><option value=""></option><option value="justme">Just me</option><option value="2-10">2-10</option><option value="11-50">11-50</option><option value="50plus">50+</option></select></fieldset>
 ${groups}<button id="btn" type="submit">Send my answers</button></form><div class="res" id="res"></div></div></div>
 <script>(function(){var f=document.getElementById('af'),b=document.getElementById('btn'),r=document.getElementById('res');

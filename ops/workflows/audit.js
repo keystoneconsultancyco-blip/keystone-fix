@@ -75,7 +75,7 @@ const parsed = R.ok($json) ? A.parseClaudeJson($json.body) : { ok: false, error:
 const md = Au.buildAuditReportMarkdown(x.intake, x.core.diagnosis, parsed.ok ? parsed.data : null, x.core.proposal)
   + (x.xero ? '\\n\\n_Xero snapshot used: ' + x.xero.sample + ' invoices from the last 6 months._' : '') + (parsed.ok ? '' : '\\n\\n_AI narrative unavailable (' + parsed.error + '); figures above are complete._');
 const p = x.core.proposal;
-const fee = 'Audit £' + p.audit.fixed + ' | Setup £' + p.setupTotal.low + '-£' + p.setupTotal.high + ' | ' + p.tier.name + ' £' + p.tier.low + '-£' + p.tier.high + '/month';
+const fee = p.package.name + ' £' + p.package.price + '/month | Setup £' + p.setup.total + (p.setup.discountPct ? ' (' + p.setup.discountPct + '% off)' : '') + (p.senseCheck.ok === false ? ' | CHECK: fee above 1/3 of monthly loss (£' + p.senseCheck.limit + ')' : '');
 const update = R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.auditIntakes, [{ id: x.recordId, fields: { 'Status': 'Draft ready for review', 'Report draft': md, 'Findings JSON': JSON.stringify(x.core.diagnosis).slice(0, 90000), 'Xero snapshot JSON': x.xero ? JSON.stringify(x.xero) : '', 'Estimated annual loss': x.core.diagnosis.totalAnnualCost, 'Recommended fee summary': fee } }]);
 return [{ json: { req: update, x, fee, aiOk: parsed.ok } }];`, { libs: L }),
   n.airtableHttp('Save report draft', 'PATCH'),

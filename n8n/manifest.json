@@ -95,8 +95,8 @@
     ]
   },
   {
-    "name": "KS Agent - Lead Researcher",
-    "file": "n8n/workflows/ks-agent-lead-researcher.json",
+    "name": "KS Agent - Client Hunter",
+    "file": "n8n/workflows/ks-agent-client-hunter.json",
     "nodes": 20,
     "attachErrorWorkflow": true,
     "webhooks": [
@@ -104,6 +104,25 @@
         "node": "Run now",
         "method": "POST",
         "path": "ks-agent-lead-researcher"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
+    "name": "KS Agent - Nurture",
+    "file": "n8n/workflows/ks-agent-nurture.json",
+    "nodes": 20,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Run now",
+        "method": "POST",
+        "path": "ks-agent-nurture"
       }
     ],
     "credentials": [
@@ -483,6 +502,34 @@
     ],
     "credentials": [
       "Xero account"
+    ]
+  },
+  {
+    "name": "KS Website Calculator",
+    "file": "n8n/workflows/ks-website-calculator.json",
+    "nodes": 36,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Calc start",
+        "method": "POST",
+        "path": "ks-calc-start"
+      },
+      {
+        "node": "Calc verify",
+        "method": "POST",
+        "path": "ks-calc-verify"
+      },
+      {
+        "node": "Unsubscribe",
+        "method": "GET",
+        "path": "ks-unsubscribe"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Header Auth account 2",
+      "Twilio"
     ]
   },
   {

@@ -102,10 +102,15 @@ test('audit diagnosis covers pillars with explicit numbers and recommends servic
   assert.deepEqual([...pillars].sort(), ['bookings', 'cash', 'invoicing', 'planning', 'reporting']);
   assert.ok(core.diagnosis.totalAnnualCost > 50000);
   assert.deepEqual(core.diagnosis.recommendedServices.sort(), ['invoicing', 'monitoring', 'phone', 'quotes', 'reporting']);
-  assert.equal(core.proposal.tier.key, 'complete');
+  assert.equal(core.proposal.package.key, 'complete');
+  assert.equal(core.proposal.package.price, 2500); // old '2m-5m' band maps to £1M–£3M (x1.0)
+  assert.equal(core.proposal.setup.total, 5750 * 0.8); // all 4 setups, 20% off
+  assert.equal(typeof core.proposal.senseCheck.ok, 'boolean');
   const md = Au.buildAuditReportMarkdown({ businessName: 'Demo Heating Ltd' }, core.diagnosis, null, core.proposal);
   assert.match(md, /Invoicing & collections/);
   assert.match(md, /How we worked it out/);
+  assert.match(md, /Complete, £2,500\/month/);
+  assert.match(md, /Sense check/);
   assert.equal(Au.runAuditCore({ businessName: 'X', industry: 'Wine bar', answers: {} }).rejected, true);
 });
 

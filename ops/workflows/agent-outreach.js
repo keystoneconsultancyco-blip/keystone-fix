@@ -35,7 +35,7 @@ const rules = (D.agentSettings.find((r) => /outreach rules/i.test(r.fields.Setti
 return D.toDraft.filter((r) => KS.audit.halalScreen(r.fields.Industry, r.fields['What they do'], r.fields.Company).pass).map((r) => ({
   task: 'outreach_draft',
   req: A.buildClaudeRequest({ task: 'outreach_draft', system: P.OUTREACH_SYSTEM, prompt: P.outreachPrompt(r.fields, rules), schema: P.OUTREACH_SCHEMA, effort: 'low', maxTokens: 4000 }),
-  ctx: { stage: 'draft', id: r.id, company: r.fields.Company, email: r.fields.Email, decisionMaker: r.fields['Decision-maker'] || '' },
+  ctx: { stage: 'draft', id: r.id, company: r.fields.Company, email: r.fields.Email, decisionMaker: r.fields['Decision-maker'] || '', offer: (r.fields['Audit offer'] && r.fields['Audit offer'].name) || r.fields['Audit offer'] || '£100' },
 }));`,
   handle: `
 if (ctx.stage === 'missing') return { error: 'Prospect ' + ctx.id + ' not found' };
@@ -43,8 +43,12 @@ if (ctx.stage === 'draft') {
   if (!parsed.ok) return { error: ctx.company + ': draft failed (' + parsed.error + ')' };
   const d = parsed.data;
   const flags = (d.risk_flags || []).filter(Boolean);
+  // Hard rules: no prices in first-touch emails; only Free leads may be told the audit is free.
+  const text = d.subject + ' ' + d.body;
+  const broken = [/£|\\bGBP\\b|\\d+\\s?(pounds|per month)/i.test(text) && 'mentions a price', ctx.offer !== 'Free' && /\\bfree\\b/i.test(text) && 'calls the audit free but this lead gets the £100 offer'].filter(Boolean);
+  if (broken.length) return { writes: [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email approval': 'Edit requested', 'Edit notes': 'Automatic rule check: the draft ' + broken.join(' and ') + '. Rewrite without it.' } }]))], error: ctx.company + ': draft broke the outreach rules (' + broken.join(', ') + '); queued for a rewrite' };
   const W = [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email subject': d.subject, 'Email draft': d.body, 'Email approval': 'Pending approval', 'Edit notes': '', 'Next step': 'Bilal: approve email (YES/NO link or set Email approval)', ...(flags.length ? { 'Your notes': 'Outreach agent flags: ' + flags.join('; ') } : {}) } }]))];
-  const notice = { kind: 'info', text: 'Outreach draft for ' + ctx.company + ' (' + ctx.email + ')' + (flags.length ? '\\nFlags: ' + flags.join('; ') : '') + '\\n\\nSubject: ' + d.subject + '\\n\\n' + d.body + '\\n\\nYES sends it (once your email domain is verified). NO leaves it unsent. To change it, set Email approval to "Edit requested" in Airtable with your notes.',
+  const notice = { kind: 'info', text: 'Outreach draft for ' + ctx.company + ' (' + ctx.email + '), audit offer: ' + ctx.offer + (flags.length ? '\\nFlags: ' + flags.join('; ') : '') + '\\n\\nSubject: ' + d.subject + '\\n\\n' + d.body + '\\n\\nYES sends it (once your email domain is verified). NO leaves it unsent. To change it, set Email approval to "Edit requested" in Airtable with your notes.',
     approval: { type: 'outreach_send', ref: ctx.company, summary: 'Send outreach email to ' + ctx.company, action: { webhook: '${BASE}/ks-agent-outreach', body: { stage: 'send', prospectId: ctx.id } } } };
   return { writes: W, notices: [notice], done: 1, log: [{ kind: 'Awaiting approval', summary: 'Email to ' + ctx.company + ' ready for approval', ref: ctx.id }] };
 }
