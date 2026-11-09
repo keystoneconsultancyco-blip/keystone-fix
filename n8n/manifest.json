@@ -262,7 +262,7 @@
   {
     "name": "KS Audit Agent",
     "file": "n8n/workflows/ks-audit-agent.json",
-    "nodes": 33,
+    "nodes": 36,
     "attachErrorWorkflow": true,
     "webhooks": [
       {

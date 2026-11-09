@@ -1,4 +1,6 @@
-# Blockers: things only Bilal can do (priority order)
+# Blockers: things only Bilal can do
+
+**The up-to-date ordered list with links is in `GO_LIVE.md`.** Details below.
 
 1. **Verify a sending domain in Resend.** Resend > Domains: add your domain and its DNS records. Then put the new from-address in Airtable > Keystone Settings > `email_from` and in each client's `From email`. *Until then, emails only reach khan.bilalbk408@gmail.com, so real customers get nothing. This also stops alerts and approval emails landing in Spam.*
 2. **Buy a Twilio number** (console.twilio.com > Phone Numbers; paid, so your call). Put it in Keystone Settings > `twilio_from`, and your mobile in `alert_sms_to`. SMS alerts, summaries and YES/NO replies then switch on by themselves. Also set the number's "A message comes in" webhook to `https://keystoneconsultancy.app.n8n.cloud/webhook/ks-ops-sms`.

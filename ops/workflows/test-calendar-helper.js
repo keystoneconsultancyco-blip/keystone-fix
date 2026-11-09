@@ -9,7 +9,7 @@ const b = $json.body || {};
 if (b.token !== ${JSON.stringify(TOKEN)}) return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];
 const cal = encodeURIComponent(b.calendarId || 'primary');
 if (b.op === 'list') return [{ json: { allowed: true, req: { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&orderBy=startTime&q=' + encodeURIComponent(b.q || 'KS TEST') + '&timeMin=' + encodeURIComponent(b.timeMin || new Date(Date.now() - 86400000).toISOString()) } } }];
-if (b.op === 'delete' && b.eventId && /KS TEST/.test(b.summary || '')) return [{ json: { allowed: true, req: { method: 'DELETE', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + encodeURIComponent(b.eventId) } } }];
+if (b.op === 'delete' && b.eventId && /KS TEST/i.test(b.summary || '')) return [{ json: { allowed: true, req: { method: 'DELETE', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + encodeURIComponent(b.eventId) } } }];
 return [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];`),
   n.iff('Allowed?', 'allowed'),
   n.http('Call Calendar', 'gcal', { method: '={{ $json.req.method }}', sendBody: false }),

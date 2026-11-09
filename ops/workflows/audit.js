@@ -83,7 +83,11 @@ return [{ json: { req: update, x, fee, aiOk: parsed.ok } }];`, { libs: L }),
 const { x, fee, aiOk } = $('Build report').first().json;
 if (!KS.requests.ok($json)) throw new Error('Audit: report drafted but could not be saved to Airtable (' + $json.statusCode + ')');
 return [{ json: { response: { ok: true, message: 'Thank you, ' + (x.intake.contactName || '') + '. We have your answers and will be in touch within 2 working days to go through your audit.' }, notice: { kind: 'info', audience: 'bilal', text: 'Audit report DRAFT ready for ' + x.intake.businessName + ' (' + (x.intake.industry || '') + '). Estimated annual cost of weaknesses: £' + x.core.diagnosis.totalAnnualCost.toLocaleString('en-GB') + '. ' + fee + '.' + (aiOk ? '' : ' (AI narrative failed; numbers are complete.)') + ' Review it in Airtable > Audit Intakes before presenting.' } } }];`, { libs: L }),
-  n.respond('Reply to prospect'),
+  // Thank the prospect straight away; the report (Claude Opus, ~30s) is written after we have replied.
+  n.code('Thank prospect (Xero)', `return [{ json: { ...$json, response: { ok: true, message: 'Thank you, ' + (($json.intake && $json.intake.contactName) || '') + '. We have your answers and will be in touch within 2 working days to go through your audit.' } } }];`),
+  n.respond('Reply now (Xero)'),
+  n.code('Thank prospect', `return [{ json: { ...$json, response: { ok: true, message: 'Thank you, ' + (($json.intake && $json.intake.contactName) || '') + '. We have your answers and will be in touch within 2 working days to go through your audit.' } } }];`),
+  n.respond('Reply now'),
   n.respond('Reply rejected'),
   n.respond('Reply invalid'),
   n.code('Pick notice', `return $input.all().filter((i) => i.json.notice).map((i) => ({ json: i.json.notice }));`),
@@ -95,11 +99,11 @@ const edges = [
   ['Audit form page', 'Render audit form'], ['Render audit form', 'Return audit form'],
   ['Audit intake', 'Read intake'], ['Read intake', 'Valid?'], ['Valid?', 'Save intake', 0], ['Valid?', 'Save intake', 1], ['Valid?', 'Save intake', 2], ['Valid?', 'Reply invalid', 3],
   ['Save intake', 'Which path'], ['Which path', 'Halal / Xero?'],
-  ['Halal / Xero?', 'Rejected reply', 0], ['Halal / Xero?', 'Xero snapshot request', 1], ['Halal / Xero?', 'No Xero', 2],
+  ['Halal / Xero?', 'Rejected reply', 0], ['Halal / Xero?', 'Thank prospect (Xero)', 1], ['Thank prospect (Xero)', 'Reply now (Xero)'], ['Reply now (Xero)', 'Xero snapshot request'], ['Halal / Xero?', 'Thank prospect', 2], ['Thank prospect', 'Reply now'], ['Reply now', 'No Xero'],
   ['Rejected reply', 'Reply rejected'], ['Reply rejected', 'Pick notice'],
   ['Xero snapshot request', 'Xero invoices (read-only)'], ['Xero invoices (read-only)', 'Xero snapshot'], ['Xero snapshot', 'Diagnose'], ['No Xero', 'Diagnose'],
   ['Diagnose', 'Audit writer (Claude)'], ['Audit writer (Claude)', 'Build report'], ['Build report', 'Save report draft'], ['Save report draft', 'Report done'],
-  ['Report done', 'Reply to prospect'], ['Reply to prospect', 'Pick notice'], ['Pick notice', 'Tell Bilal'],
+  ['Report done', 'Pick notice'], ['Pick notice', 'Tell Bilal'],
   ['Audit writer (Claude)', 'Log AI usage'], ['Log AI usage', 'Fan out writes'], ...tail.edges,
 ];
 module.exports = n.workflow('KS Audit Agent', nodes, edges, { tags: ['keystone', 'audit'] });

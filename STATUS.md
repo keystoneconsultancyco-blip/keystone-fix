@@ -1,4 +1,18 @@
-# Keystone build status (8 Nov 2026)
+# Keystone build status (9 Nov 2026)
+
+**See `GO_LIVE.md` for launch readiness (79%), the end-to-end test results and your remaining steps in order.**
+
+## New on 9 Nov
+| Item | Status |
+|---|---|
+| Keys out of plain-text env vars (network secrets + n8n credentials) | ✅ `docs/SECURITY.md` |
+| AI routing (Haiku routine / Opus audits + money), cost of every call in AI Usage, 80%/100% alerts, queue + auto re-run | ✅ live-tested incl. forced over-budget |
+| Agent team: Chief of Staff, Lead Researcher, Outreach, Sales Prep, Ops Monitor (live); Onboarding, Client Success, CFO, Content, Compliance, Systems Builder (built, off until 5/20 clients) | ✅ each run live once |
+| Jarvis agent pages (team + one page per agent, approve buttons) | ✅ on Jarvis branch `keystone-agents`, needs one Vercel variable |
+| Switch-on: domain (Resend) + Twilio number | ✅ domain path live-tested with a throwaway domain (removed); Twilio paths simulator-tested |
+| Client agreement (draft – to be checked) | ✅ `docs/CLIENT_AGREEMENT.md` |
+| Full end-to-end test lead → report | ✅ passed; test data removed |
+
 
 ✅ live and tested against real services · 🟡 partly done · ⛔ blocked on Bilal (see BLOCKERS.md) · ⬜ not started
 

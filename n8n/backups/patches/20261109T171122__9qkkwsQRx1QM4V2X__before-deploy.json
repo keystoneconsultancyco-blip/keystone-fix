@@ -1,0 +1,499 @@
+{
+ "id": "9qkkwsQRx1QM4V2X",
+ "name": "KS Test - Calendar helper",
+ "description": null,
+ "active": true,
+ "activeVersionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+ "createdAt": "2026-11-08T21:37:44.253Z",
+ "updatedAt": "2026-11-08T21:37:44.253Z",
+ "isArchived": false,
+ "versionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "ae552bb4-d81b-4465-a794-a86d81c21851",
+   "name": "Calendar helper",
+   "webhookId": "9dacf39c-b97c-41a0-a466-7196c25da41d",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "ks-test-calendar-helper",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "eeef6dca-a358-4d19-a64d-56a2d2c30801",
+   "name": "Check request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const b = $json.body || {};\nif (b.token !== \"JG2n92r0gedYg6Ej_nKgDCjx57jPxfye\") return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];\nconst cal = encodeURIComponent(b.calendarId || 'primary');\nif (b.op === 'list') return [{ json: { allowed: true, req: { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&orderBy=startTime&q=' + encodeURIComponent(b.q || 'KS TEST') + '&timeMin=' + encodeURIComponent(b.timeMin || new Date(Date.now() - 86400000).toISOString()) } } }];\nif (b.op === 'delete' && b.eventId && /KS TEST/.test(b.summary || '')) return [{ json: { allowed: true, req: { method: 'DELETE', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + encodeURIComponent(b.eventId) } } }];\nreturn [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];\n"
+   }
+  },
+  {
+   "id": "481b22a1-4bec-4b50-a117-840c4b84bbd1",
+   "name": "Allowed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "8f1dbe7c-9e34-4ce8-a291-da079d5a18f4",
+       "leftValue": "={{ $json.allowed }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "c491464e-31c7-4e5a-aa22-306133bcf9b8",
+   "name": "Call Calendar",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleCalendarOAuth2Api",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "1284c94d-6497-4789-abea-f5f288d5ffc9",
+   "name": "Wrap",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{ json: { response: { ok: $json.statusCode < 300, statusCode: $json.statusCode, body: $json.body } } }];\n"
+   }
+  },
+  {
+   "id": "cfcde212-e8f2-441c-a0f3-f70559f7f65d",
+   "name": "Respond",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "d89e7a6a-f954-431f-a024-0d6d6352f129",
+   "name": "Respond refused",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    780,
+    180
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Calendar helper": {
+   "main": [
+    [
+     {
+      "node": "Check request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check request": {
+   "main": [
+    [
+     {
+      "node": "Allowed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Allowed?": {
+   "main": [
+    [
+     {
+      "node": "Call Calendar",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond refused",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Calendar": {
+   "main": [
+    [
+     {
+      "node": "Wrap",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wrap": {
+   "main": [
+    [
+     {
+      "node": "Respond",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "saveManualExecutions": true,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "errorWorkflow": "GKF6X82UvFFth43w",
+  "timezone": "Europe/London",
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "9qkkwsQRx1QM4V2X",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-11-08T21:37:44.256Z",
+   "updatedAt": "2026-11-08T21:37:44.256Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+  "workflowId": "9qkkwsQRx1QM4V2X",
+  "nodes": [
+   {
+    "id": "ae552bb4-d81b-4465-a794-a86d81c21851",
+    "name": "Calendar helper",
+    "webhookId": "9dacf39c-b97c-41a0-a466-7196c25da41d",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "ks-test-calendar-helper",
+     "responseMode": "responseNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "eeef6dca-a358-4d19-a64d-56a2d2c30801",
+    "name": "Check request",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     260,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "const b = $json.body || {};\nif (b.token !== \"JG2n92r0gedYg6Ej_nKgDCjx57jPxfye\") return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];\nconst cal = encodeURIComponent(b.calendarId || 'primary');\nif (b.op === 'list') return [{ json: { allowed: true, req: { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&orderBy=startTime&q=' + encodeURIComponent(b.q || 'KS TEST') + '&timeMin=' + encodeURIComponent(b.timeMin || new Date(Date.now() - 86400000).toISOString()) } } }];\nif (b.op === 'delete' && b.eventId && /KS TEST/.test(b.summary || '')) return [{ json: { allowed: true, req: { method: 'DELETE', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + encodeURIComponent(b.eventId) } } }];\nreturn [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];\n"
+    }
+   },
+   {
+    "id": "481b22a1-4bec-4b50-a117-840c4b84bbd1",
+    "name": "Allowed?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     520,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose"
+      },
+      "conditions": [
+       {
+        "id": "8f1dbe7c-9e34-4ce8-a291-da079d5a18f4",
+        "leftValue": "={{ $json.allowed }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "c491464e-31c7-4e5a-aa22-306133bcf9b8",
+    "name": "Call Calendar",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     780,
+     0
+    ],
+    "parameters": {
+     "method": "={{ $json.req.method }}",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleCalendarOAuth2Api",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "1284c94d-6497-4789-abea-f5f288d5ffc9",
+    "name": "Wrap",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1040,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "return [{ json: { response: { ok: $json.statusCode < 300, statusCode: $json.statusCode, body: $json.body } } }];\n"
+    }
+   },
+   {
+    "id": "cfcde212-e8f2-441c-a0f3-f70559f7f65d",
+    "name": "Respond",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1300,
+     0
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ JSON.stringify($json.response) }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "d89e7a6a-f954-431f-a024-0d6d6352f129",
+    "name": "Respond refused",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     780,
+     180
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ JSON.stringify($json.response) }}",
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Calendar helper": {
+    "main": [
+     [
+      {
+       "node": "Check request",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check request": {
+    "main": [
+     [
+      {
+       "node": "Allowed?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Allowed?": {
+    "main": [
+     [
+      {
+       "node": "Call Calendar",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Respond refused",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Call Calendar": {
+    "main": [
+     [
+      {
+       "node": "Wrap",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Wrap": {
+    "main": [
+     [
+      {
+       "node": "Respond",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Bilal Khan",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-11-08T21:37:44.257Z",
+  "updatedAt": "2026-11-08T21:37:44.257Z",
+  "workflowPublishHistory": [
+   {
+    "id": 249,
+    "workflowId": "9qkkwsQRx1QM4V2X",
+    "versionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-08T21:37:44.526Z"
+   },
+   {
+    "id": 272,
+    "workflowId": "9qkkwsQRx1QM4V2X",
+    "versionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+    "event": "deactivated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-08T21:52:05.138Z"
+   },
+   {
+    "id": 468,
+    "workflowId": "9qkkwsQRx1QM4V2X",
+    "versionId": "96d453a4-ede7-47fc-8a6e-76b5265305f7",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-09T17:11:10.849Z"
+   }
+  ]
+ },
+ "parentFolder": null
+}
