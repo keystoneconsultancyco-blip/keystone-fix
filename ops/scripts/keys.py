@@ -1,8 +1,15 @@
-"""Split the combined N8N_API_KEY value into its three keys. Never prints a value."""
+"""Key loading for the Python ops scripts. Keys now come from network secrets injected by the proxy."""
 import os, re
 
 
 def load():
+    """Keys are injected by the environment proxy (network secrets). Placeholders only."""
+    if os.environ.get("KS_N8N_KEY") or os.environ.get("KS_AIRTABLE_TOKEN"):
+        return {"N8N_API_KEY": os.environ.get("KS_N8N_KEY", "proxy-injected"), "AIRTABLE_TOKEN": os.environ.get("KS_AIRTABLE_TOKEN", "proxy-injected")}, ["KS_*"]
+    return {"N8N_API_KEY": "proxy-injected", "AIRTABLE_TOKEN": "proxy-injected"}, ["network secrets"]
+
+
+def load_combined_env_legacy():
     raw = os.environ.get("N8N_API_KEY", "").strip()
     parts = [p for p in re.split(r"[\s,;]+", raw) if p]
     keys = {}

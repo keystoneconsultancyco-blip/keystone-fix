@@ -2,23 +2,14 @@
 // Deploys NEW Keystone workflows (names starting "KS ") to n8n Cloud.
 // Safety: refuses to create, update or delete any workflow whose name starts with "[Stock]".
 // Usage: node scripts/deploy.js "KS Ops - Failure Alerts" ["KS ..."]   (no args = all KS workflows)
-// Reads the n8n key from the environment; never prints it.
+// The n8n key is added by the environment's proxy (network secrets); see scripts/secrets.js.
 const { build } = require('./build-workflows');
 
-function keys() {
-  const raw = (process.env.N8N_API_KEY || '').trim();
-  const out = {};
-  for (const p of raw.split(/[\s,;]+/).filter(Boolean)) {
-    const v = p.replace(/^[A-Za-z_][A-Za-z0-9_]*\s*[=:]\s*/, '').replace(/^["']|["']$/g, '');
-    if (v.startsWith('eyJ')) out.n8n = v;
-  }
-  if (!out.n8n) throw new Error('n8n API key not found in N8N_API_KEY');
-  return out;
-}
+const { n8nKey } = require('./secrets');
 
 const BASE = 'https://keystoneconsultancy.app.n8n.cloud/api/v1';
 async function api(method, path, body) {
-  const r = await fetch(BASE + path, { method, headers: { 'X-N8N-API-KEY': keys().n8n, 'Content-Type': 'application/json', Accept: 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(BASE + path, { method, headers: { 'X-N8N-API-KEY': n8nKey(), 'Content-Type': 'application/json', Accept: 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const t = await r.text();
   let j; try { j = t ? JSON.parse(t) : null; } catch (e) { j = t; }
   return { status: r.status, body: j };

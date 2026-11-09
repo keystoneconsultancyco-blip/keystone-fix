@@ -1,4 +1,5 @@
 'use strict';
+const { airtableToken } = require('./secrets');
 // Sets up (or refreshes) a client's Vapi assistant, tools and SIP address from the Airtable registry.
 // Usage: KS_VAPI_HELPER_TOKEN=... node scripts/vapi-setup.js KS-DEMO-01
 // Prints the SIP URI to put in My Clients > "Vapi SIP URI" (it also writes it for you).
@@ -12,10 +13,6 @@ async function vapi(method, path, body) {
   const j = await r.json();
   if (!j.ok) throw new Error(`${method} ${path} -> ${j.statusCode}: ${String(JSON.stringify(j)).slice(0, 400)}`);
   return j.body;
-}
-function airtableToken() {
-  for (const p of (process.env.N8N_API_KEY || '').split(/[\s,;]+/)) { const v = p.replace(/^[A-Za-z_]+\s*[=:]\s*/, ''); if (v.startsWith('pat')) return v; }
-  throw new Error('Airtable token not found');
 }
 async function airtable(method, path, body) {
   const r = await fetch(`https://api.airtable.com/v0/${AT.baseId}/${path}`, { method, headers: { Authorization: 'Bearer ' + airtableToken(), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
