@@ -119,8 +119,8 @@ return [{ json: { statusCode: ok ? 200 : 400, html: page(ok ? 'You are unsubscri
   writes: ok ? [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: rec.id, fields: { 'Marketing consent': false, 'Nurture status': 'Stopped - unsubscribed', 'Unsubscribed at': new Date().toISOString() } }]))] : [] } }];`, { libs: L }),
   cors('Unsub: respond', 'html'),
 
-  // ---------- daily clean-up: the privacy notice promises request records are deleted after 30 days ----------
-  n.schedule('Daily 03:10 clean-up', '10 3 * * *'),
+  // ---------- weekly clean-up: the privacy notice promises request records are deleted after 30 days ----------
+  n.schedule('Sunday 03:10 clean-up', '10 3 * * 0'),
   n.code('Old requests query', `return [{ json: { req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.calcRequests, { formula: "IS_BEFORE({Created}, DATEADD(NOW(), -30, 'days'))", fields: ['Request ID'], maxRecords: 100 }) } }];`, { libs: L }),
   Object.assign(n.airtableHttp('Get old requests', 'GET'), { onError: 'continueRegularOutput' }),
   n.code('Delete old requests', `
@@ -138,7 +138,7 @@ const edges = [
   ['Get request row', 'Verify: check code'], ['Verify: check code', 'Code ok?'], ['Code ok?', 'Find prospect', 0], ['Code ok?', 'Verify: respond', 1],
   ['Find prospect', 'Verify: save prospect'], ['Verify: save prospect', 'Save prospect'], ['Save prospect', 'Verify: results'], ['Verify: results', 'Verify: respond'], ['Verify: respond', 'Fan out writes'],
   ['Unsubscribe', 'Unsub: find lead'], ['Unsub: find lead', 'Get lead'], ['Get lead', 'Unsub: apply'], ['Unsub: apply', 'Unsub: respond'], ['Unsub: respond', 'Fan out writes'],
-  ['Daily 03:10 clean-up', 'Old requests query'], ['Old requests query', 'Get old requests'], ['Get old requests', 'Delete old requests'], ['Delete old requests', 'Fan out writes'],
+  ['Sunday 03:10 clean-up', 'Old requests query'], ['Old requests query', 'Get old requests'], ['Get old requests', 'Delete old requests'], ['Delete old requests', 'Fan out writes'],
   ...tail.edges,
 ];
 module.exports = n.workflow('KS Website Calculator', nodes, edges, { tags: ['keystone', 'website'] });

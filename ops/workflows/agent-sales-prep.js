@@ -9,7 +9,7 @@ const { makeAgent, BASE } = require('../scripts/agentkit');
 module.exports = makeAgent({
   name: 'KS Agent - Sales Prep',
   slug: 'sales-prep',
-  crons: [{ label: 'Every 30 minutes', cron: '*/30 * * * *' }],
+  crons: [{ label: '3 times a day (08:05, 13:05, 18:05)', cron: '5 8,13,18 * * *' }],
   libs: ['agentprompts', 'pricing', 'audit', 'leadscore'],
   nothingToDo: 'No calls to prepare, no qualifying answers to check and no approved audits waiting for a proposal.',
   reads: `

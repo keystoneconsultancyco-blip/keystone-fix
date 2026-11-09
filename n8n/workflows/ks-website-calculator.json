@@ -547,7 +547,7 @@
       "id": "454691f4-8a17-4d76-a181-2a3560ee43b7"
     },
     {
-      "name": "Daily 03:10 clean-up",
+      "name": "Sunday 03:10 clean-up",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "parameters": {
@@ -555,7 +555,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "10 3 * * *"
+              "expression": "10 3 * * 0"
             }
           ]
         }
@@ -564,7 +564,7 @@
         0,
         540
       ],
-      "id": "6c6ace7f-f566-493e-a80d-78bdf7818d2a"
+      "id": "f2867a1d-8b38-4fbf-a6d7-3cca5046a7b9"
     },
     {
       "name": "Old requests query",
@@ -1102,7 +1102,7 @@
         ]
       ]
     },
-    "Daily 03:10 clean-up": {
+    "Sunday 03:10 clean-up": {
       "main": [
         [
           {

@@ -2,7 +2,7 @@
   "name": "KS-01 Invoice Automation",
   "nodes": [
     {
-      "name": "Every 15 minutes",
+      "name": "Every 30 minutes, 07:00-20:30",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "parameters": {
@@ -10,7 +10,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "*/15 * * * *"
+              "expression": "*/30 7-20 * * *"
             }
           ]
         }
@@ -19,7 +19,7 @@
         0,
         0
       ],
-      "id": "5a6b873a-014a-4a43-af26-8a9a747be8c9"
+      "id": "c47bf190-c226-4dd8-a153-d3fc14e085c7"
     },
     {
       "name": "Manual run",
@@ -1051,7 +1051,7 @@
     }
   ],
   "connections": {
-    "Every 15 minutes": {
+    "Every 30 minutes, 07:00-20:30": {
       "main": [
         [
           {

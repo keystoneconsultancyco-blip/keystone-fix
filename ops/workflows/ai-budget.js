@@ -8,7 +8,7 @@ const L = ['ai', 'opsmanager', 'requests', 'log'];
 const list = (name) => `(($('${name}').first().json.body || {}).records || [])`;
 
 const nodes = [
-  n.schedule('Every 30 minutes', '*/30 * * * *'),
+  n.schedule('Twice a day', '40 9,17 * * *'),
   n.webhook('Check now', 'ks-ai-budget-now', { respond: 'onReceived' }),
   n.code('Settings request', `return [{ json: { input: $input.first().json.body || {}, req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.settings, { maxRecords: 100 }) } }];`, { libs: L }),
   n.airtableHttp('Get settings', 'GET'),
@@ -56,7 +56,7 @@ return [{ json: { spent, credit, pct: b.pct, status: b.status, newRows: rows.len
 const tail = n.writesTail();
 nodes.push(...tail.nodes);
 const edges = [
-  ['Every 30 minutes', 'Settings request'], ['Check now', 'Settings request'], ['Settings request', 'Get settings'], ['Get settings', 'Usage request'],
+  ['Twice a day', 'Settings request'], ['Check now', 'Settings request'], ['Settings request', 'Get settings'], ['Get settings', 'Usage request'],
   ['Usage request', 'Get new usage'], ['Get new usage', 'Queue request'], ['Queue request', 'Get queue'], ['Get queue', 'Update budget'],
   ['Update budget', 'Fan out writes'], ['Update budget', 'Budget notices'], ['Budget notices', 'Tell Bilal'], ...tail.edges,
 ];

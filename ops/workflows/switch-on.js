@@ -7,7 +7,7 @@
 //  Twilio:  twilio_from filled -> points the number's calls at the phone IVR and its texts at the Ops Manager
 //           (YES/NO replies), records twilio_connected, and tells Bilal. SMS alerts switch on by themselves once
 //           alert_sms_to (his mobile) is filled too.
-// Every 15 minutes, or POST /webhook/ks-switch-check {token} (add "probeTwilio": true to test the Twilio login only).
+// 4 times a day (07:07, 11:07, 15:07, 19:07), or POST /webhook/ks-switch-check {token} (add "probeTwilio": true to test the Twilio login only).
 const n = require('../scripts/n8n');
 const L = ['opsmanager', 'requests', 'log', 'agentteam'];
 const BASE = 'https://keystoneconsultancy.app.n8n.cloud/webhook';
@@ -22,7 +22,7 @@ function twilioHttp(name, method) {
 }
 
 const nodes = [
-  n.schedule('Every 15 minutes', '*/15 * * * *'),
+  n.schedule('4 times a day', '7 7,11,15,19 * * *'),
   n.webhook('Check now', 'ks-switch-check', { respond: 'onReceived' }),
   n.code('Plan reads', `
 const R = KS.requests;
@@ -75,7 +75,7 @@ const recs = (ok && res.body.records) || [];
 const set = ok ? { domain_resend_id: res.body.id, domain_registered_name: p.domain, domain_status: 'Waiting for DNS' } : { domain_status: 'Failed: ' + ((res.body && (res.body.message || res.body.name)) || res.statusCode) };
 const table = recs.map((r) => r.record + ' | ' + r.type + ' | Name: ' + r.name + ' | Value: ' + r.value + (r.priority !== undefined ? ' | Priority: ' + r.priority : '') + (r.ttl ? ' | TTL: ' + r.ttl : '')).join('\\n');
 const text = ok
-  ? 'Your email domain ' + p.domain + ' is registered with Resend. Add these DNS records where you bought the domain (e.g. GoDaddy, Namecheap, 123-reg), in the DNS settings:\\n\\n' + table + '\\n\\nKeystone checks every 15 minutes. As soon as Resend confirms them (usually within an hour, up to 72), every Keystone email switches to ' + p.ctx.S.sending_address + '@' + p.domain + ' and any approved emails waiting for this are sent. Nothing else to do.'
+  ? 'Your email domain ' + p.domain + ' is registered with Resend. Add these DNS records where you bought the domain (e.g. GoDaddy, Namecheap, 123-reg), in the DNS settings:\\n\\n' + table + '\\n\\nKeystone checks 4 times a day (or tap "check now"). As soon as Resend confirms them (usually within an hour, up to 72), every Keystone email switches to ' + p.ctx.S.sending_address + '@' + p.domain + ' and any approved emails waiting for this are sent. Nothing else to do.'
   : 'I could not register ' + p.domain + ' with Resend: ' + set.domain_status + '. If the Resend key only has "sending access", either give it full access or add the domain yourself at resend.com/domains and put its ID in Keystone Settings > domain_resend_id (and the domain in domain_registered_name).';
 return { json: { writes: [R.write.airtable(R.airtableUpsert(AIRTABLE.baseId, AIRTABLE.tables.settings, ['Setting'], Object.entries(set).map(([k, v]) => ({ 'Setting': k, 'Value': v }))))], notices: [{ kind: ok ? 'info' : 'failure', text }] } };`, { libs: L, mode: 'runOnceForEachItem' }),
   // ---- domain: check / verify ----
@@ -127,7 +127,7 @@ if (fromSet && prior.statusCode < 300) {
 }
 if (prior.probe) return { json: { writes: [], notices: [], result: prior.result || prior.problem } };
 const problem = fromSet ? 'Twilio refused to update the number (' + prior.statusCode + ')' : prior.problem;
-return { json: { writes: [], notices: [{ kind: 'failure', text: 'Could not connect your Twilio number ' + (p.number || '') + ': ' + problem + '. I will try again in 15 minutes.' }] } };`, { libs: L, mode: 'runOnceForEachItem' }),
+return { json: { writes: [], notices: [{ kind: 'failure', text: 'Could not connect your Twilio number ' + (p.number || '') + ': ' + problem + '. I will try again in a few hours.' }] } };`, { libs: L, mode: 'runOnceForEachItem' }),
   Object.assign(n.http('Resend: remove domain', 'resend', { method: 'DELETE', sendBody: false }), { onError: 'continueRegularOutput' }),
   n.code('Domain removed', `
 const { requests: R } = KS;
@@ -143,12 +143,12 @@ const { requests: R } = KS;
 const x = $input.first().json;
 if (!x.needsSid) return [{ json: { writes: [], notices: [] } }];
 return [{ json: { writes: [R.write.airtable(R.airtableUpsert(AIRTABLE.baseId, AIRTABLE.tables.settings, ['Setting'], [{ 'Setting': 'twilio_connected', 'Value': 'needs account SID' }]))],
-  notices: [{ kind: 'info', text: 'One more Twilio detail: copy your Account SID (starts with AC, shown on the Twilio console home page next to the auth token) into Keystone Settings > twilio_account_sid. Then your number connects automatically within 15 minutes.' }] } }];`, { libs: L }),
+  notices: [{ kind: 'info', text: 'One more Twilio detail: copy your Account SID (starts with AC, shown on the Twilio console home page next to the auth token) into Keystone Settings > twilio_account_sid. Then your number connects automatically within a few hours.' }] } }];`, { libs: L }),
 ];
 const tail = n.writesTail();
 nodes.push(...tail.nodes);
 const edges = [
-  ['Every 15 minutes', 'Plan reads'], ['Check now', 'Plan reads'], ['Plan reads', 'Read Airtable'], ['Read Airtable', 'Plan'], ['Plan', 'What to do?'],
+  ['4 times a day', 'Plan reads'], ['Check now', 'Plan reads'], ['Plan reads', 'Read Airtable'], ['Read Airtable', 'Plan'], ['Plan', 'What to do?'],
   ['What to do?', 'Resend: add domain', 0], ['Resend: add domain', 'Domain added'], ['Domain added', 'Fan out writes'], ['Domain added', 'Collect notices'],
   ['What to do?', 'Resend: domain status', 1], ['Resend: domain status', 'Domain status'], ['Domain status', 'Fan out writes'], ['Domain status', 'Collect notices'],
   ['Domain status', 'Ask Resend to verify?'], ['Ask Resend to verify?', 'Resend: verify', 0],

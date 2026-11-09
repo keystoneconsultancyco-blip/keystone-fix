@@ -1,6 +1,6 @@
 'use strict';
 // KS-01 Invoice Automation. One workflow serves every client.
-// Production trigger: polls the Airtable Jobs table every 15 minutes for Status = Completed
+// Production trigger: polls the Airtable Jobs table every 30 minutes (07:00-20:30) for Status = Completed
 // (and queued jobs whose send window has opened). The job-intake webhook lets clients on
 // "Webhook" or "Tradify" job sources push completed jobs into the same table.
 const n = require('../scripts/n8n');
@@ -8,7 +8,7 @@ const T = n.AIRTABLE.tables;
 const L = ['registry', 'invoice', 'time', 'requests', 'log', 'agent', 'render'];
 
 const nodes = [
-  n.schedule('Every 15 minutes', '*/15 * * * *'),
+  n.schedule('Every 30 minutes, 07:00-20:30', '*/30 7-20 * * *'),
   n.manual('Manual run'),
   n.code('Prepare job query', `
 const R = KS.requests;
@@ -205,7 +205,7 @@ const tail = n.writesTail();
 nodes.push(...tail.nodes);
 
 const edges = [
-  ['Every 15 minutes', 'Prepare job query'], ['Manual run', 'Prepare job query'],
+  ['Every 30 minutes, 07:00-20:30', 'Prepare job query'], ['Manual run', 'Prepare job query'],
   ['Prepare job query', 'Get jobs'], ['Get jobs', 'Prepare client query'], ['Prepare client query', 'Get clients'],
   ['Get clients', 'Prepare discount query'], ['Prepare discount query', 'Get discounts'], ['Get discounts', 'Prepare recent query'],
   ['Prepare recent query', 'Get recent invoices'], ['Get recent invoices', 'Assess jobs'], ['Assess jobs', 'Route job'],

@@ -2,7 +2,7 @@
   "name": "KS AI Budget",
   "nodes": [
     {
-      "name": "Every 30 minutes",
+      "name": "Twice a day",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "parameters": {
@@ -10,7 +10,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "*/30 * * * *"
+              "expression": "40 9,17 * * *"
             }
           ]
         }
@@ -19,7 +19,7 @@
         0,
         0
       ],
-      "id": "cb33ba3e-3bd8-4246-a5d5-cc4285ec79d5"
+      "id": "b2e87b6f-75d7-465b-a811-616b7ab1c201"
     },
     {
       "name": "Check now",
@@ -434,7 +434,7 @@
     }
   ],
   "connections": {
-    "Every 30 minutes": {
+    "Twice a day": {
       "main": [
         [
           {

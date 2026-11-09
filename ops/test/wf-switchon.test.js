@@ -28,7 +28,7 @@ function setup(settings, extra = {}) {
 test('domain verified -> sender switched, clients moved, held outreach and proposals released, Bilal told', async () => {
   const x = setup({ sending_domain: 'keystoneops.co.uk', domain_registered_name: 'keystoneops.co.uk', domain_resend_id: 'd1', domain_status: 'Waiting for DNS' },
     { 'Resend: domain status': () => ({ body: { id: 'd1', status: 'verified' } }) });
-  const r = await simulate(wf, { start: 'Every 15 minutes', items: [{}], mocks: x.m });
+  const r = await simulate(wf, { start: '4 times a day', items: [{}], mocks: x.m });
   assert.deepEqual(r.errors, []);
   const settings = x.writes.filter((w) => w.url.includes('tblpgFrCOqt5H5yFn')).flatMap((w) => w.body.records.map((rec) => rec.fields));
   assert.deepEqual(settings.find((f) => f.Setting === 'email_from'), { Setting: 'email_from', Value: 'Keystone <hello@keystoneops.co.uk>' });
@@ -44,7 +44,7 @@ test('domain verified -> sender switched, clients moved, held outreach and propo
 test('domain still pending -> asks Resend to verify, no sender change', async () => {
   const x = setup({ sending_domain: 'keystoneops.co.uk', domain_registered_name: 'keystoneops.co.uk', domain_resend_id: 'd1', domain_status: 'Waiting for DNS' },
     { 'Resend: domain status': () => ({ body: { id: 'd1', status: 'pending' } }), 'Resend: verify': () => ({ body: { id: 'd1' } }) });
-  const r = await simulate(wf, { start: 'Every 15 minutes', items: [{}], mocks: x.m });
+  const r = await simulate(wf, { start: '4 times a day', items: [{}], mocks: x.m });
   assert.deepEqual(r.errors, []);
   assert.ok(r.ran.includes('Resend: verify'));
   assert.equal(x.writes.filter((w) => JSON.stringify(w.body).includes('email_from')).length, 0);
@@ -55,7 +55,7 @@ test('twilio number filled + SID -> calls to IVR, texts to Ops Manager, demo cli
   const x = setup({ twilio_from: '+441234567890', twilio_account_sid: SID },
     { 'Twilio: find number': (req) => { assert.ok(req.url.includes(SID) && req.url.includes(encodeURIComponent('+441234567890'))); return { body: { incoming_phone_numbers: [{ sid: 'PN1' }] } }; },
       'Twilio: set webhooks': (req) => { posted = req; return { body: { sid: 'PN1' } }; } });
-  const r = await simulate(wf, { start: 'Every 15 minutes', items: [{}], mocks: x.m });
+  const r = await simulate(wf, { start: '4 times a day', items: [{}], mocks: x.m });
   assert.deepEqual(r.errors, []);
   assert.ok(posted.url.endsWith('/IncomingPhoneNumbers/PN1.json'));
   const node = wf.nodes.find((nd) => nd.name === 'Twilio: set webhooks');
@@ -69,11 +69,11 @@ test('twilio number filled + SID -> calls to IVR, texts to Ops Manager, demo cli
 
 test('twilio number without SID -> asks Bilal once for the Account SID', async () => {
   const x = setup({ twilio_from: '+441234567890' });
-  const r = await simulate(wf, { start: 'Every 15 minutes', items: [{}], mocks: x.m });
+  const r = await simulate(wf, { start: '4 times a day', items: [{}], mocks: x.m });
   assert.deepEqual(r.errors, []);
   assert.ok(r.calls.some((c) => c.node === 'Tell Bilal' && /Account SID/.test(c.req.text)));
   const again = setup({ twilio_from: '+441234567890', twilio_connected: 'needs account SID' });
-  const r2 = await simulate(wf, { start: 'Every 15 minutes', items: [{}], mocks: again.m });
+  const r2 = await simulate(wf, { start: '4 times a day', items: [{}], mocks: again.m });
   assert.ok(!r2.calls.some((c) => c.node === 'Tell Bilal'));
 });
 

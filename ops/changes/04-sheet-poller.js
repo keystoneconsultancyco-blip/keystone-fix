@@ -15,7 +15,7 @@ return [{ json: { req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables
 const r = $input.first().json;
 if (!KS.requests.ok(r)) throw new Error('Sheet Poller: could not read client registry (' + r.statusCode + ')');
 return (r.body.records || []).map((rec) => ({ json: { clientId: rec.fields['Client ID'] } })).filter((x) => x.json.clientId);`, { libs: L }), [p[0] - 240, p[1] + 200]);
-  for (const t of ['Schedule Trigger (every 5 min)', 'Manual Trigger', 'Poll Trigger (Webhook)']) H.setOut(w, t, 0, ['List invoicing clients']);
+  for (const t of [H.has(w, 'Schedule Trigger (every 5 min)') ? 'Schedule Trigger (every 5 min)' : 'Schedule Trigger (every 30 min, 07:00-20:30)', 'Manual Trigger', 'Poll Trigger (Webhook)']) H.setOut(w, t, 0, ['List invoicing clients']);
   H.setOut(w, 'List invoicing clients', 0, ['Get clients (Airtable)']);
   H.setOut(w, 'Get clients (Airtable)', 0, ['One item per client']);
   H.setOut(w, 'One item per client', 0, ['Get Client Config']);

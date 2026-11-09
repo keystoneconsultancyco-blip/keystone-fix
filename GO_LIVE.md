@@ -21,8 +21,9 @@ Everything created by the test was deleted afterwards (Airtable rows, Xero draft
 - **Client services:** Invoice Automation, AI phone (menu, assistant tools, post-call), Quote Calculator, Weekly Money + dashboard, Monthly Reporting, Audit Agent.
 - **Ops:** Failure Alerts on every workflow, Ops Manager (summaries + YES/NO approvals), Ops Notify.
 - **AI:** Haiku for routine work, Opus for audits and money decisions. Every Claude call is costed in Airtable **AI Usage**. KS AI Budget emails you at 80% and 100% of the monthly credit; above 100%, agent work queues and re-runs automatically when there is room. Customer-facing work never queues; it has non-AI fallbacks.
-- **Agent team (live):** Chief of Staff (07:05 daily brief, Sunday scorecard towards £1M), Lead Researcher (20:35 daily, replaces the old Client Finder task), Outreach (drafts only), Sales Prep (every 30 min), Ops Monitor (hourly).
-- **Switch-on automation:** KS Switch-On watches Keystone Settings every 15 minutes (domain + Twilio).
+- **Agent team (live):** Chief of Staff (07:05 daily brief, Sunday scorecard towards £1M), Lead Researcher (20:35 daily, replaces the old Client Finder task), Outreach (drafts only), Sales Prep (3 times a day), Ops Monitor (twice a day, also watches the n8n execution allowance).
+- **Switch-on automation:** KS Switch-On checks Keystone Settings 4 times a day (domain + Twilio), or straight away with "check now".
+- **n8n allowance:** schedules were cut from about 15,300 to 1,360 runs a month (`docs/N8N_USAGE.md`). Ops Monitor emails you at 80% and 100% of `n8n_monthly_executions`.
 
 ## What's switched off, and why
 | Agent | Switches on at | Why off now |
@@ -38,6 +39,7 @@ All prices follow `docs/PRICING.md`; the website is live at https://keystonecons
 ## Your steps, in order
 | # | Step | Link | What happens next |
 |---|---|---|---|
+| 0 | In n8n > Settings > Usage, check your plan's monthly executions and reset date; put them in `n8n_monthly_executions` (set to 2500) and `n8n_reset_day` (set to 1). If this month's allowance is used up, n8n runs nothing until it resets or you upgrade | [Keystone Settings](https://airtable.com/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn) | Usage alerts use the real limit |
 | 1 | Set your real monthly Claude API credit in `ai_monthly_credit_usd` (it is set to $100 as a placeholder) | [Keystone Settings](https://airtable.com/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn) | Alerts at 80% use the real figure |
 | 2 | Delete the old `N8N_API_KEY` environment variable | Claude cloud environment menu > Edit > Environment variables | Keys now live in network secrets and n8n credentials (`docs/SECURITY.md`) |
 | 3 | Rotate the Twilio auth token, then update the n8n "Twilio" credential | [Twilio console](https://console.twilio.com/) > Account > API keys & tokens · [n8n credentials](https://keystoneconsultancy.app.n8n.cloud/home/credentials) | A Twilio API reply exposed the token in one n8n run log (deleted straight away); rotating is the safe step |
