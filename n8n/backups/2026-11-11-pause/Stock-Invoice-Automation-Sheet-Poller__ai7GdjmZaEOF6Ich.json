@@ -1,0 +1,1005 @@
+{
+ "id": "ai7GdjmZaEOF6Ich",
+ "name": "[Stock] Invoice Automation - Sheet Poller",
+ "description": null,
+ "active": true,
+ "activeVersionId": "5b9c6a80-5e9d-4628-aece-e0f4748d897b",
+ "createdAt": "2026-09-01T00:07:27.163Z",
+ "updatedAt": "2026-11-09T19:36:30.702Z",
+ "isArchived": false,
+ "versionId": "5b9c6a80-5e9d-4628-aece-e0f4748d897b",
+ "versionCounter": 8,
+ "sourceWorkflowId": null,
+ "triggerCount": 2,
+ "nodes": [
+  {
+   "id": "poller-note",
+   "name": "Sticky Note",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -1300,
+    -500
+   ],
+   "parameters": {
+    "content": "## Sheet Poller (Keystone)\nEvery 5 minutes: reads Airtable My Clients for every Active client with Invoicing on and a Jobs sheet ID, reads each client's Jobs tab, and sends rows with status = \"Complete\" (with the clientId) to the main Invoice Automation webhook. Rows that error or need review are written back to the sheet AND emailed to Bilal.",
+    "height": 480,
+    "width": 520
+   }
+  },
+  {
+   "id": "schedule-trigger",
+   "name": "Schedule Trigger (every 30 min, 07:00-20:30)",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    -1300,
+    -160
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "cronExpression",
+       "expression": "*/30 7-20 * * *"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "manual-trigger",
+   "name": "Manual Trigger",
+   "type": "n8n-nodes-base.manualTrigger",
+   "typeVersion": 1,
+   "position": [
+    -1300,
+    20
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "webhook-poll-now",
+   "name": "Poll Trigger (Webhook)",
+   "webhookId": "invoice-poll-now",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -1300,
+    200
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "invoice/poll-now",
+    "responseMode": "lastNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "exec-client-config",
+   "name": "Get Client Config",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "position": [
+    -1040,
+    20
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "s2riyS1tZ0jtVuSR",
+     "mode": "id"
+    },
+    "options": {},
+    "mode": "each"
+   }
+  },
+  {
+   "id": "get-jobs-rows",
+   "name": "Get Jobs Rows",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    -800,
+    20
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.jobsSheetTabName }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleSheetsOAuth2Api",
+    "options": {}
+   },
+   "credentials": {
+    "googleSheetsOAuth2Api": {
+     "id": "xKa0P1ACdrwcNgDR",
+     "name": "Google Sheets account"
+    }
+   }
+  },
+  {
+   "id": "code-process-rows",
+   "name": "Process Complete Rows",
+   "notes": "Calls the main workflow's own already-tested webhook per qualifying row (now including paymentMethod, passed through unchanged from whatever the sheet cell contains - blank/unexpected values are handled by the main workflow's own 'Normalize Payment Method' node, not here), sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Builds a Sheets values.update range (columns I-M: status, invoiceReference, invoiceNumber, processedAt, errorMessage) per row for the next node - shifted one column right from the original H-L now that Payment Method occupies column H. Assumes the exact Jobs tab column order from the README - if that ever changes, update the column letters here.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -560,
+    20
+   ],
+   "parameters": {
+    "jsCode": "const configs = $('Get Client Config').all().map((i) => i.json);\nconst sheets = $input.all().map((i) => i.json);\nconst results = [];\nfor (let ci = 0; ci < sheets.length; ci++) {\n  const config = configs[ci];\n  const resp = sheets[ci];\n  const values = resp.values || [];\n  const headers = values[0] || [];\n  const rows = values.slice(1).map((row, idx) => {\n    const obj = { row_number: idx + 2 };\n    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n    return obj;\n  });\n  const completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n  for (const r of completed) {\n    let lineItems;\n    if (r.lineItems) { try { lineItems = JSON.parse(r.lineItems); } catch (e) { lineItems = r.lineItems; } }\n    const payload = {\n      clientId: config.clientId,\n      jobId: r.jobId, customerId: r.customerId, customerName: r.customerName,\n      customerEmail: r.customerEmail || undefined, customerPhone: r.customerPhone || undefined,\n      jobDescription: r.jobDescription, jobValue: Number(r.jobValue), paymentMethod: r.paymentMethod || undefined,\n      milestoneNumber: r.milestoneNumber || null, milestoneLabel: r.milestoneLabel || null, lineItems,\n    };\n    let status, invoiceReference, invoiceNumber, errorMessage;\n    try {\n      const body = await this.helpers.httpRequest({ method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', body: payload, json: true });\n      if (body.status === 'success') { status = 'Invoiced'; invoiceReference = body.invoiceReference || ''; invoiceNumber = body.invoiceNumber || ''; errorMessage = ''; }\n      else if (body.status === 'skipped') { status = 'Skipped - Duplicate'; invoiceReference = body.invoiceReference || ''; invoiceNumber = ''; errorMessage = ''; }\n      else if (body.status === 'needs_review') { status = 'Needs Review'; invoiceReference = ''; invoiceNumber = ''; errorMessage = body.reason || 'Sent to Keystone Needs Review'; }\n      else if (body.status === 'queued') { status = 'Complete'; invoiceReference = ''; invoiceNumber = ''; errorMessage = 'Queued until send window ' + (body.queuedUntil || ''); }\n      else if (body.status === 'rejected') { status = 'Error - Rejected'; invoiceReference = ''; invoiceNumber = ''; errorMessage = (body.errors || []).join(', '); }\n      else { status = 'Error - Unexpected Response'; invoiceReference = ''; invoiceNumber = ''; errorMessage = JSON.stringify(body).slice(0, 500); }\n    } catch (err) {\n      status = 'Error - Request Failed'; invoiceReference = ''; invoiceNumber = ''; errorMessage = String((err && err.message) || err).slice(0, 500);\n    }\n    results.push({ json: { clientId: config.clientId, clientName: config.clientName, jobId: r.jobId, jobsSheetId: config.jobsSheetId,\n      updateRange: config.jobsSheetTabName + '!I' + r.row_number + ':M' + r.row_number, status, invoiceReference, invoiceNumber, processedAt: new Date().toISOString(), errorMessage } });\n  }\n}\nreturn results;",
+    "mode": "runOnceForAllItems"
+   }
+  },
+  {
+   "id": "update-row",
+   "name": "Update Row",
+   "notes": "One PUT per qualifying row (n8n's default per-item HTTP Request behavior) - fine at the expected small volume of jobs per poll. alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "alwaysOutputData": true,
+   "position": [
+    -320,
+    20
+   ],
+   "parameters": {
+    "method": "PUT",
+    "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.updateRange }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleSheetsOAuth2Api",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "valueInputOption",
+       "value": "RAW"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ values: [[$json.status, $json.invoiceReference, $json.invoiceNumber, $json.processedAt, $json.errorMessage]] }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "googleSheetsOAuth2Api": {
+     "id": "xKa0P1ACdrwcNgDR",
+     "name": "Google Sheets account"
+    }
+   }
+  },
+  {
+   "id": "code-poll-summary",
+   "name": "Build Poll Summary",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -80,
+    20
+   ],
+   "parameters": {
+    "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.updateRange);\nconst errors = processed.filter(r => /^Error|^Needs Review/.test(r.status));\nreturn [{ json: { rowsProcessed: processed.length, results: processed, errors, hasErrors: errors.length > 0 } }];"
+   }
+  },
+  {
+   "id": "1e9e7be6-e8ec-428f-9d32-903d887e09ac",
+   "name": "List invoicing clients",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1760,
+    220
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nreturn [{ json: { req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.clients, { formula: \"AND({Status}='Active', {Invoicing on}, {Jobs sheet ID} != '')\", maxRecords: 100 }) } }];\n"
+   }
+  },
+  {
+   "id": "8831d892-4ee9-4b14-892a-5af2ef2dccbb",
+   "name": "Get clients (Airtable)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    -1520,
+    220
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "786443e1-31d1-49d1-a1fe-ac2e278f5158",
+   "name": "One item per client",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1280,
+    220
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nconst r = $input.first().json;\nif (!KS.requests.ok(r)) throw new Error('Sheet Poller: could not read client registry (' + r.statusCode + ')');\nreturn (r.body.records || []).map((rec) => ({ json: { clientId: rec.fields['Client ID'] } })).filter((x) => x.json.clientId);\n"
+   }
+  },
+  {
+   "id": "5526e5f5-aaa7-4c68-ad0c-11051f3f6ab3",
+   "name": "Any row errors?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    160,
+    20
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "27062706-9f4b-48b1-a715-7735c0d4c15e",
+       "leftValue": "={{ $json.hasErrors }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "e58fdfc2-fbab-4c30-a58d-6945bb73a95f",
+   "name": "Build error email",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    400,
+    20
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst e = $json.errors;\nconst text = 'The Sheet Poller could not invoice ' + e.length + ' job(s). The rows are marked in the jobs sheet and nothing was sent to customers.\\n\\n' + e.map((x) => '- ' + x.clientName + ' (' + x.clientId + ') job ' + x.jobId + ': ' + x.status + ' ' + x.errorMessage).join('\\n');\nreturn [{ json: { req: R.email({ to: [Lg.OPS_EMAIL], subject: '[Keystone] ' + e.length + ' job(s) need attention in the jobs sheet', text }) } }];\n"
+   }
+  },
+  {
+   "id": "c79bd482-7385-4016-97ec-245844ffd06d",
+   "name": "Email Bilal",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    640,
+    20
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.req.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Manual Trigger": {
+   "main": [
+    [
+     {
+      "node": "List invoicing clients",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Poll Trigger (Webhook)": {
+   "main": [
+    [
+     {
+      "node": "List invoicing clients",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Client Config": {
+   "main": [
+    [
+     {
+      "node": "Get Jobs Rows",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Jobs Rows": {
+   "main": [
+    [
+     {
+      "node": "Process Complete Rows",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Process Complete Rows": {
+   "main": [
+    [
+     {
+      "node": "Update Row",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update Row": {
+   "main": [
+    [
+     {
+      "node": "Build Poll Summary",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "List invoicing clients": {
+   "main": [
+    [
+     {
+      "node": "Get clients (Airtable)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get clients (Airtable)": {
+   "main": [
+    [
+     {
+      "node": "One item per client",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "One item per client": {
+   "main": [
+    [
+     {
+      "node": "Get Client Config",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Poll Summary": {
+   "main": [
+    [
+     {
+      "node": "Any row errors?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Any row errors?": {
+   "main": [
+    [
+     {
+      "node": "Build error email",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build error email": {
+   "main": [
+    [
+     {
+      "node": "Email Bilal",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Schedule Trigger (every 30 min, 07:00-20:30)": {
+   "main": [
+    [
+     {
+      "node": "List invoicing clients",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "errorWorkflow": "GKF6X82UvFFth43w"
+ },
+ "staticData": {
+  "node:Schedule Trigger (every 5 min)": {
+   "recurrenceRules": [
+    null
+   ],
+   "recurrenceRuleSignatures": [
+    null
+   ]
+  },
+  "node:Schedule Trigger (every 30 min, 07:00-20:30)": {
+   "recurrenceRules": [
+    null
+   ],
+   "recurrenceRuleSignatures": [
+    null
+   ]
+  }
+ },
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "ai7GdjmZaEOF6Ich",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-09-01T00:07:27.165Z",
+   "updatedAt": "2026-09-01T00:07:27.165Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "5b9c6a80-5e9d-4628-aece-e0f4748d897b",
+  "workflowId": "ai7GdjmZaEOF6Ich",
+  "nodes": [
+   {
+    "id": "poller-note",
+    "name": "Sticky Note",
+    "type": "n8n-nodes-base.stickyNote",
+    "typeVersion": 1,
+    "position": [
+     -1300,
+     -500
+    ],
+    "parameters": {
+     "content": "## Sheet Poller (Keystone)\nEvery 5 minutes: reads Airtable My Clients for every Active client with Invoicing on and a Jobs sheet ID, reads each client's Jobs tab, and sends rows with status = \"Complete\" (with the clientId) to the main Invoice Automation webhook. Rows that error or need review are written back to the sheet AND emailed to Bilal.",
+     "height": 480,
+     "width": 520
+    }
+   },
+   {
+    "id": "schedule-trigger",
+    "name": "Schedule Trigger (every 30 min, 07:00-20:30)",
+    "type": "n8n-nodes-base.scheduleTrigger",
+    "typeVersion": 1.2,
+    "position": [
+     -1300,
+     -160
+    ],
+    "parameters": {
+     "rule": {
+      "interval": [
+       {
+        "field": "cronExpression",
+        "expression": "*/30 7-20 * * *"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "id": "manual-trigger",
+    "name": "Manual Trigger",
+    "type": "n8n-nodes-base.manualTrigger",
+    "typeVersion": 1,
+    "position": [
+     -1300,
+     20
+    ],
+    "parameters": {}
+   },
+   {
+    "id": "webhook-poll-now",
+    "name": "Poll Trigger (Webhook)",
+    "webhookId": "invoice-poll-now",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -1300,
+     200
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "invoice/poll-now",
+     "responseMode": "lastNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "exec-client-config",
+    "name": "Get Client Config",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     -1040,
+     20
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "s2riyS1tZ0jtVuSR",
+      "mode": "id"
+     },
+     "options": {},
+     "mode": "each"
+    }
+   },
+   {
+    "id": "get-jobs-rows",
+    "name": "Get Jobs Rows",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     -800,
+     20
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.jobsSheetTabName }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api",
+     "options": {}
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "xKa0P1ACdrwcNgDR",
+      "name": "Google Sheets account"
+     }
+    }
+   },
+   {
+    "id": "code-process-rows",
+    "name": "Process Complete Rows",
+    "notes": "Calls the main workflow's own already-tested webhook per qualifying row (now including paymentMethod, passed through unchanged from whatever the sheet cell contains - blank/unexpected values are handled by the main workflow's own 'Normalize Payment Method' node, not here), sequentially (awaited one at a time - deliberately not parallel, to avoid concurrent Xero calls racing). Builds a Sheets values.update range (columns I-M: status, invoiceReference, invoiceNumber, processedAt, errorMessage) per row for the next node - shifted one column right from the original H-L now that Payment Method occupies column H. Assumes the exact Jobs tab column order from the README - if that ever changes, update the column letters here.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -560,
+     20
+    ],
+    "parameters": {
+     "jsCode": "const configs = $('Get Client Config').all().map((i) => i.json);\nconst sheets = $input.all().map((i) => i.json);\nconst results = [];\nfor (let ci = 0; ci < sheets.length; ci++) {\n  const config = configs[ci];\n  const resp = sheets[ci];\n  const values = resp.values || [];\n  const headers = values[0] || [];\n  const rows = values.slice(1).map((row, idx) => {\n    const obj = { row_number: idx + 2 };\n    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });\n    return obj;\n  });\n  const completed = rows.filter(r => String(r.status || '').trim() === 'Complete');\n  for (const r of completed) {\n    let lineItems;\n    if (r.lineItems) { try { lineItems = JSON.parse(r.lineItems); } catch (e) { lineItems = r.lineItems; } }\n    const payload = {\n      clientId: config.clientId,\n      jobId: r.jobId, customerId: r.customerId, customerName: r.customerName,\n      customerEmail: r.customerEmail || undefined, customerPhone: r.customerPhone || undefined,\n      jobDescription: r.jobDescription, jobValue: Number(r.jobValue), paymentMethod: r.paymentMethod || undefined,\n      milestoneNumber: r.milestoneNumber || null, milestoneLabel: r.milestoneLabel || null, lineItems,\n    };\n    let status, invoiceReference, invoiceNumber, errorMessage;\n    try {\n      const body = await this.helpers.httpRequest({ method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/invoice/job-completed', body: payload, json: true });\n      if (body.status === 'success') { status = 'Invoiced'; invoiceReference = body.invoiceReference || ''; invoiceNumber = body.invoiceNumber || ''; errorMessage = ''; }\n      else if (body.status === 'skipped') { status = 'Skipped - Duplicate'; invoiceReference = body.invoiceReference || ''; invoiceNumber = ''; errorMessage = ''; }\n      else if (body.status === 'needs_review') { status = 'Needs Review'; invoiceReference = ''; invoiceNumber = ''; errorMessage = body.reason || 'Sent to Keystone Needs Review'; }\n      else if (body.status === 'queued') { status = 'Complete'; invoiceReference = ''; invoiceNumber = ''; errorMessage = 'Queued until send window ' + (body.queuedUntil || ''); }\n      else if (body.status === 'rejected') { status = 'Error - Rejected'; invoiceReference = ''; invoiceNumber = ''; errorMessage = (body.errors || []).join(', '); }\n      else { status = 'Error - Unexpected Response'; invoiceReference = ''; invoiceNumber = ''; errorMessage = JSON.stringify(body).slice(0, 500); }\n    } catch (err) {\n      status = 'Error - Request Failed'; invoiceReference = ''; invoiceNumber = ''; errorMessage = String((err && err.message) || err).slice(0, 500);\n    }\n    results.push({ json: { clientId: config.clientId, clientName: config.clientName, jobId: r.jobId, jobsSheetId: config.jobsSheetId,\n      updateRange: config.jobsSheetTabName + '!I' + r.row_number + ':M' + r.row_number, status, invoiceReference, invoiceNumber, processedAt: new Date().toISOString(), errorMessage } });\n  }\n}\nreturn results;",
+     "mode": "runOnceForAllItems"
+    }
+   },
+   {
+    "id": "update-row",
+    "name": "Update Row",
+    "notes": "One PUT per qualifying row (n8n's default per-item HTTP Request behavior) - fine at the expected small volume of jobs per poll. alwaysOutputData: true so a poll with zero qualifying rows still reaches Build Poll Summary instead of silently producing no output (same zero-items gotcha found earlier in the phone booking build).",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "alwaysOutputData": true,
+    "position": [
+     -320,
+     20
+    ],
+    "parameters": {
+     "method": "PUT",
+     "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.jobsSheetId }}/values/{{ $json.updateRange }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api",
+     "sendQuery": true,
+     "queryParameters": {
+      "parameters": [
+       {
+        "name": "valueInputOption",
+        "value": "RAW"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ values: [[$json.status, $json.invoiceReference, $json.invoiceNumber, $json.processedAt, $json.errorMessage]] }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "xKa0P1ACdrwcNgDR",
+      "name": "Google Sheets account"
+     }
+    }
+   },
+   {
+    "id": "code-poll-summary",
+    "name": "Build Poll Summary",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -80,
+     20
+    ],
+    "parameters": {
+     "jsCode": "const processed = $('Process Complete Rows').all().map(i => i.json).filter(r => r.updateRange);\nconst errors = processed.filter(r => /^Error|^Needs Review/.test(r.status));\nreturn [{ json: { rowsProcessed: processed.length, results: processed, errors, hasErrors: errors.length > 0 } }];"
+    }
+   },
+   {
+    "id": "1e9e7be6-e8ec-428f-9d32-903d887e09ac",
+    "name": "List invoicing clients",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1760,
+     220
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nreturn [{ json: { req: KS.requests.airtableList(AIRTABLE.baseId, AIRTABLE.tables.clients, { formula: \"AND({Status}='Active', {Invoicing on}, {Jobs sheet ID} != '')\", maxRecords: 100 }) } }];\n"
+    }
+   },
+   {
+    "id": "8831d892-4ee9-4b14-892a-5af2ef2dccbb",
+    "name": "Get clients (Airtable)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     -1520,
+     220
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "786443e1-31d1-49d1-a1fe-ac2e278f5158",
+    "name": "One item per client",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1280,
+     220
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nconst r = $input.first().json;\nif (!KS.requests.ok(r)) throw new Error('Sheet Poller: could not read client registry (' + r.statusCode + ')');\nreturn (r.body.records || []).map((rec) => ({ json: { clientId: rec.fields['Client ID'] } })).filter((x) => x.json.clientId);\n"
+    }
+   },
+   {
+    "id": "5526e5f5-aaa7-4c68-ad0c-11051f3f6ab3",
+    "name": "Any row errors?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     160,
+     20
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose"
+      },
+      "conditions": [
+       {
+        "id": "27062706-9f4b-48b1-a715-7735c0d4c15e",
+        "leftValue": "={{ $json.hasErrors }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "e58fdfc2-fbab-4c30-a58d-6945bb73a95f",
+    "name": "Build error email",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     400,
+     20
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { registry: __KS('./registry'), requests: __KS('./requests'), log: __KS('./log') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst e = $json.errors;\nconst text = 'The Sheet Poller could not invoice ' + e.length + ' job(s). The rows are marked in the jobs sheet and nothing was sent to customers.\\n\\n' + e.map((x) => '- ' + x.clientName + ' (' + x.clientId + ') job ' + x.jobId + ': ' + x.status + ' ' + x.errorMessage).join('\\n');\nreturn [{ json: { req: R.email({ to: [Lg.OPS_EMAIL], subject: '[Keystone] ' + e.length + ' job(s) need attention in the jobs sheet', text }) } }];\n"
+    }
+   },
+   {
+    "id": "c79bd482-7385-4016-97ec-245844ffd06d",
+    "name": "Email Bilal",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     640,
+     20
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.req.url }}",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Manual Trigger": {
+    "main": [
+     [
+      {
+       "node": "List invoicing clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Poll Trigger (Webhook)": {
+    "main": [
+     [
+      {
+       "node": "List invoicing clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Client Config": {
+    "main": [
+     [
+      {
+       "node": "Get Jobs Rows",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Jobs Rows": {
+    "main": [
+     [
+      {
+       "node": "Process Complete Rows",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Process Complete Rows": {
+    "main": [
+     [
+      {
+       "node": "Update Row",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Update Row": {
+    "main": [
+     [
+      {
+       "node": "Build Poll Summary",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "List invoicing clients": {
+    "main": [
+     [
+      {
+       "node": "Get clients (Airtable)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get clients (Airtable)": {
+    "main": [
+     [
+      {
+       "node": "One item per client",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "One item per client": {
+    "main": [
+     [
+      {
+       "node": "Get Client Config",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Poll Summary": {
+    "main": [
+     [
+      {
+       "node": "Any row errors?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Any row errors?": {
+    "main": [
+     [
+      {
+       "node": "Build error email",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build error email": {
+    "main": [
+     [
+      {
+       "node": "Email Bilal",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Schedule Trigger (every 30 min, 07:00-20:30)": {
+    "main": [
+     [
+      {
+       "node": "List invoicing clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Bilal Khan",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-11-09T19:36:30.703Z",
+  "updatedAt": "2026-11-09T19:36:30.703Z",
+  "workflowPublishHistory": [
+   {
+    "id": 596,
+    "workflowId": "ai7GdjmZaEOF6Ich",
+    "versionId": "5b9c6a80-5e9d-4628-aece-e0f4748d897b",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-09T19:36:30.862Z"
+   }
+  ]
+ },
+ "parentFolder": null
+}

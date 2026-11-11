@@ -1,0 +1,1259 @@
+{
+ "id": "BlLj9N39imDWkhFW",
+ "name": "KS Nurture Tracking",
+ "description": null,
+ "active": true,
+ "activeVersionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+ "createdAt": "2026-11-09T18:56:13.697Z",
+ "updatedAt": "2026-11-09T18:58:49.502Z",
+ "isArchived": false,
+ "versionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+ "versionCounter": 2,
+ "sourceWorkflowId": null,
+ "triggerCount": 2,
+ "nodes": [
+  {
+   "id": "5ac63538-959c-43eb-a30c-7bc67a251045",
+   "name": "Open",
+   "webhookId": "14be622b-0e34-4740-a9d7-9c202fce6b54",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "GET",
+    "path": "ks-nurture-open",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "88e5115e-a764-4919-a3e1-060b880b7296",
+   "name": "Open: reads",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst q = $input.first().json.query || {};\nconst s = /^[a-z0-9]{24}$/.test(String(q.s || '')) ? String(q.s) : '';\nconst t = /^rec[A-Za-z0-9]{14}$/.test(String(q.t || '')) ? String(q.t) : '';\nconst reads = [\n  ['send', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, { formula: s ? '{Send ID} = ' + Lg.formulaString(s) : 'FALSE()', maxRecords: 1 })],\n  ['tpl', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, { formula: t ? 'RECORD_ID() = ' + Lg.formulaString(t) : 'FALSE()', fields: ['Name', 'Opened', 'Clicked'], maxRecords: 1 })],\n];\n\nreturn reads.map(([key, req]) => ({ json: { key, s, t, req } }));\n"
+   }
+  },
+  {
+   "id": "0aa20914-ccf6-44e2-a623-0215fa78d4f6",
+   "name": "Open: read Airtable",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "95d37297-7e23-40ec-a69e-cc45325f105d",
+   "name": "Open: count",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, opsmanager: O } = KS;\nconst plan = $('Open: reads').all();\nconst got = {};\n$input.all().forEach((it, i) => { got[plan[i].json.key] = (((it.json || {}).body || {}).records) || []; });\nconst t = plan[0].json.t;\nconst send = got.send[0];\nconst tpl = got.tpl[0];\nconst writes = [];\nif (send && t && send.fields['Template ID'] === t) {\n  const f = send.fields;\n  const firstTime = !f['First opened'];\n  writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, [{ id: send.id, fields: { 'Opens': (Number(f['Opens']) || 0) + 1, ...(firstTime ? { 'First opened': new Date().toISOString() } : {}) } }])));\n  if (firstTime && !f.Test && tpl) writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, [{ id: tpl.id, fields: { 'Opened': (Number(tpl.fields['Opened']) || 0) + 1 } }])));\n}\nreturn [{ json: { writes }, binary: { data: { data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', mimeType: 'image/gif', fileName: 'p.gif', fileExtension: 'gif' } } }];\n"
+   }
+  },
+  {
+   "id": "cad76be9-2deb-4b26-a1a2-5874c70557f4",
+   "name": "Open: send pixel",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "respondWith": "binary",
+    "responseDataSource": "automatically",
+    "options": {
+     "responseHeaders": {
+      "entries": [
+       {
+        "name": "Cache-Control",
+        "value": "no-store, max-age=0"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "5f973b3d-8675-4f3a-a0b4-b21d3ca6a83b",
+   "name": "Click",
+   "webhookId": "ad0493e4-adaa-46b3-a7e7-84a3e942ee1b",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    180
+   ],
+   "parameters": {
+    "httpMethod": "GET",
+    "path": "ks-nurture-click",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "bbe75913-0b01-4020-aed7-d0edf778aa9c",
+   "name": "Click: reads",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    180
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst q = $input.first().json.query || {};\nconst s = /^[a-z0-9]{24}$/.test(String(q.s || '')) ? String(q.s) : '';\nconst t = /^rec[A-Za-z0-9]{14}$/.test(String(q.t || '')) ? String(q.t) : '';\nconst reads = [\n  ['send', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, { formula: s ? '{Send ID} = ' + Lg.formulaString(s) : 'FALSE()', maxRecords: 1 })],\n  ['tpl', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, { formula: t ? 'RECORD_ID() = ' + Lg.formulaString(t) : 'FALSE()', fields: ['Name', 'Opened', 'Clicked'], maxRecords: 1 })],\n];\nreads.push(['settings', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.settings, { maxRecords: 100 })]);\nreturn reads.map(([key, req]) => ({ json: { key, s, t, req } }));\n"
+   }
+  },
+  {
+   "id": "d4fde63a-0a38-426f-a1eb-0e6e6d8205a1",
+   "name": "Click: read Airtable",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    520,
+    180
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "0daf5425-c46c-4b41-aa50-654897c476f7",
+   "name": "Click: count",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    780,
+    180
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, opsmanager: O } = KS;\nconst plan = $('Click: reads').all();\nconst got = {};\n$input.all().forEach((it, i) => { got[plan[i].json.key] = (((it.json || {}).body || {}).records) || []; });\nconst t = plan[0].json.t;\nconst send = got.send[0];\nconst tpl = got.tpl[0];\nconst writes = [];\nif (send && t && send.fields['Template ID'] === t) {\n  const f = send.fields;\n  const firstTime = !f['First clicked'];\n  writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, [{ id: send.id, fields: { 'Clicks': (Number(f['Clicks']) || 0) + 1, ...(firstTime ? { 'First clicked': new Date().toISOString() } : {}) } }])));\n  if (firstTime && !f.Test && tpl) writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, [{ id: tpl.id, fields: { 'Clicked': (Number(tpl.fields['Clicked']) || 0) + 1 } }])));\n}\nconst S = O.settingsMap((got.settings || []));\nconst company = send ? send.fields.Company || '' : '';\nconst to = String(S.alert_email || 'keystoneconsultancy.co@gmail.com').split(',')[0].trim();\nconst url = /^https:\\/\\//.test(String(S.audit_booking_url || '')) ? S.audit_booking_url\n  : 'mailto:' + to + '?subject=' + encodeURIComponent('Book my Finance Ops Audit' + (company ? ' - ' + company : '')) + '&body=' + encodeURIComponent('Hi Bilal, I would like to book my Finance Ops Audit. Some times that suit me: ');\nconst safe = url.split('&').join('&amp;').split('\"').join('&quot;');\nconst html = '<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"0;url=' + safe + '\"><title>Book my audit</title>'\n  + '<div style=\"font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:20px\"><h2>Keystone</h2><p style=\"font-size:17px\">Taking you to book your Finance Ops Audit\u2026</p>'\n  + '<p><a href=\"' + safe + '\" style=\"display:inline-block;background:#C9A961;color:#0B0D0F;padding:13px 22px;text-decoration:none;font-weight:bold;border-radius:4px\">Book my audit</a></p>'\n  + '<p style=\"font-size:13px;color:#555\">If nothing happens, tap the button, or email ' + to + '.</p></div>';\nreturn [{ json: { writes, url, html } }];\n"
+   }
+  },
+  {
+   "id": "32a8df59-509f-497e-a39c-0a17ea460cef",
+   "name": "Click: redirect",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1040,
+    180
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "={{ $json.html }}",
+    "options": {
+     "responseCode": "={{ $json.statusCode || 200 }}",
+     "responseHeaders": {
+      "entries": [
+       {
+        "name": "Content-Type",
+        "value": "text/html; charset=utf-8"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "e2166662-cee3-47d8-a1ae-1197d4e8b3f9",
+   "name": "Fan out writes",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const R = { email: 1, sms: 2, webhook: 3 };\nconst out = [];\nfor (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: R[w.kind] || 0 } });\nreturn out;\n"
+   }
+  },
+  {
+   "id": "54359700-3092-4b91-a305-3201b7d276cf",
+   "name": "Write kind",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3,
+   "position": [
+    1560,
+    0
+   ],
+   "parameters": {
+    "mode": "expression",
+    "numberOutputs": 4,
+    "output": "={{ $json.route }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "e3fb2d1b-797a-491c-a9bf-72f6ffdd7513",
+   "name": "Airtable write",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "52c2d114-7a8b-4efb-affd-4bf7e651933c",
+   "name": "Email sender settings",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    1820,
+    180
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "https://api.airtable.com/v0/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn?maxRecords=100",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "01b137c3-ddb7-4c81-a6b9-86bc60b28b0d",
+   "name": "Set sender",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2080,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const S = {};\nfor (const r of (($json.body || {}).records || [])) if (r.fields && r.fields.Setting) S[r.fields.Setting] = String(r.fields.Value || '').trim();\nconst verified = S.email_from && !/@resend\\.dev/i.test(S.email_from) ? S.email_from : null;\nconst it = $('Write kind').item.json;\nconst req = JSON.parse(JSON.stringify(it.req || {}));\nif (verified && req.body && /@resend\\.dev/i.test(String(req.body.from || ''))) req.body.from = verified;\nreturn { json: { ...it, req } };\n"
+   }
+  },
+  {
+   "id": "0b6317d6-47a0-41ba-a42b-080a91860127",
+   "name": "Send email",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    2340,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.req.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  },
+  {
+   "id": "e8a5bc8c-fb96-440e-a7e3-19c80b132b55",
+   "name": "Send SMS",
+   "type": "n8n-nodes-base.twilio",
+   "typeVersion": 1,
+   "onError": "continueRegularOutput",
+   "position": [
+    1820,
+    360
+   ],
+   "parameters": {
+    "from": "={{ $json.sms.from }}",
+    "to": "={{ $json.sms.to }}",
+    "message": "={{ $json.sms.message }}",
+    "options": {}
+   },
+   "credentials": {
+    "twilioApi": {
+     "id": "pTRs7xfVMj2W7PcG",
+     "name": "Twilio"
+    }
+   }
+  },
+  {
+   "id": "fcba3cd2-3319-446d-a933-8355ac0a6e0e",
+   "name": "Call webhook",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    1820,
+    540
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method || \"POST\" }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "none",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 120000
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Open": {
+   "main": [
+    [
+     {
+      "node": "Open: reads",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Open: reads": {
+   "main": [
+    [
+     {
+      "node": "Open: read Airtable",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Open: read Airtable": {
+   "main": [
+    [
+     {
+      "node": "Open: count",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Open: count": {
+   "main": [
+    [
+     {
+      "node": "Open: send pixel",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Open: send pixel": {
+   "main": [
+    [
+     {
+      "node": "Fan out writes",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Click": {
+   "main": [
+    [
+     {
+      "node": "Click: reads",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Click: reads": {
+   "main": [
+    [
+     {
+      "node": "Click: read Airtable",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Click: read Airtable": {
+   "main": [
+    [
+     {
+      "node": "Click: count",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Click: count": {
+   "main": [
+    [
+     {
+      "node": "Click: redirect",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Click: redirect": {
+   "main": [
+    [
+     {
+      "node": "Fan out writes",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fan out writes": {
+   "main": [
+    [
+     {
+      "node": "Write kind",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write kind": {
+   "main": [
+    [
+     {
+      "node": "Airtable write",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Email sender settings",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Send SMS",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Call webhook",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Email sender settings": {
+   "main": [
+    [
+     {
+      "node": "Set sender",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Set sender": {
+   "main": [
+    [
+     {
+      "node": "Send email",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "saveManualExecutions": true,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "errorWorkflow": "GKF6X82UvFFth43w",
+  "timezone": "Europe/London",
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "BlLj9N39imDWkhFW",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-11-09T18:56:13.699Z",
+   "updatedAt": "2026-11-09T18:56:13.699Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+  "workflowId": "BlLj9N39imDWkhFW",
+  "nodes": [
+   {
+    "id": "5ac63538-959c-43eb-a30c-7bc67a251045",
+    "name": "Open",
+    "webhookId": "14be622b-0e34-4740-a9d7-9c202fce6b54",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "httpMethod": "GET",
+     "path": "ks-nurture-open",
+     "responseMode": "responseNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "88e5115e-a764-4919-a3e1-060b880b7296",
+    "name": "Open: reads",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     260,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst q = $input.first().json.query || {};\nconst s = /^[a-z0-9]{24}$/.test(String(q.s || '')) ? String(q.s) : '';\nconst t = /^rec[A-Za-z0-9]{14}$/.test(String(q.t || '')) ? String(q.t) : '';\nconst reads = [\n  ['send', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, { formula: s ? '{Send ID} = ' + Lg.formulaString(s) : 'FALSE()', maxRecords: 1 })],\n  ['tpl', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, { formula: t ? 'RECORD_ID() = ' + Lg.formulaString(t) : 'FALSE()', fields: ['Name', 'Opened', 'Clicked'], maxRecords: 1 })],\n];\n\nreturn reads.map(([key, req]) => ({ json: { key, s, t, req } }));\n"
+    }
+   },
+   {
+    "id": "0aa20914-ccf6-44e2-a623-0215fa78d4f6",
+    "name": "Open: read Airtable",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     520,
+     0
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "95d37297-7e23-40ec-a69e-cc45325f105d",
+    "name": "Open: count",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     780,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, opsmanager: O } = KS;\nconst plan = $('Open: reads').all();\nconst got = {};\n$input.all().forEach((it, i) => { got[plan[i].json.key] = (((it.json || {}).body || {}).records) || []; });\nconst t = plan[0].json.t;\nconst send = got.send[0];\nconst tpl = got.tpl[0];\nconst writes = [];\nif (send && t && send.fields['Template ID'] === t) {\n  const f = send.fields;\n  const firstTime = !f['First opened'];\n  writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, [{ id: send.id, fields: { 'Opens': (Number(f['Opens']) || 0) + 1, ...(firstTime ? { 'First opened': new Date().toISOString() } : {}) } }])));\n  if (firstTime && !f.Test && tpl) writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, [{ id: tpl.id, fields: { 'Opened': (Number(tpl.fields['Opened']) || 0) + 1 } }])));\n}\nreturn [{ json: { writes }, binary: { data: { data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', mimeType: 'image/gif', fileName: 'p.gif', fileExtension: 'gif' } } }];\n"
+    }
+   },
+   {
+    "id": "cad76be9-2deb-4b26-a1a2-5874c70557f4",
+    "name": "Open: send pixel",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1040,
+     0
+    ],
+    "parameters": {
+     "respondWith": "binary",
+     "responseDataSource": "automatically",
+     "options": {
+      "responseHeaders": {
+       "entries": [
+        {
+         "name": "Cache-Control",
+         "value": "no-store, max-age=0"
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "id": "5f973b3d-8675-4f3a-a0b4-b21d3ca6a83b",
+    "name": "Click",
+    "webhookId": "ad0493e4-adaa-46b3-a7e7-84a3e942ee1b",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     0,
+     180
+    ],
+    "parameters": {
+     "httpMethod": "GET",
+     "path": "ks-nurture-click",
+     "responseMode": "responseNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "bbe75913-0b01-4020-aed7-d0edf778aa9c",
+    "name": "Click: reads",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     260,
+     180
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, log: Lg } = KS;\nconst q = $input.first().json.query || {};\nconst s = /^[a-z0-9]{24}$/.test(String(q.s || '')) ? String(q.s) : '';\nconst t = /^rec[A-Za-z0-9]{14}$/.test(String(q.t || '')) ? String(q.t) : '';\nconst reads = [\n  ['send', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, { formula: s ? '{Send ID} = ' + Lg.formulaString(s) : 'FALSE()', maxRecords: 1 })],\n  ['tpl', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, { formula: t ? 'RECORD_ID() = ' + Lg.formulaString(t) : 'FALSE()', fields: ['Name', 'Opened', 'Clicked'], maxRecords: 1 })],\n];\nreads.push(['settings', R.airtableList(AIRTABLE.baseId, AIRTABLE.tables.settings, { maxRecords: 100 })]);\nreturn reads.map(([key, req]) => ({ json: { key, s, t, req } }));\n"
+    }
+   },
+   {
+    "id": "d4fde63a-0a38-426f-a1eb-0e6e6d8205a1",
+    "name": "Click: read Airtable",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     520,
+     180
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "0daf5425-c46c-4b41-aa50-654897c476f7",
+    "name": "Click: count",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     780,
+     180
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\n// Create-or-update by a unique text field (e.g. Period), so re-runs don't duplicate rows.\nfunction airtableUpsert(baseId, tableId, mergeOn, fieldsList) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { performUpsert: { fieldsToMergeOn: mergeOn }, records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n  // Calls one of Keystone's own n8n webhooks (e.g. start another agent).\n  webhook: (url, body, method = 'POST') => ({ kind: 'webhook', req: { url, method, body } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, airtableUpsert, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'opsmanager': function (module, exports, require) {\n'use strict';\n// Keystone Ops Manager: morning/evening summaries, instant notices for key moments,\n// and YES/NO approvals (SMS reply once Twilio has a number; email links until then).\n\nconst { escapeHtml: e } = require('./log');\n\nfunction settingsMap(records) {\n  const S = {};\n  for (const r of records || []) { const f = r.fields || r; if (f.Setting) S[f.Setting] = String(f.Value || '').trim(); }\n  return S;\n}\n\n// Which channel(s) to use for Bilal. Business escalations use the same SMS switch.\nfunction channels(S) {\n  const smsReady = !!(S.twilio_from && S.alert_sms_to);\n  const mode = (S.ops_channel || 'auto').toLowerCase();\n  if (mode === 'email' || !smsReady) return { sms: false, email: true, smsReady };\n  if (mode === 'both') return { sms: true, email: true, smsReady };\n  return { sms: true, email: false, smsReady };\n}\n\nfunction approvalCode() { return String(Math.floor(1000 + Math.random() * 9000)); }\n\n// \"YES 4821\", \"y 4821\", \"no4821\", \"4821 yes\" -> {decision, code}\nfunction parseReply(text) {\n  const t = String(text || '').trim().toLowerCase();\n  const code = (t.match(/\\b(\\d{4})\\b/) || [])[1] || null;\n  let decision = null;\n  if (/\\b(yes|y|approve|ok|okay|go)\\b/.test(t)) decision = 'yes';\n  if (/\\b(no|n|reject|stop|cancel)\\b/.test(t)) decision = decision ? null : 'no';\n  return { decision, code };\n}\n\nconst KIND_LABEL = {\n  urgent_call: 'URGENT CALL', complaint: 'COMPLAINT', message: 'Message', quote_approval: 'Quote to approve',\n  invoice_review: 'Invoice to review', failure: 'Workflow failure', info: 'Update', booking: 'New booking',\n};\n\nfunction smsText(n, code) {\n  const head = `${KIND_LABEL[n.kind] || 'Keystone'}${n.clientName ? ' - ' + n.clientName : ''}: `;\n  const tail = code ? ` Reply YES ${code} or NO ${code}.` : '';\n  return (head + (n.text || n.title || '')).slice(0, 320 - tail.length) + tail;\n}\n\nfunction emailHtml(n, links) {\n  const btn = (href, label, colour) => `<a href=\"${e(href)}\" style=\"display:inline-block;background:${colour};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;margin-right:8px\">${label}</a>`;\n  return `<div style=\"font-family:Arial,sans-serif;max-width:620px\">\n<h2 style=\"margin:0 0 8px;color:${n.kind === 'urgent_call' || n.kind === 'complaint' ? '#b91c1c' : '#1F3A5F'}\">${e(KIND_LABEL[n.kind] || 'Keystone')}${n.clientName ? ' - ' + e(n.clientName) : ''}</h2>\n<p style=\"font-size:15px;white-space:pre-wrap\">${e(n.text || '')}</p>\n${links ? `<p>${btn(links.yes, 'YES', '#059669')}${btn(links.no, 'NO', '#6b7280')}</p><p style=\"font-size:12px;color:#6b7280\">Approval code ${e(links.code)}. Once SMS is set up you can also reply to the text with YES ${e(links.code)} or NO ${e(links.code)}.</p>` : ''}\n<p style=\"font-size:12px;color:#6b7280\">Keystone Ops Manager</p></div>`;\n}\n\n// ---------- summaries ----------\nfunction inWindow(ts, from, to) { const t = Date.parse(ts); return t >= from.getTime() && t < to.getTime(); }\nconst f = (r) => (r && r.fields ? r.fields : r || {});\nconst sel = (v) => (v && v.name) || v || '';\n\nfunction summarise({ logs = [], calls = [], quotes = [], reviews = [], approvals = [], clients = [] }, from, to) {\n  const L = logs.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const C = calls.map(f).filter((r) => inWindow(r['Timestamp'], from, to));\n  const Q = quotes.map(f).filter((r) => inWindow(r['Created'], from, to));\n  const count = (arr, pred) => arr.filter(pred).length;\n  const nameOf = (id) => (clients.map(f).find((c) => c['Client ID'] === id) || {})['Client name'] || id || 'Keystone';\n  const failures = L.filter((r) => sel(r['Outcome']) === 'Escalated' && sel(r['Service']) === 'monitor');\n  return {\n    invoicesDrafted: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Draft created'),\n    invoicesToReview: count(L, (r) => String(r['Event']).startsWith('invoice_') && sel(r['Outcome']) === 'Sent to review'),\n    calls: C.length,\n    bookings: count(C, (r) => ['Booking', 'Reschedule'].includes(sel(r['Category']))),\n    urgent: C.filter((r) => sel(r['Category']) === 'Urgent').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    complaints: C.filter((r) => sel(r['Category']) === 'Complaint').map((r) => `${nameOf(r['Client ID'])}: ${String(r['Summary'] || '').slice(0, 80)}`),\n    quotes: Q.length,\n    quotesValue: Math.round(Q.reduce((s, r) => s + (Number(r['Total']) || 0), 0)),\n    failures: failures.map((r) => `${r['Reference'] || 'workflow'} (${nameOf(r['Client ID'])})`),\n    openReviews: reviews.map(f).filter((r) => sel(r['Status']) === 'Open').length,\n    pendingApprovals: approvals.map(f).filter((r) => sel(r['Status']) === 'Pending').map((r) => ({ code: r['Code'], summary: r['Summary'] })),\n    activeClients: clients.map(f).filter((c) => sel(c['Status']) === 'Active').length,\n  };\n}\n\nfunction summaryText(kind, s, dateLabel) {\n  const lines = [];\n  lines.push(kind === 'morning' ? `Good morning. Overnight and yesterday evening (${dateLabel}):` : `End of day (${dateLabel}):`);\n  lines.push(`- ${s.activeClients} active clients`);\n  lines.push(`- Invoices drafted: ${s.invoicesDrafted}${s.invoicesToReview ? ` (${s.invoicesToReview} need review)` : ''}`);\n  lines.push(`- Calls: ${s.calls}, bookings: ${s.bookings}`);\n  lines.push(`- Quotes: ${s.quotes}${s.quotesValue ? ` (\u00a3${s.quotesValue.toLocaleString('en-GB')})` : ''}`);\n  if (s.urgent.length) lines.push(`- URGENT calls: ${s.urgent.join('; ')}`);\n  if (s.complaints.length) lines.push(`- Complaints: ${s.complaints.join('; ')}`);\n  if (s.failures.length) lines.push(`- Failures: ${s.failures.join('; ')}`);\n  lines.push(`- Open review items: ${s.openReviews}`);\n  if (s.pendingApprovals.length) lines.push(`- Waiting for your YES/NO: ${s.pendingApprovals.map((a) => `#${a.code} ${String(a.summary).slice(0, 60)}`).join('; ')}`);\n  if (!s.urgent.length && !s.complaints.length && !s.failures.length && !s.openReviews && !s.pendingApprovals.length) lines.push('Nothing needs you right now.');\n  return lines.join('\\n');\n}\n\nfunction summarySms(kind, s) {\n  const needs = s.urgent.length + s.complaints.length + s.failures.length + s.openReviews + s.pendingApprovals.length;\n  return `Keystone ${kind === 'morning' ? 'AM' : 'PM'}: ${s.invoicesDrafted} invoices, ${s.calls} calls/${s.bookings} bookings, ${s.quotes} quotes. ${needs ? needs + ' need you' + (s.pendingApprovals.length ? ' (approvals: ' + s.pendingApprovals.map((a) => a.code).join(', ') + ')' : '') : 'All clear.'}`.slice(0, 320);\n}\n\nmodule.exports = { settingsMap, channels, approvalCode, parseReply, smsText, emailHtml, summarise, summaryText, summarySms, KIND_LABEL };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { requests: __KS('./requests'), log: __KS('./log'), opsmanager: __KS('./opsmanager') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\",\"aiUsage\":\"tbl6E7WRrGbnKNbuS\",\"aiQueue\":\"tblug9CPuF0x47TF9\",\"agents\":\"tbl0hUNJIb689RuZH\",\"teamLog\":\"tblmnvw0Es4UaSPYu\",\"dailyProgress\":\"tbl1VNmAMoI96o4U3\",\"agentSettings\":\"tblv9b9YqHoAG7h4l\",\"growthIdeas\":\"tblLPEXydLDNjMrHu\",\"nurtureTemplates\":\"tbli4PIHaOkU6UdeZ\",\"calcRequests\":\"tblEYlJXiMuNdRYkw\",\"nurtureSends\":\"tblDKbcLjQxPrJSMx\"}};\n// ===== end library =====\nconst { requests: R, opsmanager: O } = KS;\nconst plan = $('Click: reads').all();\nconst got = {};\n$input.all().forEach((it, i) => { got[plan[i].json.key] = (((it.json || {}).body || {}).records) || []; });\nconst t = plan[0].json.t;\nconst send = got.send[0];\nconst tpl = got.tpl[0];\nconst writes = [];\nif (send && t && send.fields['Template ID'] === t) {\n  const f = send.fields;\n  const firstTime = !f['First clicked'];\n  writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, [{ id: send.id, fields: { 'Clicks': (Number(f['Clicks']) || 0) + 1, ...(firstTime ? { 'First clicked': new Date().toISOString() } : {}) } }])));\n  if (firstTime && !f.Test && tpl) writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.nurtureTemplates, [{ id: tpl.id, fields: { 'Clicked': (Number(tpl.fields['Clicked']) || 0) + 1 } }])));\n}\nconst S = O.settingsMap((got.settings || []));\nconst company = send ? send.fields.Company || '' : '';\nconst to = String(S.alert_email || 'keystoneconsultancy.co@gmail.com').split(',')[0].trim();\nconst url = /^https:\\/\\//.test(String(S.audit_booking_url || '')) ? S.audit_booking_url\n  : 'mailto:' + to + '?subject=' + encodeURIComponent('Book my Finance Ops Audit' + (company ? ' - ' + company : '')) + '&body=' + encodeURIComponent('Hi Bilal, I would like to book my Finance Ops Audit. Some times that suit me: ');\nconst safe = url.split('&').join('&amp;').split('\"').join('&quot;');\nconst html = '<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"0;url=' + safe + '\"><title>Book my audit</title>'\n  + '<div style=\"font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:20px\"><h2>Keystone</h2><p style=\"font-size:17px\">Taking you to book your Finance Ops Audit\u2026</p>'\n  + '<p><a href=\"' + safe + '\" style=\"display:inline-block;background:#C9A961;color:#0B0D0F;padding:13px 22px;text-decoration:none;font-weight:bold;border-radius:4px\">Book my audit</a></p>'\n  + '<p style=\"font-size:13px;color:#555\">If nothing happens, tap the button, or email ' + to + '.</p></div>';\nreturn [{ json: { writes, url, html } }];\n"
+    }
+   },
+   {
+    "id": "32a8df59-509f-497e-a39c-0a17ea460cef",
+    "name": "Click: redirect",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1040,
+     180
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "={{ $json.html }}",
+     "options": {
+      "responseCode": "={{ $json.statusCode || 200 }}",
+      "responseHeaders": {
+       "entries": [
+        {
+         "name": "Content-Type",
+         "value": "text/html; charset=utf-8"
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "id": "e2166662-cee3-47d8-a1ae-1197d4e8b3f9",
+    "name": "Fan out writes",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1300,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "const R = { email: 1, sms: 2, webhook: 3 };\nconst out = [];\nfor (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: R[w.kind] || 0 } });\nreturn out;\n"
+    }
+   },
+   {
+    "id": "54359700-3092-4b91-a305-3201b7d276cf",
+    "name": "Write kind",
+    "type": "n8n-nodes-base.switch",
+    "typeVersion": 3,
+    "position": [
+     1560,
+     0
+    ],
+    "parameters": {
+     "mode": "expression",
+     "numberOutputs": 4,
+     "output": "={{ $json.route }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "e3fb2d1b-797a-491c-a9bf-72f6ffdd7513",
+    "name": "Airtable write",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1820,
+     0
+    ],
+    "parameters": {
+     "method": "={{ $json.req.method }}",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "52c2d114-7a8b-4efb-affd-4bf7e651933c",
+    "name": "Email sender settings",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     1820,
+     180
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "https://api.airtable.com/v0/app8WDGaKEamwXTqh/tblpgFrCOqt5H5yFn?maxRecords=100",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "01b137c3-ddb7-4c81-a6b9-86bc60b28b0d",
+    "name": "Set sender",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     2080,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const S = {};\nfor (const r of (($json.body || {}).records || [])) if (r.fields && r.fields.Setting) S[r.fields.Setting] = String(r.fields.Value || '').trim();\nconst verified = S.email_from && !/@resend\\.dev/i.test(S.email_from) ? S.email_from : null;\nconst it = $('Write kind').item.json;\nconst req = JSON.parse(JSON.stringify(it.req || {}));\nif (verified && req.body && /@resend\\.dev/i.test(String(req.body.from || ''))) req.body.from = verified;\nreturn { json: { ...it, req } };\n"
+    }
+   },
+   {
+    "id": "0b6317d6-47a0-41ba-a42b-080a91860127",
+    "name": "Send email",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     2340,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.req.url }}",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   },
+   {
+    "id": "e8a5bc8c-fb96-440e-a7e3-19c80b132b55",
+    "name": "Send SMS",
+    "type": "n8n-nodes-base.twilio",
+    "typeVersion": 1,
+    "onError": "continueRegularOutput",
+    "position": [
+     1820,
+     360
+    ],
+    "parameters": {
+     "from": "={{ $json.sms.from }}",
+     "to": "={{ $json.sms.to }}",
+     "message": "={{ $json.sms.message }}",
+     "options": {}
+    },
+    "credentials": {
+     "twilioApi": {
+      "id": "pTRs7xfVMj2W7PcG",
+      "name": "Twilio"
+     }
+    }
+   },
+   {
+    "id": "fcba3cd2-3319-446d-a933-8355ac0a6e0e",
+    "name": "Call webhook",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     1820,
+     540
+    ],
+    "parameters": {
+     "method": "={{ $json.req.method || \"POST\" }}",
+     "url": "={{ $json.req.url }}",
+     "authentication": "none",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 120000
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Open": {
+    "main": [
+     [
+      {
+       "node": "Open: reads",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Open: reads": {
+    "main": [
+     [
+      {
+       "node": "Open: read Airtable",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Open: read Airtable": {
+    "main": [
+     [
+      {
+       "node": "Open: count",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Open: count": {
+    "main": [
+     [
+      {
+       "node": "Open: send pixel",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Open: send pixel": {
+    "main": [
+     [
+      {
+       "node": "Fan out writes",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Click": {
+    "main": [
+     [
+      {
+       "node": "Click: reads",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Click: reads": {
+    "main": [
+     [
+      {
+       "node": "Click: read Airtable",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Click: read Airtable": {
+    "main": [
+     [
+      {
+       "node": "Click: count",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Click: count": {
+    "main": [
+     [
+      {
+       "node": "Click: redirect",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Click: redirect": {
+    "main": [
+     [
+      {
+       "node": "Fan out writes",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Fan out writes": {
+    "main": [
+     [
+      {
+       "node": "Write kind",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Write kind": {
+    "main": [
+     [
+      {
+       "node": "Airtable write",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Email sender settings",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Send SMS",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Call webhook",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email sender settings": {
+    "main": [
+     [
+      {
+       "node": "Set sender",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Set sender": {
+    "main": [
+     [
+      {
+       "node": "Send email",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Bilal Khan",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-11-09T18:58:49.504Z",
+  "updatedAt": "2026-11-09T18:58:49.504Z",
+  "workflowPublishHistory": [
+   {
+    "id": 572,
+    "workflowId": "BlLj9N39imDWkhFW",
+    "versionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-09T18:58:49.676Z"
+   },
+   {
+    "id": 573,
+    "workflowId": "BlLj9N39imDWkhFW",
+    "versionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+    "event": "deactivated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-09T18:58:50.009Z"
+   },
+   {
+    "id": 574,
+    "workflowId": "BlLj9N39imDWkhFW",
+    "versionId": "637314c1-9963-4a65-810d-c0b02b1e8097",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-09T18:58:50.010Z"
+   }
+  ]
+ },
+ "parentFolder": null
+}

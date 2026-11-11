@@ -1,0 +1,192 @@
+[
+ {
+  "id": "UDbXZuS11bxX3mcN",
+  "name": "KS AI Budget",
+  "active": true
+ },
+ {
+  "id": "OFayFVlk3OXnBLRE",
+  "name": "KS Agent - Chief of Staff",
+  "active": true
+ },
+ {
+  "id": "zpHyX6aIcZrQCQIK",
+  "name": "KS Agent - Client Hunter",
+  "active": true
+ },
+ {
+  "id": "4qTFg0ow0wgW1Zpx",
+  "name": "KS Agent - Nurture",
+  "active": true
+ },
+ {
+  "id": "c8M5Ydl720flXXws",
+  "name": "KS Agent - Ops Monitor",
+  "active": true
+ },
+ {
+  "id": "ss1paj2QvqpaIlwI",
+  "name": "KS Agent - Outreach",
+  "active": true
+ },
+ {
+  "id": "Dh2rPCBjjLW4RvR1",
+  "name": "KS Agent - Sales Prep",
+  "active": true
+ },
+ {
+  "id": "LjizkqnKgqcmKBUV",
+  "name": "KS Agent Switch",
+  "active": true
+ },
+ {
+  "id": "Vswa64kK1wGngRqG",
+  "name": "KS Audit Agent",
+  "active": true
+ },
+ {
+  "id": "pZoa5yciVrErKnEa",
+  "name": "KS Jarvis Feed",
+  "active": true
+ },
+ {
+  "id": "BlLj9N39imDWkhFW",
+  "name": "KS Nurture Tracking",
+  "active": true
+ },
+ {
+  "id": "GKF6X82UvFFth43w",
+  "name": "KS Ops - Failure Alerts",
+  "active": true
+ },
+ {
+  "id": "Hfz3w3Wh7frMuwJ5",
+  "name": "KS Ops - Notify",
+  "active": true
+ },
+ {
+  "id": "q8jMOYkkOWaCjquW",
+  "name": "KS Ops Manager",
+  "active": true
+ },
+ {
+  "id": "OURYI8ZiRXhCGwsj",
+  "name": "KS Quote Calculator",
+  "active": true
+ },
+ {
+  "id": "tqfv8xSQoNwgBBcE",
+  "name": "KS Switch-On",
+  "active": true
+ },
+ {
+  "id": "wQAWElpmv5DN59Yf",
+  "name": "KS Website Calculator",
+  "active": true
+ },
+ {
+  "id": "3TNfVTZSvY6tca1w",
+  "name": "KS Weekly Money + Dashboard",
+  "active": true
+ },
+ {
+  "id": "MParifnFIYCIuXUs",
+  "name": "[Stock] Invoice Automation",
+  "active": true
+ },
+ {
+  "id": "s2riyS1tZ0jtVuSR",
+  "name": "[Stock] Invoice Automation - Client Config",
+  "active": true
+ },
+ {
+  "id": "ai7GdjmZaEOF6Ich",
+  "name": "[Stock] Invoice Automation - Sheet Poller",
+  "active": true
+ },
+ {
+  "id": "uIusHeRCIBVactNt",
+  "name": "[Stock] Monthly Reporting",
+  "active": true
+ },
+ {
+  "id": "P1PTZaUWSSwNOFua",
+  "name": "[Stock] Phone Booking - 1. Inbound IVR",
+  "active": true
+ },
+ {
+  "id": "3gyq87AL3ZrOfZ0y",
+  "name": "[Stock] Phone Booking - 2. Vapi Tools",
+  "active": true
+ },
+ {
+  "id": "SoTR9D5CjH1BGs4F",
+  "name": "[Stock] Phone Booking - 3. Post-Call Actions",
+  "active": true
+ },
+ {
+  "id": "xNwsUFYDgiXVvXPv",
+  "name": "[Stock] Phone Booking - Client Config",
+  "active": true
+ },
+ {
+  "id": "KInuUDK9R1cjACfG",
+  "name": "KS Agent - Client Success",
+  "active": false
+ },
+ {
+  "id": "E0AzK7RbvS7KCr3R",
+  "name": "KS Agent - Compliance",
+  "active": false
+ },
+ {
+  "id": "KFhEP9PewIwBekaI",
+  "name": "KS Agent - Content",
+  "active": false
+ },
+ {
+  "id": "RvtpiYU1PFjANr9M",
+  "name": "KS Agent - Keystone CFO",
+  "active": false
+ },
+ {
+  "id": "vMU8DnnnVe7gqRWU",
+  "name": "KS Agent - Onboarding",
+  "active": false
+ },
+ {
+  "id": "MXbw7rMcqrBL82UN",
+  "name": "KS Agent - Systems Builder",
+  "active": false
+ },
+ {
+  "id": "9qkkwsQRx1QM4V2X",
+  "name": "KS Test - Calendar helper",
+  "active": false
+ },
+ {
+  "id": "jKf0MxxjYCZlbNSL",
+  "name": "KS Test - Forced Failure (2. Vapi Tools simulation)",
+  "active": false
+ },
+ {
+  "id": "zUl9ib5lX7Ohwlpc",
+  "name": "KS Test - Sheets helper",
+  "active": false
+ },
+ {
+  "id": "nYsW8KRqogB3o4Pp",
+  "name": "KS Test - Xero helper",
+  "active": false
+ },
+ {
+  "id": "5uxNHY075sSxWgRE",
+  "name": "KS Util - Vapi helper",
+  "active": false
+ },
+ {
+  "id": "PD8OAS7LPLoiGMkx",
+  "name": "[Stock] Invoice Automation - Collections Reminders",
+  "active": false
+ }
+]

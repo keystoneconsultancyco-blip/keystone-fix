@@ -36,6 +36,7 @@ async function patch(id, modify, label) {
   const r = await api('PUT', '/workflows/' + id, bodyOf(w));
   if (r.status >= 300) throw new Error(`PUT failed ${r.status}: ${JSON.stringify(r.body).slice(0, 500)}`);
   let after = (await api('GET', '/workflows/' + id)).body;
+  if (live.active && !after.active && !(await require('./pause').mayActivate())) return { name: after.name, active: false, note: 'system PAUSED: left off', backup: path.basename(file) };
   if (live.active && !after.active) {
     const a = await api('POST', `/workflows/${id}/activate`);
     after = (await api('GET', '/workflows/' + id)).body;

@@ -1,0 +1,270 @@
+{
+ "id": "nYsW8KRqogB3o4Pp",
+ "name": "KS Test - Xero helper",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-11-08T13:58:37.343Z",
+ "updatedAt": "2026-11-08T13:58:37.343Z",
+ "isArchived": false,
+ "versionId": "d2c946c9-8e21-4ccc-8f96-8f7477b183c1",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "a1589b80-894a-4428-ab51-7aadedc53ef9",
+   "name": "Xero helper",
+   "webhookId": "0aab29b0-de03-448b-aac0-428206aa963e",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "ks-test-xero-helper",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "2bd5892a-64e2-4a0e-a302-8e59f637a613",
+   "name": "Check request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const b = $json.body || {};\nconst TOKEN = \"GSuRmkNTHpXEN7d8nbC3RSEjCF0GyVUe\";\nif (b.token !== TOKEN) return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];\nconst m = String(b.method || 'GET').toUpperCase();\nconst path = String(b.path || '');\nlet allowed = false, url;\nif (path === 'connections' && m === 'GET') { allowed = true; url = 'https://api.xero.com/connections'; }\nelse if (m === 'GET' && /^(Invoices|Contacts|Organisation)/.test(path)) { allowed = true; url = 'https://api.xero.com/api.xro/2.0/' + path; }\nelse if (m === 'POST' && path === 'Invoices' && (b.body && b.body.Invoices || []).every((i) => i.Status === 'DELETED' && i.InvoiceID)) { allowed = true; url = 'https://api.xero.com/api.xro/2.0/Invoices'; }\nelse if (m === 'POST' && path === 'Contacts' && (b.body && b.body.Contacts || []).every((c) => c.ContactStatus === 'ARCHIVED' && c.ContactID)) { allowed = true; url = 'https://api.xero.com/api.xro/2.0/Contacts'; }\nif (!allowed) return [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];\nreturn [{ json: { allowed: true, req: { url, method: m, body: b.body || {}, tenantId: b.tenantId || '' } } }];\n"
+   }
+  },
+  {
+   "id": "ba5c461d-0020-4186-a9a6-8bb88d4430e9",
+   "name": "Allowed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "8f1dbe7c-9e34-4ce8-a291-da079d5a18f4",
+       "leftValue": "={{ $json.allowed }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "2dab9b2e-f853-4bb2-a57f-5ec473accdaa",
+   "name": "Call Xero",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "xeroOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "xero-tenant-id",
+       "value": "={{ $json.req.tenantId }}"
+      },
+      {
+       "name": "Accept",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "xeroOAuth2Api": {
+     "id": "4p323BIqqLPBGyHS",
+     "name": "Xero account"
+    }
+   }
+  },
+  {
+   "id": "3fabe063-d34d-4002-a6ac-1c6a52109a80",
+   "name": "Wrap",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{ json: { response: { ok: $json.statusCode < 300, statusCode: $json.statusCode, body: $json.body } } }];\n"
+   }
+  },
+  {
+   "id": "21596ef3-61bb-4862-a068-9271b9f3b58b",
+   "name": "Respond",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "ccc24afd-a8be-4e06-a0f1-86b1d137eb9c",
+   "name": "Respond refused",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    780,
+    180
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Xero helper": {
+   "main": [
+    [
+     {
+      "node": "Check request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check request": {
+   "main": [
+    [
+     {
+      "node": "Allowed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Allowed?": {
+   "main": [
+    [
+     {
+      "node": "Call Xero",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond refused",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Xero": {
+   "main": [
+    [
+     {
+      "node": "Wrap",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wrap": {
+   "main": [
+    [
+     {
+      "node": "Respond",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "saveManualExecutions": true,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "errorWorkflow": "GKF6X82UvFFth43w",
+  "timezone": "Europe/London",
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "nYsW8KRqogB3o4Pp",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-11-08T13:58:37.346Z",
+   "updatedAt": "2026-11-08T13:58:37.346Z"
+  }
+ ],
+ "activeVersion": null,
+ "parentFolder": null
+}

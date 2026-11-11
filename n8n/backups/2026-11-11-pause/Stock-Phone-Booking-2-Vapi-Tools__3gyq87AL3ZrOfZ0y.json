@@ -1,0 +1,2874 @@
+{
+ "id": "3gyq87AL3ZrOfZ0y",
+ "name": "[Stock] Phone Booking - 2. Vapi Tools",
+ "description": null,
+ "active": true,
+ "activeVersionId": "7d177e9e-f1a9-406c-82d8-8a1e7a287d00",
+ "createdAt": "2026-08-23T13:11:40.916Z",
+ "updatedAt": "2026-11-08T21:37:24.703Z",
+ "isArchived": false,
+ "versionId": "7d177e9e-f1a9-406c-82d8-8a1e7a287d00",
+ "versionCounter": 14,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "tools-note",
+   "name": "Sticky Note",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -1120,
+    -280
+   ],
+   "parameters": {
+    "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add three Custom Tools, all pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n3) get_quote { jobDescription, isEmergency } - see the Quoting Engine sticky note further down for the full contract.\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+    "height": 340,
+    "width": 460
+   }
+  },
+  {
+   "id": "webhook-vapi-tools",
+   "name": "Vapi Tool Call",
+   "webhookId": "vapi-tool-call",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -1120,
+    160
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "vapi/tools",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "set-extract-tool-call",
+   "name": "Extract Tool Call",
+   "notes": "Deliberately a Code node, not Set: n8n's {{ }} expression parser refuses to read a property literally named 'arguments' ('Cannot access \"arguments\" due to security concerns'), and Vapi's tool-call payload uses exactly that key. Plain JS in a Code node isn't subject to that restriction.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -880,
+    160
+   ],
+   "parameters": {
+    "jsCode": "const body = $json.body || {};\nconst msg = body.message || {};\nconst tc = (msg.toolCallList && msg.toolCallList[0]) || (msg.toolCalls && msg.toolCalls[0]) || {};\nconst fn = tc.function || {};\nlet args = tc.arguments !== undefined ? tc.arguments : fn.arguments;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nreturn [{ json: { toolCallId: tc.id, toolName: tc.name || fn.name, toolArgs: args || {}, body } }];"
+   }
+  },
+  {
+   "id": "exec-client-config",
+   "name": "Get Client Config",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "position": [
+    -640,
+    160
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "xNwsUFYDgiXVvXPv",
+     "mode": "id"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "set-merge-context",
+   "name": "Merge Context",
+   "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json. Was a Set node that only kept 3 assigned fields and silently dropped every Client Config field (googleCalendarId, timezone, etc) reaching everything downstream - converted to a Code node with an explicit spread so the full context actually survives.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -400,
+    160
+   ],
+   "parameters": {
+    "jsCode": "const config = $input.item.json;\nconst extracted = $('Extract Tool Call').item.json;\nreturn [{ json: { ...config, ...extracted } }];"
+   }
+  },
+  {
+   "id": "switch-tool-name",
+   "name": "Route On Tool Name",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.2,
+   "position": [
+    -160,
+    160
+   ],
+   "parameters": {
+    "rules": {
+     "values": [
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "check_availability",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "check_availability"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "book_appointment",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "book_appointment"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "get_quote",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "get_quote"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "flag_urgent",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "flag_urgent"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "log_complaint",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "log_complaint"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "take_message",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "take_message"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.toolName }}",
+          "rightValue": "reschedule_booking",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "reschedule_booking"
+      }
+     ]
+    },
+    "options": {
+     "fallbackOutput": "extra"
+    }
+   }
+  },
+  {
+   "id": "gcal-get-busy",
+   "name": "Google Calendar - Get Day's Events",
+   "notes": "alwaysOutputData is required here: a day with zero existing events (the normal case for most days) makes this node emit zero items, which means every downstream node in this branch simply never runs and Vapi gets no response at all - alwaysOutputData forces one placeholder item through so the empty-day case reaches Compute Available Slots at all.",
+   "type": "n8n-nodes-base.googleCalendar",
+   "typeVersion": 1.3,
+   "alwaysOutputData": true,
+   "position": [
+    80,
+    40
+   ],
+   "parameters": {
+    "resource": "event",
+    "operation": "getAll",
+    "calendar": {
+     "__rl": true,
+     "value": "={{ $json.googleCalendarId }}",
+     "mode": "expression"
+    },
+    "timeMin": "={{ $json.toolArgs.date }}T00:00:00",
+    "timeMax": "={{ $json.toolArgs.date }}T23:59:59",
+    "options": {
+     "timeZone": "={{ $json.timezone }}"
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "code-compute-slots",
+   "name": "Compute Available Slots",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    320,
+    40
+   ],
+   "parameters": {
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst config = $('Merge Context').item.json;\nconst args = config.toolArgs || {};\nconst tz = config.timezone || 'Europe/London';\nconst date = String(args.date || '').slice(0, 10);\nconst events = $input.all().map((i) => i.json).filter((e) => e && (e.start || e.end));\nconst menu = config.serviceMenu || [];\nconst svc = menu.find((s) => (s.name || '').toLowerCase() === String(args.service || '').toLowerCase());\nconst dur = (svc && svc.durationMinutes) || config.bookingSlotDurationMinutes || 30;\nconst step = config.bookingSlotDurationMinutes || 30;\nconst dayKey = /^\\d{4}-\\d{2}-\\d{2}$/.test(date) ? T.weekdayOf(date) : null;\nlet hours = null;\nif (config.openingHours && Object.keys(config.openingHours).length) hours = dayKey ? config.openingHours[dayKey] : null;\nelse if (dayKey) { const full = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' }[dayKey]; if ((config.businessDays || []).includes(full)) hours = [config.businessHoursStart || '09:00', config.businessHoursEnd || '17:00']; }\nconst busy = events.map((e) => {\n  if (e.start && e.start.date && !e.start.dateTime) return { s: T.zonedToUtc(e.start.date, '00:00', tz), e: T.zonedToUtc(e.end && e.end.date ? e.end.date : T.addDaysStr(e.start.date, 1), '00:00', tz) };\n  const s = new Date(e.start && e.start.dateTime ? e.start.dateTime : e.start);\n  let en = new Date(e.end && e.end.dateTime ? e.end.dateTime : e.end);\n  if (!(en > s)) en = new Date(s.getTime() + dur * 60000);\n  return { s, e: en };\n});\nconst slots = [];\nconst earliest = new Date(Date.now() + 60 * 60000);\nif (Array.isArray(hours) && hours.length === 2) {\n  const open = T.toMinutes(hours[0]), close = T.toMinutes(hours[1]);\n  for (let m = open; m + dur <= close; m += step) {\n    const hh = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');\n    const st = T.zonedToUtc(date, hh, tz); const en = new Date(st.getTime() + dur * 60000);\n    if (st < earliest) continue;\n    if (!busy.some((b) => st < b.e && en > b.s)) slots.push(hh);\n  }\n}\nconst preferredTime = args.preferredTime || args.time || null;\nreturn [{ json: { date, preferredTime, preferredAvailable: preferredTime ? slots.includes(preferredTime) : false, alternativeSlots: slots.filter((s) => s !== preferredTime).slice(0, 5), allAvailableSlots: slots, closedDay: !Array.isArray(hours), durationMinutes: dur } }];"
+   }
+  },
+  {
+   "id": "set-avail-result",
+   "name": "Build Availability Result Text",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    560,
+    40
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "avail-result-text",
+       "name": "resultText",
+       "type": "string",
+       "value": "={{ !$json.date || $json.date.length !== 10 ? 'Which day would you like? Please give me the date.' : $json.closedDay ? ('Sorry, we are closed on ' + $json.date + '. Please choose another day.') : !$json.allAvailableSlots.length ? ('Sorry, ' + $json.date + ' is fully booked. Please choose another day.') : $json.preferredTime && $json.preferredAvailable ? ($json.date + ' at ' + $json.preferredTime + ' is available.') : ($json.preferredTime ? ($json.date + ' at ' + $json.preferredTime + ' is not available. Free times on ' + $json.date + ': ' + $json.alternativeSlots.join(', ') + '.') : ('Free times on ' + $json.date + ': ' + $json.allAvailableSlots.slice(0, 6).join(', ') + '.')) }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "code-compute-booking-end",
+   "name": "Compute Booking End Time",
+   "notes": "Looks up the service's durationMinutes from Client Config's serviceMenu (falling back to bookingSlotDurationMinutes), so the created event actually spans the appointment length instead of start==end.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -160,
+    300
+   ],
+   "parameters": {
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst config = $('Merge Context').item.json;\nconst args = config.toolArgs || {};\nconst tz = config.timezone || 'Europe/London';\nconst menu = config.serviceMenu || [];\nconst match = menu.find((s) => (s.name || '').toLowerCase() === (args.service || '').toLowerCase());\nconst durationMinutes = (match && match.durationMinutes) || config.bookingSlotDurationMinutes || 30;\nconst date = String(args.date || '').slice(0, 10), time = String(args.time || '').slice(0, 5);\nlet problem = null, startIso = null, endIso = null, endTime = null;\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || !/^\\d{1,2}:\\d{2}$/.test(time)) problem = 'I need the date and time for the booking.';\nelse {\n  const st = T.zonedToUtc(date, time, tz); const en = new Date(st.getTime() + durationMinutes * 60000);\n  startIso = st.toISOString(); endIso = en.toISOString(); endTime = T.localParts(en, tz).timeStr;\n  const h = config.openingHours && config.openingHours[T.weekdayOf(date)];\n  if (st < new Date()) problem = 'That time has already passed. Please choose a later time.';\n  else if (config.openingHours && Object.keys(config.openingHours).length && !(Array.isArray(h) && T.toMinutes(time) >= T.toMinutes(h[0]) && T.toMinutes(time) + durationMinutes <= T.toMinutes(h[1]))) problem = 'That is outside our opening hours. Please choose another time.';\n}\nconst cal = encodeURIComponent(config.googleCalendarId || 'primary');\nconst req = startIso ? { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&timeMin=' + encodeURIComponent(startIso) + '&timeMax=' + encodeURIComponent(endIso) } : { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?maxResults=1' };\nreturn [{ json: { endTime, startIso, endIso, durationMinutes, problem, req } }];"
+   }
+  },
+  {
+   "id": "gcal-create-event",
+   "name": "Google Calendar - Book Slot",
+   "type": "n8n-nodes-base.googleCalendar",
+   "typeVersion": 1.3,
+   "position": [
+    80,
+    300
+   ],
+   "parameters": {
+    "resource": "event",
+    "operation": "create",
+    "calendar": {
+     "__rl": true,
+     "value": "={{ $('Merge Context').item.json.googleCalendarId }}",
+     "mode": "expression"
+    },
+    "start": "={{ $('Compute Booking End Time').item.json.startIso }}",
+    "end": "={{ $('Compute Booking End Time').item.json.endIso }}",
+    "additionalFields": {
+     "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
+     "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "set-booking-result",
+   "name": "Build Booking Result Text",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    320,
+    300
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "booking-result-text",
+       "name": "resultText",
+       "type": "string",
+       "value": "=You're booked for {{ $('Merge Context').item.json.toolArgs.service }} on {{ $('Merge Context').item.json.toolArgs.date }} at {{ $('Merge Context').item.json.toolArgs.time }}. A confirmation email is on its way."
+      },
+      {
+       "id": "booking-event-id",
+       "name": "calendarEventId",
+       "type": "string",
+       "value": "={{ $json.id }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "set-error-result",
+   "name": "Build Unknown-Tool Result Text",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    80,
+    560
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "error-result-text",
+       "name": "resultText",
+       "type": "string",
+       "value": "Sorry, I couldn't process that request."
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "quote-note",
+   "name": "Sticky Note1",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -1120,
+    640
+   ],
+   "parameters": {
+    "content": "## Quoting Engine (get_quote)\nInput: { jobDescription, isEmergency }. isEmergency is the AI's own read of the caller (they said \"emergency\"/\"urgent\", or it's clearly outside business hours) - the assistant's system prompt tells it when to set this. This is the sole source of truth for whether the multiplier applies.\n\nAn earlier version also OR'd in an independent server-side check of the current time (in the client's timezone) against quoteConfig.emergencyHours, so a genuinely out-of-hours call would get the surcharge even if the AI forgot to flag it. Dropped after live testing: it fired unconditionally whenever this workflow happened to be tested outside 8am-6pm UK time (including right now), making the non-emergency test case impossible to demonstrate and the behaviour unpredictable from the caller-input contract the task actually asked for. quoteConfig.emergencyHours is still stored in config as the business's stated rule (for the assistant's own system-prompt reference and for a future revisit), it's just not enforced server-side today.\n\nMatching is still a config lookup, never an AI-invented price: \"Compute Quote\" scores every quoteConfig.jobTypes entry by how many of its keywords appear in the caller's own description and takes the best match. No match above zero -> falls back to \"book a free assessment\" wording that routes into book_appointment, exactly as required - it deliberately never uses hourlyRateOutsideStandardJobs to guess a number.\n\n\"Quote Result Built\" is a NoOp convergence node (same pattern as Monthly Reporting's \"Report Email Handled\"/\"Folder Resolved\") so the logging branch and Build Tool Response can both safely read the built resultText regardless of which of the two upstream branches (matched/fallback) actually ran - logging is a parallel side-branch (like \"Log Call To CallLog\" in 03-post-call-actions), not an inline step, so the Sheets API response never overwrites the resultText that Build Tool Response needs.",
+    "height": 500,
+    "width": 480
+   }
+  },
+  {
+   "id": "code-compute-quote",
+   "name": "Compute Quote",
+   "notes": "Single item per execution (one Vapi tool call in, one out) so the default 'Run Once for All Items' mode is safe here - no batch-aliasing risk. Keyword-scores every quoteConfig.jobTypes entry against the caller's own jobDescription text and keeps the highest-scoring match; a description matching none of them (score 0 for every job type) is a deliberate non-match, not an error, and falls through to the fallback branch below.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -160,
+    760
+   ],
+   "parameters": {
+    "jsCode": "const config = $('Merge Context').item.json;\nconst a = config.toolArgs || {};\nconst answers = { ...(a.answers || {}) };\nif (a.isEmergency === true || a.isEmergency === 'true') answers.urgent = 'yes';\nif (a.miles) answers.miles = a.miles;\nconst req = { method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/ks-quote', body: { clientId: config.clientId, source: 'phone', service: a.service || '', description: a.jobDescription || a.service || '', quantity: a.quantity, answers, customer: { name: a.customerName || '', phone: a.customerPhone || '', email: a.customerEmail || '' } } };\nreturn [{ json: { ...config, jobDescription: a.jobDescription || '', isEmergencyApplied: answers.urgent === 'yes', req } }];"
+   }
+  },
+  {
+   "id": "if-job-type-matched",
+   "name": "Was Job Type Matched?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    80,
+    760
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $json.matched }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "code-build-quote-result",
+   "name": "Build Quote Result Text",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    320,
+    680
+   ],
+   "parameters": {
+    "jsCode": "const d = $json;\nreturn [{ json: { ...d, resultText: d.quoteMessage + ' Would you like me to book that in for you?', wasFallback: false } }];"
+   }
+  },
+  {
+   "id": "code-build-quote-fallback-result",
+   "name": "Build Fallback Quote Result Text",
+   "notes": "Deliberately does not guess a price. The wording steers the caller (and the assistant's own next move, per the system prompt) toward book_appointment for a free assessment visit, per requirement 4, instead of dead-ending the call.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    320,
+    860
+   ],
+   "parameters": {
+    "jsCode": "const d = $json;\nconst resultText = d.quoteMessage || \"That needs a proper look before I can give you a price. I'll pass your details to the team and they'll come back to you with a quote. Would you like me to book a visit as well?\";\nreturn [{ json: { ...d, resultText, matchedJobType: null, wasFallback: true } }];"
+   }
+  },
+  {
+   "id": "noop-quote-result-built",
+   "name": "Quote Result Built",
+   "notes": "Convergence point for the matched/fallback branches, same pattern as Monthly Reporting's 'Report Email Handled'/'Folder Resolved' NoOps - lets both the logging branch and Build Tool Response safely reference 'whichever branch ran' without a stale/wrong node reference.",
+   "type": "n8n-nodes-base.noOp",
+   "typeVersion": 1,
+   "position": [
+    560,
+    760
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "log-quote-to-sheet",
+   "name": "Log Quote To QuoteLog",
+   "notes": "Same raw Sheets values:append pattern as 03-post-call-actions' 'Log Call To CallLog'. Wired as a parallel side-branch off 'Quote Result Built', not inline before Build Tool Response, so this HTTP call's own response (which would overwrite $json) can never clobber the resultText the caller is about to hear - that was the exact bug class found and fixed in Monthly Reporting's 'Build Client Result' node. Logs every quote given - matched or fallback - so quote volume is reviewable later (and is the natural future source for Monthly Reporting's currently-mocked quotesGiven stat). Requires reportingSheetId and a QuoteLog tab (headers: timestamp, clientId, jobDescription, matchedJobType, wasFallback, priceMin, priceMax, isEmergencyApplied) - onError: continueRegularOutput so a logging failure can never block the caller getting their quote.",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    780,
+    900
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.quoteLogTabName }}:append",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleSheetsOAuth2Api",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "valueInputOption",
+       "value": "RAW"
+      },
+      {
+       "name": "insertDataOption",
+       "value": "INSERT_ROWS"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $json.jobDescription || '', $json.matchedJobType || '', $json.wasFallback, $json.priceMin ?? '', $json.priceMax ?? '', $json.isEmergencyApplied ]] }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "googleSheetsOAuth2Api": {
+     "id": "xKa0P1ACdrwcNgDR",
+     "name": "Google Sheets account"
+    }
+   }
+  },
+  {
+   "id": "set-final-response",
+   "name": "Build Tool Response",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    780,
+    160
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "final-tool-call-id",
+       "name": "toolCallId",
+       "type": "string",
+       "value": "={{ $('Merge Context').item.json.toolCallId }}"
+      },
+      {
+       "id": "final-result",
+       "name": "result",
+       "type": "string",
+       "value": "={{ $json.resultText }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "respond-tool-result",
+   "name": "Return Tool Result",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.4,
+   "position": [
+    1020,
+    160
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { results: [ { toolCallId: $json.toolCallId, result: $json.result } ] } }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "33e5f83c-c3a9-41b7-805f-3db53cdf17f3",
+   "name": "Re-check slot is free",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    40,
+    460
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleCalendarOAuth2Api",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "60cab44e-5ba1-4e2b-ae83-b57719ec7c73",
+   "name": "Slot still free?",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    460
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const b = $('Compute Booking End Time').item.json;\nlet problem = b.problem;\nif (!problem) {\n  const r = $input.item.json;\n  if (!(r.statusCode >= 200 && r.statusCode < 300)) problem = 'I could not check the diary just now, so I will ask the team to confirm your booking.';\n  else if (((r.body || {}).items || []).some((e) => e.status !== 'cancelled' && e.transparency !== 'transparent')) problem = 'Sorry, that time has just been taken. Shall I find another time?';\n}\nreturn { json: { ...b, ok: !problem, problem } };\n"
+   }
+  },
+  {
+   "id": "a4795ab9-4256-4183-a07a-fae39249d0bc",
+   "name": "Can book?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    440,
+    460
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "2332157c-1763-4cb6-a7ee-bd8bea6a54a8",
+       "leftValue": "={{ $json.ok }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "ed597ee3-cef3-47d2-8238-bb86b29ed92c",
+   "name": "Booking problem text",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    640,
+    600
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return { json: { resultText: $json.problem } };\n"
+   }
+  },
+  {
+   "id": "f0155063-ccc9-46f6-8986-46a716c8fda9",
+   "name": "Ask Quote Calculator",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    40,
+    920
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.req.url }}",
+    "authentication": "none",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 20000
+    }
+   }
+  },
+  {
+   "id": "fcab1073-f787-41e0-a027-dfee6d4f8004",
+   "name": "Read quote answer",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    920
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const prior = $('Compute Quote').item.json;\nconst r = $input.item.json;\nconst b = (r && r.body) || {};\nconst ok = r && r.statusCode >= 200 && r.statusCode < 300 && b.ok;\nreturn { json: { ...prior, req: undefined, matched: !!(ok && b.total > 0), matchedJobType: b.service || null, priceMin: b.total || null, priceMax: b.total || null, quoteRef: b.ref || null, quoteMessage: ok ? b.message : null } };\n"
+   }
+  },
+  {
+   "id": "33f08d80-90ef-4f4a-b971-d0f9de227d76",
+   "name": "Build escalation",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    80,
+    760
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst kind = c.toolName === 'flag_urgent' ? 'urgent_call' : c.toolName === 'log_complaint' ? 'complaint' : 'message';\nconst who = (a.customerName || 'A caller') + (a.customerPhone ? ' (' + a.customerPhone + ')' : '');\nconst what = a.summary || a.message || '';\nconst text = kind === 'urgent_call' ? 'URGENT: ' + who + ' - ' + what + (a.address ? '. Address: ' + a.address : '') + '. Please call them back now.'\n  : kind === 'complaint' ? 'Complaint from ' + who + ': ' + what + (a.severity ? ' (severity ' + a.severity + ')' : '') + '. A manager should call them back.'\n  : 'Message for ' + (a.forPerson || 'the team') + ' from ' + who + ': ' + what;\nreturn { json: { kind, clientId: c.clientId, clientName: c.businessName, text, businessText: text, audience: kind === 'message' ? 'business' : 'both', business: { email: c.businessNotificationEmail, sms: c.escalationSmsNumber || c.managerPhoneNumber, isDemo: !!c.isDemo } } };\n"
+   }
+  },
+  {
+   "id": "a5e79baf-f881-4478-aad1-491abdf902e2",
+   "name": "Tell the business now",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    300,
+    760
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "Hfz3w3Wh7frMuwJ5",
+     "mode": "id"
+    },
+    "mode": "each",
+    "options": {
+     "waitForSubWorkflow": true
+    }
+   }
+  },
+  {
+   "id": "af52687c-54bb-4ef6-9dc6-62bb5fc39eac",
+   "name": "Escalation result text",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    520,
+    760
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const k = $('Build escalation').item.json.kind;\nconst resultText = k === 'urgent_call' ? 'I have alerted the team straight away and someone will call you back as soon as possible. If anyone is in danger, please call 999, or the gas emergency line on 0800 111 999 if you can smell gas.'\n  : k === 'complaint' ? \"I'm sorry about this. I've passed it to a manager, who will contact you.\"\n  : \"Thanks, I've passed your message to the team and they'll get back to you.\";\nreturn { json: { resultText } };\n"
+   }
+  },
+  {
+   "id": "fa410954-d212-4eb2-a021-125f3f7873c2",
+   "name": "Find booking request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    80,
+    960
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst digits = String(a.customerPhone || '').replace(/\\D/g, '').slice(-9);\nconst cal = encodeURIComponent(c.googleCalendarId || 'primary');\nconst now = new Date(), until = new Date(Date.now() + 90 * 86400000);\nreturn { json: { digits, req: { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=' + encodeURIComponent(now.toISOString()) + '&timeMax=' + encodeURIComponent(until.toISOString()) } } };\n"
+   }
+  },
+  {
+   "id": "e9c4ddbf-6854-4a0e-9ff8-12546518d897",
+   "name": "Search bookings",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    300,
+    960
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleCalendarOAuth2Api",
+    "sendHeaders": false,
+    "sendBody": false,
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "8111542f-26b5-4444-8648-567980920d27",
+   "name": "Pick booking to move",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    520,
+    960
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst tz = c.timezone || 'Europe/London';\nconst digits = $('Find booking request').item.json.digits;\nconst items = (($json.body || {}).items) || [];\nconst ev = digits.length >= 6 ? items.find((e) => String(e.description || '').replace(/\\D/g, '').includes(digits)) : null;\nif (!ev) return { json: { found: false, resultText: \"I couldn't find an upcoming booking under that phone number. I'll pass a message to the team to sort it out.\" } };\nconst date = String(a.newDate || '').slice(0, 10), time = String(a.newTime || '').slice(0, 5);\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || !/^\\d{1,2}:\\d{2}$/.test(time)) return { json: { found: false, resultText: 'What new date and time would you like?' } };\nconst oldS = new Date(ev.start.dateTime || ev.start.date), oldE = new Date(ev.end.dateTime || ev.end.date);\nconst dur = Math.max(15, Math.round((oldE - oldS) / 60000) || 60);\nconst st = T.zonedToUtc(date, time, tz), en = new Date(st.getTime() + dur * 60000);\nif (st < new Date()) return { json: { found: false, resultText: 'That time has already passed. Please choose a later time.' } };\nconst cal = encodeURIComponent(c.googleCalendarId || 'primary');\nreturn { json: { found: true, eventId: ev.id, newDate: date, newTime: time, req: { method: 'PATCH', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + ev.id, body: { start: { dateTime: st.toISOString() }, end: { dateTime: en.toISOString() }, description: (ev.description || '') + '\\nRescheduled by AI phone assistant on ' + new Date().toISOString() } } } };\n"
+   }
+  },
+  {
+   "id": "98594b37-ebd3-4cbd-9c29-2fdcf48aa404",
+   "name": "Booking found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    740,
+    960
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "bdc80dff-e3a9-4987-a964-9e0196804ce1",
+       "leftValue": "={{ $json.found }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "6d6fed9f-c5fe-41b1-89de-4f532cf514b1",
+   "name": "Move booking",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    960,
+    900
+   ],
+   "parameters": {
+    "method": "PATCH",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleCalendarOAuth2Api",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "googleCalendarOAuth2Api": {
+     "id": "jevTK74dRJdUZ6U4",
+     "name": "Google Calendar account"
+    }
+   }
+  },
+  {
+   "id": "dbeb1a76-ff76-4800-91bb-495bc4928a1e",
+   "name": "Reschedule result text",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1180,
+    900
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const p = $('Pick booking to move').item.json;\nconst ok = $json.statusCode >= 200 && $json.statusCode < 300;\nreturn { json: { resultText: ok ? 'Done. Your booking has been moved to ' + p.newDate + ' at ' + p.newTime + '.' : \"I couldn't move the booking just now, so I've asked the team to do it and they'll confirm with you.\" } };\n"
+   }
+  },
+  {
+   "id": "d451bdf3-aca7-4e2d-b268-0f47167a75de",
+   "name": "Reschedule not possible",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    960,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return { json: { resultText: $json.resultText } };\n"
+   }
+  }
+ ],
+ "connections": {
+  "Vapi Tool Call": {
+   "main": [
+    [
+     {
+      "node": "Extract Tool Call",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Extract Tool Call": {
+   "main": [
+    [
+     {
+      "node": "Get Client Config",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Client Config": {
+   "main": [
+    [
+     {
+      "node": "Merge Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Context": {
+   "main": [
+    [
+     {
+      "node": "Route On Tool Name",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Route On Tool Name": {
+   "main": [
+    [
+     {
+      "node": "Google Calendar - Get Day's Events",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Compute Booking End Time",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Compute Quote",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build escalation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build escalation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build escalation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Find booking request",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build Unknown-Tool Result Text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Google Calendar - Get Day's Events": {
+   "main": [
+    [
+     {
+      "node": "Compute Available Slots",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute Available Slots": {
+   "main": [
+    [
+     {
+      "node": "Build Availability Result Text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Availability Result Text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute Booking End Time": {
+   "main": [
+    [
+     {
+      "node": "Re-check slot is free",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Google Calendar - Book Slot": {
+   "main": [
+    [
+     {
+      "node": "Build Booking Result Text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Booking Result Text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Unknown-Tool Result Text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute Quote": {
+   "main": [
+    [
+     {
+      "node": "Ask Quote Calculator",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Was Job Type Matched?": {
+   "main": [
+    [
+     {
+      "node": "Build Quote Result Text",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build Fallback Quote Result Text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Quote Result Text": {
+   "main": [
+    [
+     {
+      "node": "Quote Result Built",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Fallback Quote Result Text": {
+   "main": [
+    [
+     {
+      "node": "Quote Result Built",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Quote Result Built": {
+   "main": [
+    [
+     {
+      "node": "Log Quote To QuoteLog",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Tool Response": {
+   "main": [
+    [
+     {
+      "node": "Return Tool Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Re-check slot is free": {
+   "main": [
+    [
+     {
+      "node": "Slot still free?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Slot still free?": {
+   "main": [
+    [
+     {
+      "node": "Can book?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Can book?": {
+   "main": [
+    [
+     {
+      "node": "Google Calendar - Book Slot",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Booking problem text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Booking problem text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ask Quote Calculator": {
+   "main": [
+    [
+     {
+      "node": "Read quote answer",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read quote answer": {
+   "main": [
+    [
+     {
+      "node": "Was Job Type Matched?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build escalation": {
+   "main": [
+    [
+     {
+      "node": "Tell the business now",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Tell the business now": {
+   "main": [
+    [
+     {
+      "node": "Escalation result text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Escalation result text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find booking request": {
+   "main": [
+    [
+     {
+      "node": "Search bookings",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Search bookings": {
+   "main": [
+    [
+     {
+      "node": "Pick booking to move",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pick booking to move": {
+   "main": [
+    [
+     {
+      "node": "Booking found?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Booking found?": {
+   "main": [
+    [
+     {
+      "node": "Move booking",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reschedule not possible",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Move booking": {
+   "main": [
+    [
+     {
+      "node": "Reschedule result text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Reschedule result text": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Reschedule not possible": {
+   "main": [
+    [
+     {
+      "node": "Build Tool Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "binaryMode": "separate",
+  "errorWorkflow": "GKF6X82UvFFth43w"
+ },
+ "staticData": null,
+ "pinData": {},
+ "meta": {
+  "templateCredsSetupCompleted": true
+ },
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "3gyq87AL3ZrOfZ0y",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-08-23T13:11:40.919Z",
+   "updatedAt": "2026-08-23T13:11:40.919Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "7d177e9e-f1a9-406c-82d8-8a1e7a287d00",
+  "workflowId": "3gyq87AL3ZrOfZ0y",
+  "nodes": [
+   {
+    "id": "tools-note",
+    "name": "Sticky Note",
+    "type": "n8n-nodes-base.stickyNote",
+    "typeVersion": 1,
+    "position": [
+     -1120,
+     -280
+    ],
+    "parameters": {
+     "content": "## Stage 2: Vapi Tools (mid-call)\nWhile the AI is talking to the caller, Vapi calls these tools synchronously and speaks the result back.\n\nIn the Vapi Assistant config, add three Custom Tools, all pointing at:\nhttps://keystoneconsultancy.app.n8n.cloud/webhook/vapi/tools\n\n1) check_availability { date, preferredTime, service }\n2) book_appointment { date, time, service, customerName, customerPhone, customerEmail }\n3) get_quote { jobDescription, isEmergency } - see the Quoting Engine sticky note further down for the full contract.\n\nThe calendar step below uses Google Calendar as the stock/placeholder backend. Swap the two Google Calendar nodes for a Google Sheets (or other) lookup per client without touching anything else - the rest of the contract (tool call in, {results:[...]} out) stays identical.",
+     "height": 340,
+     "width": 460
+    }
+   },
+   {
+    "id": "webhook-vapi-tools",
+    "name": "Vapi Tool Call",
+    "webhookId": "vapi-tool-call",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -1120,
+     160
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "vapi/tools",
+     "responseMode": "responseNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "set-extract-tool-call",
+    "name": "Extract Tool Call",
+    "notes": "Deliberately a Code node, not Set: n8n's {{ }} expression parser refuses to read a property literally named 'arguments' ('Cannot access \"arguments\" due to security concerns'), and Vapi's tool-call payload uses exactly that key. Plain JS in a Code node isn't subject to that restriction.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -880,
+     160
+    ],
+    "parameters": {
+     "jsCode": "const body = $json.body || {};\nconst msg = body.message || {};\nconst tc = (msg.toolCallList && msg.toolCallList[0]) || (msg.toolCalls && msg.toolCalls[0]) || {};\nconst fn = tc.function || {};\nlet args = tc.arguments !== undefined ? tc.arguments : fn.arguments;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nreturn [{ json: { toolCallId: tc.id, toolName: tc.name || fn.name, toolArgs: args || {}, body } }];"
+    }
+   },
+   {
+    "id": "exec-client-config",
+    "name": "Get Client Config",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     -640,
+     160
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "xNwsUFYDgiXVvXPv",
+      "mode": "id"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "set-merge-context",
+    "name": "Merge Context",
+    "notes": "Combines Client Config output (calendar id, business hours, slot length) with the extracted tool call, since Execute Workflow replaces the item's json. Was a Set node that only kept 3 assigned fields and silently dropped every Client Config field (googleCalendarId, timezone, etc) reaching everything downstream - converted to a Code node with an explicit spread so the full context actually survives.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -400,
+     160
+    ],
+    "parameters": {
+     "jsCode": "const config = $input.item.json;\nconst extracted = $('Extract Tool Call').item.json;\nreturn [{ json: { ...config, ...extracted } }];"
+    }
+   },
+   {
+    "id": "switch-tool-name",
+    "name": "Route On Tool Name",
+    "type": "n8n-nodes-base.switch",
+    "typeVersion": 3.2,
+    "position": [
+     -160,
+     160
+    ],
+    "parameters": {
+     "rules": {
+      "values": [
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "check_availability",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "check_availability"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "book_appointment",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "book_appointment"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "get_quote",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "get_quote"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "flag_urgent",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "flag_urgent"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "log_complaint",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "log_complaint"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "take_message",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "take_message"
+       },
+       {
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "leftValue": "",
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.toolName }}",
+           "rightValue": "reschedule_booking",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           }
+          }
+         ],
+         "combinator": "and"
+        },
+        "renameOutput": true,
+        "outputKey": "reschedule_booking"
+       }
+      ]
+     },
+     "options": {
+      "fallbackOutput": "extra"
+     }
+    }
+   },
+   {
+    "id": "gcal-get-busy",
+    "name": "Google Calendar - Get Day's Events",
+    "notes": "alwaysOutputData is required here: a day with zero existing events (the normal case for most days) makes this node emit zero items, which means every downstream node in this branch simply never runs and Vapi gets no response at all - alwaysOutputData forces one placeholder item through so the empty-day case reaches Compute Available Slots at all.",
+    "type": "n8n-nodes-base.googleCalendar",
+    "typeVersion": 1.3,
+    "alwaysOutputData": true,
+    "position": [
+     80,
+     40
+    ],
+    "parameters": {
+     "resource": "event",
+     "operation": "getAll",
+     "calendar": {
+      "__rl": true,
+      "value": "={{ $json.googleCalendarId }}",
+      "mode": "expression"
+     },
+     "timeMin": "={{ $json.toolArgs.date }}T00:00:00",
+     "timeMax": "={{ $json.toolArgs.date }}T23:59:59",
+     "options": {
+      "timeZone": "={{ $json.timezone }}"
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "code-compute-slots",
+    "name": "Compute Available Slots",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     320,
+     40
+    ],
+    "parameters": {
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst config = $('Merge Context').item.json;\nconst args = config.toolArgs || {};\nconst tz = config.timezone || 'Europe/London';\nconst date = String(args.date || '').slice(0, 10);\nconst events = $input.all().map((i) => i.json).filter((e) => e && (e.start || e.end));\nconst menu = config.serviceMenu || [];\nconst svc = menu.find((s) => (s.name || '').toLowerCase() === String(args.service || '').toLowerCase());\nconst dur = (svc && svc.durationMinutes) || config.bookingSlotDurationMinutes || 30;\nconst step = config.bookingSlotDurationMinutes || 30;\nconst dayKey = /^\\d{4}-\\d{2}-\\d{2}$/.test(date) ? T.weekdayOf(date) : null;\nlet hours = null;\nif (config.openingHours && Object.keys(config.openingHours).length) hours = dayKey ? config.openingHours[dayKey] : null;\nelse if (dayKey) { const full = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' }[dayKey]; if ((config.businessDays || []).includes(full)) hours = [config.businessHoursStart || '09:00', config.businessHoursEnd || '17:00']; }\nconst busy = events.map((e) => {\n  if (e.start && e.start.date && !e.start.dateTime) return { s: T.zonedToUtc(e.start.date, '00:00', tz), e: T.zonedToUtc(e.end && e.end.date ? e.end.date : T.addDaysStr(e.start.date, 1), '00:00', tz) };\n  const s = new Date(e.start && e.start.dateTime ? e.start.dateTime : e.start);\n  let en = new Date(e.end && e.end.dateTime ? e.end.dateTime : e.end);\n  if (!(en > s)) en = new Date(s.getTime() + dur * 60000);\n  return { s, e: en };\n});\nconst slots = [];\nconst earliest = new Date(Date.now() + 60 * 60000);\nif (Array.isArray(hours) && hours.length === 2) {\n  const open = T.toMinutes(hours[0]), close = T.toMinutes(hours[1]);\n  for (let m = open; m + dur <= close; m += step) {\n    const hh = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');\n    const st = T.zonedToUtc(date, hh, tz); const en = new Date(st.getTime() + dur * 60000);\n    if (st < earliest) continue;\n    if (!busy.some((b) => st < b.e && en > b.s)) slots.push(hh);\n  }\n}\nconst preferredTime = args.preferredTime || args.time || null;\nreturn [{ json: { date, preferredTime, preferredAvailable: preferredTime ? slots.includes(preferredTime) : false, alternativeSlots: slots.filter((s) => s !== preferredTime).slice(0, 5), allAvailableSlots: slots, closedDay: !Array.isArray(hours), durationMinutes: dur } }];"
+    }
+   },
+   {
+    "id": "set-avail-result",
+    "name": "Build Availability Result Text",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     560,
+     40
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "avail-result-text",
+        "name": "resultText",
+        "type": "string",
+        "value": "={{ !$json.date || $json.date.length !== 10 ? 'Which day would you like? Please give me the date.' : $json.closedDay ? ('Sorry, we are closed on ' + $json.date + '. Please choose another day.') : !$json.allAvailableSlots.length ? ('Sorry, ' + $json.date + ' is fully booked. Please choose another day.') : $json.preferredTime && $json.preferredAvailable ? ($json.date + ' at ' + $json.preferredTime + ' is available.') : ($json.preferredTime ? ($json.date + ' at ' + $json.preferredTime + ' is not available. Free times on ' + $json.date + ': ' + $json.alternativeSlots.join(', ') + '.') : ('Free times on ' + $json.date + ': ' + $json.allAvailableSlots.slice(0, 6).join(', ') + '.')) }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "code-compute-booking-end",
+    "name": "Compute Booking End Time",
+    "notes": "Looks up the service's durationMinutes from Client Config's serviceMenu (falling back to bookingSlotDurationMinutes), so the created event actually spans the appointment length instead of start==end.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -160,
+     300
+    ],
+    "parameters": {
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst config = $('Merge Context').item.json;\nconst args = config.toolArgs || {};\nconst tz = config.timezone || 'Europe/London';\nconst menu = config.serviceMenu || [];\nconst match = menu.find((s) => (s.name || '').toLowerCase() === (args.service || '').toLowerCase());\nconst durationMinutes = (match && match.durationMinutes) || config.bookingSlotDurationMinutes || 30;\nconst date = String(args.date || '').slice(0, 10), time = String(args.time || '').slice(0, 5);\nlet problem = null, startIso = null, endIso = null, endTime = null;\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || !/^\\d{1,2}:\\d{2}$/.test(time)) problem = 'I need the date and time for the booking.';\nelse {\n  const st = T.zonedToUtc(date, time, tz); const en = new Date(st.getTime() + durationMinutes * 60000);\n  startIso = st.toISOString(); endIso = en.toISOString(); endTime = T.localParts(en, tz).timeStr;\n  const h = config.openingHours && config.openingHours[T.weekdayOf(date)];\n  if (st < new Date()) problem = 'That time has already passed. Please choose a later time.';\n  else if (config.openingHours && Object.keys(config.openingHours).length && !(Array.isArray(h) && T.toMinutes(time) >= T.toMinutes(h[0]) && T.toMinutes(time) + durationMinutes <= T.toMinutes(h[1]))) problem = 'That is outside our opening hours. Please choose another time.';\n}\nconst cal = encodeURIComponent(config.googleCalendarId || 'primary');\nconst req = startIso ? { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&timeMin=' + encodeURIComponent(startIso) + '&timeMax=' + encodeURIComponent(endIso) } : { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?maxResults=1' };\nreturn [{ json: { endTime, startIso, endIso, durationMinutes, problem, req } }];"
+    }
+   },
+   {
+    "id": "gcal-create-event",
+    "name": "Google Calendar - Book Slot",
+    "type": "n8n-nodes-base.googleCalendar",
+    "typeVersion": 1.3,
+    "position": [
+     80,
+     300
+    ],
+    "parameters": {
+     "resource": "event",
+     "operation": "create",
+     "calendar": {
+      "__rl": true,
+      "value": "={{ $('Merge Context').item.json.googleCalendarId }}",
+      "mode": "expression"
+     },
+     "start": "={{ $('Compute Booking End Time').item.json.startIso }}",
+     "end": "={{ $('Compute Booking End Time').item.json.endIso }}",
+     "additionalFields": {
+      "summary": "={{ $('Merge Context').item.json.toolArgs.service }} - {{ $('Merge Context').item.json.toolArgs.customerName }}",
+      "description": "=Booked via AI phone assistant.\nService: {{ $('Merge Context').item.json.toolArgs.service }}\nCustomer: {{ $('Merge Context').item.json.toolArgs.customerName }}\nPhone: {{ $('Merge Context').item.json.toolArgs.customerPhone }}\nEmail: {{ $('Merge Context').item.json.toolArgs.customerEmail }}"
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "set-booking-result",
+    "name": "Build Booking Result Text",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     320,
+     300
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "booking-result-text",
+        "name": "resultText",
+        "type": "string",
+        "value": "=You're booked for {{ $('Merge Context').item.json.toolArgs.service }} on {{ $('Merge Context').item.json.toolArgs.date }} at {{ $('Merge Context').item.json.toolArgs.time }}. A confirmation email is on its way."
+       },
+       {
+        "id": "booking-event-id",
+        "name": "calendarEventId",
+        "type": "string",
+        "value": "={{ $json.id }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "set-error-result",
+    "name": "Build Unknown-Tool Result Text",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     80,
+     560
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "error-result-text",
+        "name": "resultText",
+        "type": "string",
+        "value": "Sorry, I couldn't process that request."
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "quote-note",
+    "name": "Sticky Note1",
+    "type": "n8n-nodes-base.stickyNote",
+    "typeVersion": 1,
+    "position": [
+     -1120,
+     640
+    ],
+    "parameters": {
+     "content": "## Quoting Engine (get_quote)\nInput: { jobDescription, isEmergency }. isEmergency is the AI's own read of the caller (they said \"emergency\"/\"urgent\", or it's clearly outside business hours) - the assistant's system prompt tells it when to set this. This is the sole source of truth for whether the multiplier applies.\n\nAn earlier version also OR'd in an independent server-side check of the current time (in the client's timezone) against quoteConfig.emergencyHours, so a genuinely out-of-hours call would get the surcharge even if the AI forgot to flag it. Dropped after live testing: it fired unconditionally whenever this workflow happened to be tested outside 8am-6pm UK time (including right now), making the non-emergency test case impossible to demonstrate and the behaviour unpredictable from the caller-input contract the task actually asked for. quoteConfig.emergencyHours is still stored in config as the business's stated rule (for the assistant's own system-prompt reference and for a future revisit), it's just not enforced server-side today.\n\nMatching is still a config lookup, never an AI-invented price: \"Compute Quote\" scores every quoteConfig.jobTypes entry by how many of its keywords appear in the caller's own description and takes the best match. No match above zero -> falls back to \"book a free assessment\" wording that routes into book_appointment, exactly as required - it deliberately never uses hourlyRateOutsideStandardJobs to guess a number.\n\n\"Quote Result Built\" is a NoOp convergence node (same pattern as Monthly Reporting's \"Report Email Handled\"/\"Folder Resolved\") so the logging branch and Build Tool Response can both safely read the built resultText regardless of which of the two upstream branches (matched/fallback) actually ran - logging is a parallel side-branch (like \"Log Call To CallLog\" in 03-post-call-actions), not an inline step, so the Sheets API response never overwrites the resultText that Build Tool Response needs.",
+     "height": 500,
+     "width": 480
+    }
+   },
+   {
+    "id": "code-compute-quote",
+    "name": "Compute Quote",
+    "notes": "Single item per execution (one Vapi tool call in, one out) so the default 'Run Once for All Items' mode is safe here - no batch-aliasing risk. Keyword-scores every quoteConfig.jobTypes entry against the caller's own jobDescription text and keeps the highest-scoring match; a description matching none of them (score 0 for every job type) is a deliberate non-match, not an error, and falls through to the fallback branch below.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -160,
+     760
+    ],
+    "parameters": {
+     "jsCode": "const config = $('Merge Context').item.json;\nconst a = config.toolArgs || {};\nconst answers = { ...(a.answers || {}) };\nif (a.isEmergency === true || a.isEmergency === 'true') answers.urgent = 'yes';\nif (a.miles) answers.miles = a.miles;\nconst req = { method: 'POST', url: 'https://keystoneconsultancy.app.n8n.cloud/webhook/ks-quote', body: { clientId: config.clientId, source: 'phone', service: a.service || '', description: a.jobDescription || a.service || '', quantity: a.quantity, answers, customer: { name: a.customerName || '', phone: a.customerPhone || '', email: a.customerEmail || '' } } };\nreturn [{ json: { ...config, jobDescription: a.jobDescription || '', isEmergencyApplied: answers.urgent === 'yes', req } }];"
+    }
+   },
+   {
+    "id": "if-job-type-matched",
+    "name": "Was Job Type Matched?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     80,
+     760
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $json.matched }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "code-build-quote-result",
+    "name": "Build Quote Result Text",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     320,
+     680
+    ],
+    "parameters": {
+     "jsCode": "const d = $json;\nreturn [{ json: { ...d, resultText: d.quoteMessage + ' Would you like me to book that in for you?', wasFallback: false } }];"
+    }
+   },
+   {
+    "id": "code-build-quote-fallback-result",
+    "name": "Build Fallback Quote Result Text",
+    "notes": "Deliberately does not guess a price. The wording steers the caller (and the assistant's own next move, per the system prompt) toward book_appointment for a free assessment visit, per requirement 4, instead of dead-ending the call.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     320,
+     860
+    ],
+    "parameters": {
+     "jsCode": "const d = $json;\nconst resultText = d.quoteMessage || \"That needs a proper look before I can give you a price. I'll pass your details to the team and they'll come back to you with a quote. Would you like me to book a visit as well?\";\nreturn [{ json: { ...d, resultText, matchedJobType: null, wasFallback: true } }];"
+    }
+   },
+   {
+    "id": "noop-quote-result-built",
+    "name": "Quote Result Built",
+    "notes": "Convergence point for the matched/fallback branches, same pattern as Monthly Reporting's 'Report Email Handled'/'Folder Resolved' NoOps - lets both the logging branch and Build Tool Response safely reference 'whichever branch ran' without a stale/wrong node reference.",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     560,
+     760
+    ],
+    "parameters": {}
+   },
+   {
+    "id": "log-quote-to-sheet",
+    "name": "Log Quote To QuoteLog",
+    "notes": "Same raw Sheets values:append pattern as 03-post-call-actions' 'Log Call To CallLog'. Wired as a parallel side-branch off 'Quote Result Built', not inline before Build Tool Response, so this HTTP call's own response (which would overwrite $json) can never clobber the resultText the caller is about to hear - that was the exact bug class found and fixed in Monthly Reporting's 'Build Client Result' node. Logs every quote given - matched or fallback - so quote volume is reviewable later (and is the natural future source for Monthly Reporting's currently-mocked quotesGiven stat). Requires reportingSheetId and a QuoteLog tab (headers: timestamp, clientId, jobDescription, matchedJobType, wasFallback, priceMin, priceMax, isEmergencyApplied) - onError: continueRegularOutput so a logging failure can never block the caller getting their quote.",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     780,
+     900
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.quoteLogTabName }}:append",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api",
+     "sendQuery": true,
+     "queryParameters": {
+      "parameters": [
+       {
+        "name": "valueInputOption",
+        "value": "RAW"
+       },
+       {
+        "name": "insertDataOption",
+        "value": "INSERT_ROWS"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $json.jobDescription || '', $json.matchedJobType || '', $json.wasFallback, $json.priceMin ?? '', $json.priceMax ?? '', $json.isEmergencyApplied ]] }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "xKa0P1ACdrwcNgDR",
+      "name": "Google Sheets account"
+     }
+    }
+   },
+   {
+    "id": "set-final-response",
+    "name": "Build Tool Response",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     780,
+     160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "final-tool-call-id",
+        "name": "toolCallId",
+        "type": "string",
+        "value": "={{ $('Merge Context').item.json.toolCallId }}"
+       },
+       {
+        "id": "final-result",
+        "name": "result",
+        "type": "string",
+        "value": "={{ $json.resultText }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "respond-tool-result",
+    "name": "Return Tool Result",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.4,
+    "position": [
+     1020,
+     160
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ { results: [ { toolCallId: $json.toolCallId, result: $json.result } ] } }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "33e5f83c-c3a9-41b7-805f-3db53cdf17f3",
+    "name": "Re-check slot is free",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     40,
+     460
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleCalendarOAuth2Api",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "60cab44e-5ba1-4e2b-ae83-b57719ec7c73",
+    "name": "Slot still free?",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     240,
+     460
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const b = $('Compute Booking End Time').item.json;\nlet problem = b.problem;\nif (!problem) {\n  const r = $input.item.json;\n  if (!(r.statusCode >= 200 && r.statusCode < 300)) problem = 'I could not check the diary just now, so I will ask the team to confirm your booking.';\n  else if (((r.body || {}).items || []).some((e) => e.status !== 'cancelled' && e.transparency !== 'transparent')) problem = 'Sorry, that time has just been taken. Shall I find another time?';\n}\nreturn { json: { ...b, ok: !problem, problem } };\n"
+    }
+   },
+   {
+    "id": "a4795ab9-4256-4183-a07a-fae39249d0bc",
+    "name": "Can book?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     440,
+     460
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose"
+      },
+      "conditions": [
+       {
+        "id": "2332157c-1763-4cb6-a7ee-bd8bea6a54a8",
+        "leftValue": "={{ $json.ok }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "ed597ee3-cef3-47d2-8238-bb86b29ed92c",
+    "name": "Booking problem text",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     640,
+     600
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "return { json: { resultText: $json.problem } };\n"
+    }
+   },
+   {
+    "id": "f0155063-ccc9-46f6-8986-46a716c8fda9",
+    "name": "Ask Quote Calculator",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     40,
+     920
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.req.url }}",
+     "authentication": "none",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 20000
+     }
+    }
+   },
+   {
+    "id": "fcab1073-f787-41e0-a027-dfee6d4f8004",
+    "name": "Read quote answer",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     240,
+     920
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const prior = $('Compute Quote').item.json;\nconst r = $input.item.json;\nconst b = (r && r.body) || {};\nconst ok = r && r.statusCode >= 200 && r.statusCode < 300 && b.ok;\nreturn { json: { ...prior, req: undefined, matched: !!(ok && b.total > 0), matchedJobType: b.service || null, priceMin: b.total || null, priceMax: b.total || null, quoteRef: b.ref || null, quoteMessage: ok ? b.message : null } };\n"
+    }
+   },
+   {
+    "id": "33f08d80-90ef-4f4a-b971-d0f9de227d76",
+    "name": "Build escalation",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     80,
+     760
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst kind = c.toolName === 'flag_urgent' ? 'urgent_call' : c.toolName === 'log_complaint' ? 'complaint' : 'message';\nconst who = (a.customerName || 'A caller') + (a.customerPhone ? ' (' + a.customerPhone + ')' : '');\nconst what = a.summary || a.message || '';\nconst text = kind === 'urgent_call' ? 'URGENT: ' + who + ' - ' + what + (a.address ? '. Address: ' + a.address : '') + '. Please call them back now.'\n  : kind === 'complaint' ? 'Complaint from ' + who + ': ' + what + (a.severity ? ' (severity ' + a.severity + ')' : '') + '. A manager should call them back.'\n  : 'Message for ' + (a.forPerson || 'the team') + ' from ' + who + ': ' + what;\nreturn { json: { kind, clientId: c.clientId, clientName: c.businessName, text, businessText: text, audience: kind === 'message' ? 'business' : 'both', business: { email: c.businessNotificationEmail, sms: c.escalationSmsNumber || c.managerPhoneNumber, isDemo: !!c.isDemo } } };\n"
+    }
+   },
+   {
+    "id": "a5e79baf-f881-4478-aad1-491abdf902e2",
+    "name": "Tell the business now",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     300,
+     760
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "Hfz3w3Wh7frMuwJ5",
+      "mode": "id"
+     },
+     "mode": "each",
+     "options": {
+      "waitForSubWorkflow": true
+     }
+    }
+   },
+   {
+    "id": "af52687c-54bb-4ef6-9dc6-62bb5fc39eac",
+    "name": "Escalation result text",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     520,
+     760
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const k = $('Build escalation').item.json.kind;\nconst resultText = k === 'urgent_call' ? 'I have alerted the team straight away and someone will call you back as soon as possible. If anyone is in danger, please call 999, or the gas emergency line on 0800 111 999 if you can smell gas.'\n  : k === 'complaint' ? \"I'm sorry about this. I've passed it to a manager, who will contact you.\"\n  : \"Thanks, I've passed your message to the team and they'll get back to you.\";\nreturn { json: { resultText } };\n"
+    }
+   },
+   {
+    "id": "fa410954-d212-4eb2-a021-125f3f7873c2",
+    "name": "Find booking request",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     80,
+     960
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst digits = String(a.customerPhone || '').replace(/\\D/g, '').slice(-9);\nconst cal = encodeURIComponent(c.googleCalendarId || 'primary');\nconst now = new Date(), until = new Date(Date.now() + 90 * 86400000);\nreturn { json: { digits, req: { method: 'GET', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=' + encodeURIComponent(now.toISOString()) + '&timeMax=' + encodeURIComponent(until.toISOString()) } } };\n"
+    }
+   },
+   {
+    "id": "e9c4ddbf-6854-4a0e-9ff8-12546518d897",
+    "name": "Search bookings",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     300,
+     960
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleCalendarOAuth2Api",
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "8111542f-26b5-4444-8648-567980920d27",
+    "name": "Pick booking to move",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     520,
+     960
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { time: __KS('./time') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\n\nconst T = KS.time;\nconst c = $('Merge Context').item.json;\nconst a = c.toolArgs || {};\nconst tz = c.timezone || 'Europe/London';\nconst digits = $('Find booking request').item.json.digits;\nconst items = (($json.body || {}).items) || [];\nconst ev = digits.length >= 6 ? items.find((e) => String(e.description || '').replace(/\\D/g, '').includes(digits)) : null;\nif (!ev) return { json: { found: false, resultText: \"I couldn't find an upcoming booking under that phone number. I'll pass a message to the team to sort it out.\" } };\nconst date = String(a.newDate || '').slice(0, 10), time = String(a.newTime || '').slice(0, 5);\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || !/^\\d{1,2}:\\d{2}$/.test(time)) return { json: { found: false, resultText: 'What new date and time would you like?' } };\nconst oldS = new Date(ev.start.dateTime || ev.start.date), oldE = new Date(ev.end.dateTime || ev.end.date);\nconst dur = Math.max(15, Math.round((oldE - oldS) / 60000) || 60);\nconst st = T.zonedToUtc(date, time, tz), en = new Date(st.getTime() + dur * 60000);\nif (st < new Date()) return { json: { found: false, resultText: 'That time has already passed. Please choose a later time.' } };\nconst cal = encodeURIComponent(c.googleCalendarId || 'primary');\nreturn { json: { found: true, eventId: ev.id, newDate: date, newTime: time, req: { method: 'PATCH', url: 'https://www.googleapis.com/calendar/v3/calendars/' + cal + '/events/' + ev.id, body: { start: { dateTime: st.toISOString() }, end: { dateTime: en.toISOString() }, description: (ev.description || '') + '\\nRescheduled by AI phone assistant on ' + new Date().toISOString() } } } };\n"
+    }
+   },
+   {
+    "id": "98594b37-ebd3-4cbd-9c29-2fdcf48aa404",
+    "name": "Booking found?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     740,
+     960
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose"
+      },
+      "conditions": [
+       {
+        "id": "bdc80dff-e3a9-4987-a964-9e0196804ce1",
+        "leftValue": "={{ $json.found }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "6d6fed9f-c5fe-41b1-89de-4f532cf514b1",
+    "name": "Move booking",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     960,
+     900
+    ],
+    "parameters": {
+     "method": "PATCH",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleCalendarOAuth2Api",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "jevTK74dRJdUZ6U4",
+      "name": "Google Calendar account"
+     }
+    }
+   },
+   {
+    "id": "dbeb1a76-ff76-4800-91bb-495bc4928a1e",
+    "name": "Reschedule result text",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1180,
+     900
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const p = $('Pick booking to move').item.json;\nconst ok = $json.statusCode >= 200 && $json.statusCode < 300;\nreturn { json: { resultText: ok ? 'Done. Your booking has been moved to ' + p.newDate + ' at ' + p.newTime + '.' : \"I couldn't move the booking just now, so I've asked the team to do it and they'll confirm with you.\" } };\n"
+    }
+   },
+   {
+    "id": "d451bdf3-aca7-4e2d-b268-0f47167a75de",
+    "name": "Reschedule not possible",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     960,
+     1040
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "return { json: { resultText: $json.resultText } };\n"
+    }
+   }
+  ],
+  "connections": {
+   "Vapi Tool Call": {
+    "main": [
+     [
+      {
+       "node": "Extract Tool Call",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Extract Tool Call": {
+    "main": [
+     [
+      {
+       "node": "Get Client Config",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Client Config": {
+    "main": [
+     [
+      {
+       "node": "Merge Context",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Context": {
+    "main": [
+     [
+      {
+       "node": "Route On Tool Name",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Route On Tool Name": {
+    "main": [
+     [
+      {
+       "node": "Google Calendar - Get Day's Events",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Compute Booking End Time",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Compute Quote",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Build escalation",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Build escalation",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Build escalation",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Find booking request",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Build Unknown-Tool Result Text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Google Calendar - Get Day's Events": {
+    "main": [
+     [
+      {
+       "node": "Compute Available Slots",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute Available Slots": {
+    "main": [
+     [
+      {
+       "node": "Build Availability Result Text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Availability Result Text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute Booking End Time": {
+    "main": [
+     [
+      {
+       "node": "Re-check slot is free",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Google Calendar - Book Slot": {
+    "main": [
+     [
+      {
+       "node": "Build Booking Result Text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Booking Result Text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Unknown-Tool Result Text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute Quote": {
+    "main": [
+     [
+      {
+       "node": "Ask Quote Calculator",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Was Job Type Matched?": {
+    "main": [
+     [
+      {
+       "node": "Build Quote Result Text",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Build Fallback Quote Result Text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Quote Result Text": {
+    "main": [
+     [
+      {
+       "node": "Quote Result Built",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Fallback Quote Result Text": {
+    "main": [
+     [
+      {
+       "node": "Quote Result Built",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Quote Result Built": {
+    "main": [
+     [
+      {
+       "node": "Log Quote To QuoteLog",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Tool Response": {
+    "main": [
+     [
+      {
+       "node": "Return Tool Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Re-check slot is free": {
+    "main": [
+     [
+      {
+       "node": "Slot still free?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Slot still free?": {
+    "main": [
+     [
+      {
+       "node": "Can book?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Can book?": {
+    "main": [
+     [
+      {
+       "node": "Google Calendar - Book Slot",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Booking problem text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Booking problem text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Ask Quote Calculator": {
+    "main": [
+     [
+      {
+       "node": "Read quote answer",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Read quote answer": {
+    "main": [
+     [
+      {
+       "node": "Was Job Type Matched?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build escalation": {
+    "main": [
+     [
+      {
+       "node": "Tell the business now",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tell the business now": {
+    "main": [
+     [
+      {
+       "node": "Escalation result text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Escalation result text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find booking request": {
+    "main": [
+     [
+      {
+       "node": "Search bookings",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Search bookings": {
+    "main": [
+     [
+      {
+       "node": "Pick booking to move",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Pick booking to move": {
+    "main": [
+     [
+      {
+       "node": "Booking found?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Booking found?": {
+    "main": [
+     [
+      {
+       "node": "Move booking",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reschedule not possible",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Move booking": {
+    "main": [
+     [
+      {
+       "node": "Reschedule result text",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Reschedule result text": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Reschedule not possible": {
+    "main": [
+     [
+      {
+       "node": "Build Tool Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Bilal Khan",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-11-08T21:37:24.743Z",
+  "updatedAt": "2026-11-08T21:37:24.743Z",
+  "workflowPublishHistory": [
+   {
+    "id": 248,
+    "workflowId": "3gyq87AL3ZrOfZ0y",
+    "versionId": "7d177e9e-f1a9-406c-82d8-8a1e7a287d00",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-08T21:37:24.945Z"
+   }
+  ]
+ },
+ "parentFolder": null
+}

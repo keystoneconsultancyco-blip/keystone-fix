@@ -1,5 +1,7 @@
 # Keystone go-live (9 Nov 2026)
 
+> **PAUSED since 11 Nov 2026.** Everything is switched off until Bilal says "GREEN LIGHT". Restart procedure: [`GREEN_LIGHT.md`](GREEN_LIGHT.md).
+
 **Launch readiness: 79%.** All the building is done and tested end to end. The rest is the 12 steps below, which only you can do (money, accounts, legal). Several of them switch things on automatically once you fill in one Airtable cell.
 
 ## Full end-to-end test (demo, real services): passed

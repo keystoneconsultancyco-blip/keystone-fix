@@ -29,6 +29,8 @@ async function deploy(names) {
   const alertWf = live.find((w) => w.name === 'KS Ops - Failure Alerts');
   const targets = Object.values(workflows).filter((w) => !names.length || names.includes(w.name));
   const results = [];
+  const allowOn = await require('./pause').mayActivate();
+  if (!allowOn) console.error('system_status is PAUSED: workflows are deployed switched OFF. (GREEN_LIGHT.md explains how to switch on.)');
   for (const wf of targets) {
     if (!/^KS /.test(wf.name) || /^\[Stock\]/.test(wf.name)) { results.push({ name: wf.name, skipped: 'not a KS workflow' }); continue; }
     const wants = true;
@@ -72,7 +74,10 @@ async function deploy(names) {
     if (!existing) live.push({ id, name: wf.name });
     const hasTrigger = wf.nodes.some((x) => /webhook|scheduleTrigger|formTrigger|errorTrigger|executeWorkflowTrigger/.test(x.type));
     let active = null;
-    if (wf.__inactive && !process.env.KS_DEPLOY_ALL_ACTIVE) {
+    if (!allowOn) {
+      if (existing) await api('POST', `/workflows/${id}/deactivate`);
+      active = 'kept off: system PAUSED';
+    } else if (wf.__inactive && !process.env.KS_DEPLOY_ALL_ACTIVE) {
       // Built but switched off (e.g. agents waiting for a client-count threshold).
       if (existing) await api('POST', `/workflows/${id}/deactivate`);
       active = 'kept off on purpose';

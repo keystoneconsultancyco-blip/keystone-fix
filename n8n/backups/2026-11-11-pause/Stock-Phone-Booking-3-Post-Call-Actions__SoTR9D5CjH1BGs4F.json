@@ -1,0 +1,1480 @@
+{
+ "id": "SoTR9D5CjH1BGs4F",
+ "name": "[Stock] Phone Booking - 3. Post-Call Actions",
+ "description": null,
+ "active": true,
+ "activeVersionId": "056c0d46-9e9e-493a-929c-52370e866062",
+ "createdAt": "2026-08-23T13:11:41.301Z",
+ "updatedAt": "2026-11-08T21:39:54.176Z",
+ "isArchived": false,
+ "versionId": "056c0d46-9e9e-493a-929c-52370e866062",
+ "versionCounter": 6,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "postcall-note",
+   "name": "Sticky Note",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -1100,
+    -280
+   ],
+   "parameters": {
+    "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time, transferredToManager (bool), transferReason (string). This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification, both via the Resend HTTP API (NOT SMTP - Railway blocks outbound SMTP, so these are plain HTTPS calls instead). Requires a \"Resend API\" Header Auth credential in n8n with header 'Authorization: Bearer <resend-api-key>', same pattern as the Vapi credential.\n\nIndependently, if transferredToManager is true: sends the business a separate FYI email about the transfer. This is purely a post-call record - by the time this webhook fires, the live transfer (Vapi's transferCall tool, mid-conversation) has already happened; this workflow has no way to trigger or affect that transfer itself, only to log it afterwards. Not the same mechanism as the SIP-failure fallback in 01-inbound-ivr (that's a Twilio DialCallStatus callback for a technical connection failure, this is the AI's own uncertainty about the request) - the two are completely independent and can both exist without interacting.\n\nA third, always-on branch (\"Log Call To CallLog\") writes one row per call - regardless of outcome - to this client's own reportingSheetId (Client Config). Added so workflows/monthly-reporting has a real historical record of call volume/bookings to read - previously this workflow only ever sent emails and kept no log of its own at all.",
+    "height": 560,
+    "width": 520
+   }
+  },
+  {
+   "id": "webhook-end-of-call",
+   "name": "Vapi End Of Call",
+   "webhookId": "vapi-end-of-call",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -1100,
+    160
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "vapi/end-of-call",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "set-extract-summary",
+   "name": "Extract Call Summary",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    -860,
+    160
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "booking-made",
+       "name": "bookingMade",
+       "type": "boolean",
+       "value": "={{ $json.body.message.analysis?.structuredData?.bookingMade === true }}"
+      },
+      {
+       "id": "customer-name",
+       "name": "customerName",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.customerName || 'there' }}"
+      },
+      {
+       "id": "customer-phone",
+       "name": "customerPhone",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.customerPhone || $json.body.message.customer?.number || '' }}"
+      },
+      {
+       "id": "customer-email",
+       "name": "customerEmail",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.customerEmail || '' }}"
+      },
+      {
+       "id": "booked-service",
+       "name": "service",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.service || '' }}"
+      },
+      {
+       "id": "booked-date",
+       "name": "bookingDate",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.date || '' }}"
+      },
+      {
+       "id": "booked-time",
+       "name": "bookingTime",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.time || '' }}"
+      },
+      {
+       "id": "call-transcript",
+       "name": "transcript",
+       "type": "string",
+       "value": "={{ $json.body.message.transcript || '' }}"
+      },
+      {
+       "id": "transferred-to-manager",
+       "name": "transferredToManager",
+       "type": "boolean",
+       "value": "={{ $json.body.message.analysis?.structuredData?.transferredToManager === true }}"
+      },
+      {
+       "id": "transfer-reason",
+       "name": "transferReason",
+       "type": "string",
+       "value": "={{ $json.body.message.analysis?.structuredData?.transferReason || '' }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "exec-client-config",
+   "name": "Get Client Config",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "position": [
+    -620,
+    160
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "xNwsUFYDgiXVvXPv",
+     "mode": "id"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "if-booking-made",
+   "name": "Was A Booking Made?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    -380,
+    160
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $('Extract Call Summary').item.json.bookingMade }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "email-customer-confirmation",
+   "name": "Email Customer Confirmation",
+   "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    -140,
+    60
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.resend.com/emails",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.isDemo ? 'khan.bilalbk408@gmail.com' : $('Extract Call Summary').item.json.customerEmail], subject: `Your booking with ${$json.businessName} is confirmed`, text: `Hi ${$('Extract Call Summary').item.json.customerName},\\n\\nYour ${$('Extract Call Summary').item.json.service} appointment with ${$json.businessName} is confirmed for ${$('Extract Call Summary').item.json.bookingDate} at ${$('Extract Call Summary').item.json.bookingTime}.\\n\\nIf you need to change or cancel, just call us back.\\n\\nThanks,\\n${$json.businessName}` }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  },
+  {
+   "id": "email-business-notification",
+   "name": "Email Business Notification",
+   "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    -140,
+    260
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.resend.com/emails",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `New booking: ${$('Extract Call Summary').item.json.customerName} - ${$('Extract Call Summary').item.json.bookingDate}`, text: `New booking taken by the AI phone assistant:\\n\\nCustomer: ${$('Extract Call Summary').item.json.customerName}\\nPhone: ${$('Extract Call Summary').item.json.customerPhone}\\nEmail: ${$('Extract Call Summary').item.json.customerEmail}\\nService: ${$('Extract Call Summary').item.json.service}\\nDate: ${$('Extract Call Summary').item.json.bookingDate}\\nTime: ${$('Extract Call Summary').item.json.bookingTime}` }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  },
+  {
+   "id": "respond-ack",
+   "name": "Acknowledge",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.4,
+   "position": [
+    140,
+    160
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { \"received\": true } }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "log-call-to-sheet",
+   "name": "Log Call To CallLog",
+   "notes": "Raw Sheets REST API - values:append (POST, not the values.get/update/clear verbs used elsewhere in this project so far - this is the first use of the append verb here). Logs every call regardless of outcome, since this is the only historical record of call volume at all - Monthly Reporting reads this sheet for 'calls answered'/'bookings made'. Requires reportingSheetId to be set in Client Config to a real sheet with a CallLog tab whose row 1 has headers matching this row's order (timestamp, clientId, callerNumber, bookingMade, transferredToManager, service, date, time) - see workflows/monthly-reporting/README.md. onError: continueRegularOutput so a logging failure (e.g. blank/placeholder reportingSheetId) can never block Acknowledge or the other notification branches.",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    -140,
+    640
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.callLogTabName }}:append",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleSheetsOAuth2Api",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "valueInputOption",
+       "value": "RAW"
+      },
+      {
+       "name": "insertDataOption",
+       "value": "INSERT_ROWS"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $('Extract Call Summary').item.json.customerPhone || '', $('Extract Call Summary').item.json.bookingMade, $('Extract Call Summary').item.json.transferredToManager, $('Extract Call Summary').item.json.service || '', $('Extract Call Summary').item.json.bookingDate || '', $('Extract Call Summary').item.json.bookingTime || '' ]] }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "googleSheetsOAuth2Api": {
+     "id": "xKa0P1ACdrwcNgDR",
+     "name": "Google Sheets account"
+    }
+   }
+  },
+  {
+   "id": "if-transferred",
+   "name": "Was Transferred To Manager?",
+   "notes": "Independent of \"Was A Booking Made?\" - both read from the same Extract Call Summary/Get Client Config output, so either or both notifications can fire for the same call (a caller could get booked for one thing and separately get confused about something else later in the same conversation).",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    -380,
+    400
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $('Extract Call Summary').item.json.transferredToManager }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "email-manager-transfer-alert",
+   "name": "Email Business - Manager Transfer Alert",
+   "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential. Purely informational - the live transfer already happened via Vapi's transferCall tool by the time this fires; this just gives the business a searchable record of why, since a live transfer otherwise leaves no trace in this system at all.",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    -140,
+    460
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.resend.com/emails",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `Call transferred to manager - ${$('Extract Call Summary').item.json.transferReason || 'uncertain request'}`, text: `The AI phone assistant transferred a live call to the manager because it couldn't confidently handle the caller's request.\\n\\nReason: ${$('Extract Call Summary').item.json.transferReason || '(not captured)'}\\nCaller number: ${$('Extract Call Summary').item.json.customerPhone || 'unknown'}\\n\\nThis is an FYI only - the call was already transferred live to ${$json.managerPhoneNumber || $json.receptionForwardNumber}, no action needed unless you want to follow up.` }) }}",
+    "options": {}
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  },
+  {
+   "id": "8972bdaa-3e10-44f1-a18f-5c96a4ea3959",
+   "name": "Check call outcome",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -380,
+    520
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'phone': function (module, exports, require) {\n'use strict';\n// AI Phone Booking logic: TwiML, the per-client Vapi assistant config (built from\n// the registry), free-slot calculation, urgency detection and call-outcome logging.\n\nconst T = require('./time');\nconst { escapeHtml } = require('./log');\n\nconst DEFAULT_URGENT = ['leak', 'leaking', 'flood', 'flooding', 'burst', 'no heating', 'no hot water', 'gas smell', 'smell of gas', 'sparking', 'burning smell', 'smoke', 'no power', 'carbon monoxide', 'emergency', 'water everywhere', 'electric shock'];\n\nfunction xml(s) { return escapeHtml(s).replace(/'/g, '&apos;'); }\n\n// Step 1: the caller hears the client greeting, then 1 for reception or 2 for the assistant.\nfunction menuTwiml(client, actionUrl) {\n  const name = client.clientName || 'us';\n  const greeting = client.phone.greeting || `Thanks for calling ${name}.`;\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather input=\"dtmf\" numDigits=\"1\" timeout=\"6\" action=\"${xml(actionUrl)}\" method=\"POST\">\n    <Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">${xml(greeting)} Press 1 to speak to the team. Press 2 to book, reschedule or get a price estimate now.</Say>\n  </Gather>\n  <Redirect method=\"POST\">${xml(actionUrl)}?Digits=2</Redirect>\n</Response>`;\n}\n\n// Step 2: route the choice. Option 2 dials Vapi over SIP; if that fails, the fallback forwards to reception.\nfunction routeTwiml(client, digit, { vapiSipUri, fallbackUrl }) {\n  if (String(digit) === '1' || !vapiSipUri) {\n    return dialReceptionTwiml(client, 'Connecting you to the team now.');\n  }\n  const sip = `${vapiSipUri}${vapiSipUri.includes('?') ? '&' : '?'}X-Keystone-Client=${encodeURIComponent(client.clientId)}`;\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial timeout=\"15\" action=\"${xml(fallbackUrl)}\" method=\"POST\" answerOnBridge=\"true\">\n    <Sip>${xml(sip)}</Sip>\n  </Dial>\n</Response>`;\n}\n\nfunction dialReceptionTwiml(client, say) {\n  const reception = client.phone.receptionNumber;\n  if (!reception) {\n    return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response><Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">Sorry, nobody is available right now. Please leave your name, number and a short message after the tone.</Say><Record maxLength=\"120\" playBeep=\"true\"/></Response>`;\n  }\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>${say ? `<Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">${xml(say)}</Say>` : ''}<Dial timeout=\"25\">${xml(reception)}</Dial></Response>`;\n}\n\n// Dial action callback: if the SIP leg failed, protect the caller by sending them to reception.\nfunction sipFailed(dialCallStatus) {\n  return ['failed', 'busy', 'no-answer', 'canceled'].includes(String(dialCallStatus || '').toLowerCase());\n}\n\nfunction fallbackTwiml(client, dialCallStatus) {\n  if (!sipFailed(dialCallStatus)) return '<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>';\n  return dialReceptionTwiml(client, 'Sorry about that. Let me put you through to the team.');\n}\n\n// ---------- Vapi assistant built from the registry ----------\n\nfunction servicesText(services) {\n  if (!services || !services.length) return 'No fixed service list. Take details and offer a callback.';\n  return services.map((s) => `- ${s.name}: about ${s.durationMins || 60} minutes${s.price ? `, from \u00a3${s.price}` : ''}`).join('\\n');\n}\n\nfunction hoursText(hours) {\n  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];\n  return order.map((d) => {\n    const h = hours[d];\n    return `${d}: ${Array.isArray(h) && h.length === 2 ? `${h[0]}-${h[1]}` : 'closed'}`;\n  }).join(', ');\n}\n\nfunction assistantSystemPrompt(client, now) {\n  const local = T.localParts(now || new Date(), client.timezone);\n  return `You are the phone assistant for ${client.clientName}, a ${client.industry || 'local'} business in the UK. Today is ${local.weekday} ${local.dateStr}, and the local time is ${local.timeStr} (${client.timezone}).\nVoice and tone: ${client.phone.tone}\nServices you can book:\n${servicesText(client.phone.services)}\nOpening hours: ${hoursText(client.phone.openingHours)}\n\nHow to handle calls:\n1. Find out what the caller needs. Get their name, the best callback number and the job address.\n2. URGENT problems (for example ${(client.phone.urgentKeywords.length ? client.phone.urgentKeywords : DEFAULT_URGENT).slice(0, 8).join(', ')}): call flag_urgent straight away with a short summary, then tell the caller the team has been alerted and will call back as soon as possible. If anyone is in danger (gas smell, electric shock, carbon monoxide, serious flooding near electrics), tell them to call 999, or the National Gas Emergency line on 0800 111 999 for gas.\n3. Bookings: use check_availability, offer up to 3 times, agree one, then call book_appointment. Read the date and time back to the caller.\n4. Reschedules: use find_booking, then check_availability, then reschedule_booking.\n5. Prices: use get_price_estimate. Always say it is an estimate and that the final price is confirmed by the team. Never commit to a fixed price.\n6. Complaints: stay calm and apologetic and never argue. Listen, take the details, call log_complaint, and tell them a manager will contact them.\n7. Anything else, or anything you can't do: call take_message so the team can call back.\n8. If the caller asks for a person, call transfer_to_human.\n9. Never take card details, agree refunds, discounts or contracts, or promise anything about money or legal matters. Take a message instead.\n10. If asked whether you are an AI, a robot or a real person, answer honestly: you are an AI assistant working for ${client.clientName}. Do not raise it yourself otherwise.\nKeep replies short and natural. Ask one question at a time. Use British English.`;\n}\n\nconst TOOL_DEFS = [\n  ['check_availability', 'Find free appointment slots for a service.', { service: 'string', preferredDate: 'string (YYYY-MM-DD, optional)', partOfDay: 'string: morning|afternoon|any (optional)' }, ['service']],\n  ['book_appointment', 'Book a confirmed slot.', { service: 'string', start: 'string ISO datetime of the chosen slot', customerName: 'string', customerPhone: 'string', customerEmail: 'string (optional)', address: 'string', notes: 'string (optional)' }, ['service', 'start', 'customerName', 'customerPhone', 'address']],\n  ['find_booking', 'Find an existing booking for this caller.', { customerName: 'string', customerPhone: 'string' }, ['customerPhone']],\n  ['reschedule_booking', 'Move an existing booking to a new free slot.', { bookingId: 'string', newStart: 'string ISO datetime' }, ['bookingId', 'newStart']],\n  ['get_price_estimate', 'Get an estimate from the business pricing rules.', { jobDescription: 'string', service: 'string (optional)', inputs: 'object of extra details e.g. {\"miles\": 12} (optional)' }, ['jobDescription']],\n  ['flag_urgent', 'Alert the business immediately about an urgent job.', { summary: 'string', customerName: 'string', customerPhone: 'string', address: 'string' }, ['summary', 'customerPhone']],\n  ['log_complaint', 'Log a complaint and escalate to a manager.', { summary: 'string', customerName: 'string', customerPhone: 'string', severity: 'string: low|medium|high' }, ['summary', 'customerPhone']],\n  ['take_message', 'Take a message for the team.', { message: 'string', customerName: 'string', customerPhone: 'string', forPerson: 'string (optional)' }, ['message', 'customerPhone']],\n];\n\nfunction toolSchema([name, description, props, required]) {\n  const properties = {};\n  for (const [k, v] of Object.entries(props)) properties[k] = { type: v.startsWith('object') ? 'object' : 'string', description: v };\n  return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } };\n}\n\n// Response to Vapi's \"assistant-request\" server message.\nfunction buildVapiAssistant(client, { serverUrl, model = 'claude-sonnet-4-6', voiceId, now } = {}) {\n  const tools = TOOL_DEFS.map(toolSchema).map((t) => ({ ...t, server: { url: serverUrl } }));\n  if (client.phone.receptionNumber) {\n    tools.push({\n      type: 'transferCall',\n      destinations: [{ type: 'number', number: client.phone.receptionNumber, message: 'Putting you through to the team now.' }],\n      function: { name: 'transfer_to_human', description: 'Transfer the caller to a human at the business.' },\n    });\n  }\n  return {\n    assistant: {\n      name: `${client.clientName} assistant`.slice(0, 40),\n      firstMessage: `Hi, you're through to ${client.clientName}. How can I help today?`,\n      model: { provider: 'anthropic', model, messages: [{ role: 'system', content: assistantSystemPrompt(client, now) }], tools },\n      voice: voiceId ? { provider: '11labs', voiceId } : { provider: 'azure', voiceId: 'en-GB-SoniaNeural' },\n      transcriber: { provider: 'deepgram', model: 'nova-2', language: 'en-GB' },\n      serverUrl,\n      metadata: { clientId: client.clientId },\n      endCallFunctionEnabled: true,\n      silenceTimeoutSeconds: 30,\n      maxDurationSeconds: 900,\n    },\n  };\n}\n\n// ---------- Calendar ----------\n\nfunction eventBounds(ev, tz, defaultMins) {\n  if (ev.start && ev.start.date && !ev.start.dateTime) {\n    // All-day event blocks the whole local day.\n    return { start: T.zonedToUtc(ev.start.date, '00:00', tz), end: T.zonedToUtc(ev.end && ev.end.date ? ev.end.date : T.addDaysStr(ev.start.date, 1), '00:00', tz) };\n  }\n  const start = new Date(ev.start && ev.start.dateTime ? ev.start.dateTime : ev.start);\n  let end = new Date(ev.end && ev.end.dateTime ? ev.end.dateTime : ev.end);\n  // Zero-duration or missing end: assume the service duration (an earlier fix, kept here).\n  if (!(end > start)) end = new Date(start.getTime() + defaultMins * 60000);\n  return { start, end };\n}\n\nfunction serviceDuration(client, serviceName) {\n  const s = matchPhoneService(client, serviceName);\n  return (s && Number(s.durationMins)) || 60;\n}\n\nfunction matchPhoneService(client, serviceName) {\n  const n = String(serviceName || '').toLowerCase();\n  const list = client.phone.services || [];\n  return list.find((s) => s.name.toLowerCase() === n) || list.find((s) => n.includes(s.name.toLowerCase()) || s.name.toLowerCase().includes(n)) || null;\n}\n\n// Free slots across the next `days` days. An empty calendar is fine: no events means every slot in opening hours is free.\nfunction freeSlots(client, events, { serviceName, from, days = 7, stepMins = 30, bufferMins = 15, max = 3, partOfDay = 'any', preferredDate } = {}) {\n  const tz = client.timezone;\n  const dur = serviceDuration(client, serviceName);\n  const now = from || new Date();\n  const busy = (events || []).filter((e) => e && e.status !== 'cancelled').map((e) => eventBounds(e, tz, dur));\n  const leadTime = new Date(now.getTime() + 60 * 60000);\n  const out = [];\n  let day = preferredDate || T.localParts(now, tz).dateStr;\n  for (let i = 0; i < days && out.length < max; i++, day = T.addDaysStr(day, 1)) {\n    const h = client.phone.openingHours[T.weekdayOf(day)];\n    if (!Array.isArray(h) || h.length !== 2) continue;\n    const open = T.toMinutes(h[0]), close = T.toMinutes(h[1]);\n    for (let m = open; m + dur <= close && out.length < max; m += stepMins) {\n      if (partOfDay === 'morning' && m >= 12 * 60) break;\n      if (partOfDay === 'afternoon' && m < 12 * 60) continue;\n      const hh = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');\n      const start = T.zonedToUtc(day, hh, tz);\n      const end = new Date(start.getTime() + dur * 60000);\n      if (start < leadTime) continue;\n      const clash = busy.some((b) => start < new Date(b.end.getTime() + bufferMins * 60000) && end > new Date(b.start.getTime() - bufferMins * 60000));\n      if (!clash) out.push({ start: start.toISOString(), end: end.toISOString(), label: `${T.weekdayOf(day)} ${day} at ${hh}` });\n    }\n  }\n  return { durationMins: dur, slots: out, fullyBooked: out.length === 0 };\n}\n\nfunction slotStillFree(client, events, startIso, serviceName) {\n  const dur = serviceDuration(client, serviceName);\n  const start = new Date(startIso), end = new Date(start.getTime() + dur * 60000);\n  const h = client.phone.openingHours[T.weekdayOf(T.localParts(start, client.timezone).dateStr)];\n  if (!Array.isArray(h)) return false;\n  return !(events || []).filter((e) => e && e.status !== 'cancelled').map((e) => eventBounds(e, client.timezone, dur)).some((b) => start < b.end && end > b.start);\n}\n\n// ---------- Urgency + outcome ----------\n\nfunction detectUrgency(text, keywords) {\n  const t = String(text || '').toLowerCase();\n  const list = (keywords && keywords.length ? keywords : DEFAULT_URGENT).map((k) => k.toLowerCase());\n  const hits = list.filter((k) => t.includes(k));\n  return { urgent: hits.length > 0, hits };\n}\n\nfunction askedIfAi(transcript) {\n  return /\\b(are you|is this|am i (talking|speaking) to)\\s+(an?\\s+)?(ai|a\\.i\\.|robot|bot|real person|human|machine|computer)\\b/i.test(String(transcript || ''));\n}\n\n// Builds the Call Log row from Vapi's end-of-call report plus the tools called during the call.\nfunction callOutcome(client, report, toolsCalled) {\n  const names = (toolsCalled || []).map((t) => t.name);\n  const transcript = report.transcript || (report.artifact && report.artifact.transcript) || '';\n  let category = 'Other', outcome = report.endedReason || 'ended';\n  if (names.includes('flag_urgent')) category = 'Urgent';\n  else if (names.includes('log_complaint')) category = 'Complaint';\n  else if (names.includes('reschedule_booking')) category = 'Reschedule';\n  else if (names.includes('book_appointment')) category = 'Booking';\n  else if (names.includes('get_price_estimate')) category = 'Quote';\n  else if (names.includes('take_message')) category = 'Message';\n  else if (names.includes('transfer_to_human')) category = 'Human reception';\n  const urgency = detectUrgency(transcript, client.phone.urgentKeywords);\n  const missedUrgent = urgency.urgent && !names.includes('flag_urgent');\n  const booking = (toolsCalled || []).find((t) => t.name === 'book_appointment' || t.name === 'reschedule_booking');\n  return {\n    row: {\n      'Call ID': report.callId || (report.call && report.call.id) || '',\n      'Client ID': client.clientId,\n      'Caller number': (report.call && report.call.customer && report.call.customer.number) || report.customerNumber || '',\n      'Caller name': (booking && booking.args && booking.args.customerName) || '',\n      'Category': category,\n      'Outcome': outcome,\n      'Service': (booking && booking.args && booking.args.service) || '',\n      'Booking start': booking && booking.args ? booking.args.start || booking.args.newStart || null : null,\n      'Escalated': names.includes('flag_urgent') || names.includes('log_complaint') || missedUrgent,\n      'Asked if AI': askedIfAi(transcript),\n      'Summary': (report.summary || (report.analysis && report.analysis.summary) || '').slice(0, 5000),\n      'Timestamp': new Date().toISOString(),\n    },\n    // Safety net: urgent words were heard but the agent never escalated, so escalate anyway.\n    safetyNetEscalation: missedUrgent ? urgency.hits : null,\n    events: [\n      'call_handled',\n      ...(names.includes('book_appointment') ? ['booking_made'] : []),\n      ...(names.includes('reschedule_booking') ? ['reschedule'] : []),\n      ...(names.includes('flag_urgent') || missedUrgent ? ['urgent_escalated'] : []),\n      ...(names.includes('log_complaint') ? ['complaint_logged'] : []),\n      ...(names.includes('take_message') ? ['message_taken'] : []),\n    ],\n  };\n}\n\n// Vapi tool-call payload helpers.\nfunction parseToolCalls(body) {\n  const msg = body && body.message ? body.message : body || {};\n  const list = msg.toolCallList || msg.toolCalls || [];\n  return list.map((tc) => {\n    let args = tc.function ? tc.function.arguments : tc.arguments;\n    if (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\n    return { id: tc.id, name: tc.function ? tc.function.name : tc.name, args: args || {} };\n  });\n}\n\nfunction vapiClientId(body) {\n  const msg = body && body.message ? body.message : body || {};\n  const call = msg.call || {};\n  const md = (call.assistant && call.assistant.metadata) || call.metadata || (msg.assistant && msg.assistant.metadata) || {};\n  if (md.clientId) return md.clientId;\n  const sipHeaders = (call.phoneCallProviderDetails && call.phoneCallProviderDetails.sipHeaders) || call.sipHeaders || {};\n  return sipHeaders['X-Keystone-Client'] || sipHeaders['x-keystone-client'] || null;\n}\n\nmodule.exports = {\n  DEFAULT_URGENT, menuTwiml, routeTwiml, dialReceptionTwiml, sipFailed, fallbackTwiml, assistantSystemPrompt, buildVapiAssistant,\n  TOOL_DEFS, eventBounds, serviceDuration, matchPhoneService, freeSlots, slotStillFree, detectUrgency, askedIfAi, callOutcome, parseToolCalls, vapiClientId,\n};\n\n  },\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { phone: __KS('./phone'), time: __KS('./time'), log: __KS('./log'), registry: __KS('./registry'), requests: __KS('./requests') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst { phone: P, requests: R, log: Lg } = KS;\nconst cfg = $input.item.json;\nconst msg = ($('Vapi End Of Call').item.json.body || {}).message || {};\nconst art = msg.artifact || {};\nconst tools = [];\nfor (const m of art.messages || msg.messages || []) for (const tc of (m.toolCalls || m.tool_calls || [])) {\n  const fn = tc.function || {}; let args = fn.arguments; if (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\n  tools.push({ name: fn.name || tc.name, args: args || {} });\n}\nconst client = { clientId: cfg.clientId, phone: { urgentKeywords: cfg.urgentKeywords || [] } };\nconst report = { callId: (msg.call && msg.call.id) || '', transcript: art.transcript || msg.transcript || '', summary: (msg.analysis && msg.analysis.summary) || msg.summary || '', call: msg.call || { customer: msg.customer }, endedReason: msg.endedReason };\nconst o = P.callOutcome(client, report, tools);\nconst sd = (msg.analysis && msg.analysis.structuredData) || {};\nconst complaintMissed = (sd.complaint === true || /\\bcomplain/i.test(report.summary)) && !tools.some((t) => t.name === 'log_complaint');\nconst W = [R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.callLog, [o.row]))];\nfor (const ev of o.events) W.push(R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.agentLog, [Lg.logRecord({ clientId: cfg.clientId, service: 'phone', event: ev, outcome: ev === 'urgent_escalated' ? 'Escalated' : 'Success', decision: o.row.Category + ': ' + (o.row.Outcome || ''), reasoning: String(o.row.Summary || '').slice(0, 500), reference: o.row['Call ID'], workflow: '[Stock] Phone Booking - 3. Post-Call Actions', executionId: $execution.id })])));\nlet notice = null;\nif (o.safetyNetEscalation || complaintMissed) {\n  const who = (o.row['Caller number'] || 'unknown number');\n  const text = (o.safetyNetEscalation ? 'URGENT (safety net): the call from ' + who + ' mentioned ' + o.safetyNetEscalation.join(', ') + ' but was not escalated during the call. ' : 'Complaint from ' + who + ' was not escalated during the call. ') + 'Summary: ' + (report.summary || '(none)') + ' Please call them back now.';\n  notice = { kind: o.safetyNetEscalation ? 'urgent_call' : 'complaint', clientId: cfg.clientId, clientName: cfg.businessName, text, audience: 'both', business: { email: cfg.businessNotificationEmail, sms: cfg.escalationSmsNumber || cfg.managerPhoneNumber, isDemo: !!cfg.isDemo } };\n}\nreturn { json: { writes: W, notice } };\n"
+   }
+  },
+  {
+   "id": "99ebaa47-2611-4219-b3f0-1a3d32cdedf2",
+   "name": "Needs escalation?",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -140,
+    640
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return $input.all().filter((i) => i.json.notice).map((i) => ({ json: i.json.notice }));\n"
+   }
+  },
+  {
+   "id": "a1616899-3d46-4b45-8533-90f7eb765098",
+   "name": "Escalate now",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    100,
+    640
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "Hfz3w3Wh7frMuwJ5",
+     "mode": "id"
+    },
+    "mode": "each",
+    "options": {
+     "waitForSubWorkflow": true
+    }
+   }
+  },
+  {
+   "id": "e4883116-fbeb-43c4-a188-62703b6c7e27",
+   "name": "Fan out writes",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -140,
+    780
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const out = [];\nfor (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: w.kind === 'email' ? 1 : w.kind === 'sms' ? 2 : 0 } });\nreturn out;\n"
+   }
+  },
+  {
+   "id": "489b3420-87ba-4d03-8f6f-186f7522c20a",
+   "name": "Write kind",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3,
+   "position": [
+    80,
+    780
+   ],
+   "parameters": {
+    "mode": "expression",
+    "numberOutputs": 3,
+    "output": "={{ $json.route }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "34325c37-76be-43b9-821f-1a9662a3e4d4",
+   "name": "Airtable write",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    300,
+    780
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "airtableTokenApi",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "airtableTokenApi": {
+     "id": "Z7PPfHB8c3BsuGME",
+     "name": "Keystone Airtable"
+    }
+   }
+  },
+  {
+   "id": "e6963ea7-e45f-470a-a67e-3bc3d4c2ae5a",
+   "name": "Send email",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    520,
+    780
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.req.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "YHY8OwE9VDR10sYO",
+     "name": "Header Auth account 2"
+    }
+   }
+  },
+  {
+   "id": "b0be2ffb-9994-4dc7-8851-575d21d2020a",
+   "name": "Send SMS",
+   "type": "n8n-nodes-base.twilio",
+   "typeVersion": 1,
+   "onError": "continueRegularOutput",
+   "position": [
+    740,
+    780
+   ],
+   "parameters": {
+    "from": "={{ $json.sms.from }}",
+    "to": "={{ $json.sms.to }}",
+    "message": "={{ $json.sms.message }}",
+    "options": {}
+   },
+   "credentials": {
+    "twilioApi": {
+     "id": "pTRs7xfVMj2W7PcG",
+     "name": "Twilio"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Vapi End Of Call": {
+   "main": [
+    [
+     {
+      "node": "Extract Call Summary",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Extract Call Summary": {
+   "main": [
+    [
+     {
+      "node": "Get Client Config",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Client Config": {
+   "main": [
+    [
+     {
+      "node": "Was A Booking Made?",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Was Transferred To Manager?",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Log Call To CallLog",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Check call outcome",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Call To CallLog": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Was Transferred To Manager?": {
+   "main": [
+    [
+     {
+      "node": "Email Business - Manager Transfer Alert",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Email Business - Manager Transfer Alert": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Was A Booking Made?": {
+   "main": [
+    [
+     {
+      "node": "Email Customer Confirmation",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Email Business Notification",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Email Customer Confirmation": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Email Business Notification": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fan out writes": {
+   "main": [
+    [
+     {
+      "node": "Write kind",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write kind": {
+   "main": [
+    [
+     {
+      "node": "Airtable write",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Send email",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Send SMS",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check call outcome": {
+   "main": [
+    [
+     {
+      "node": "Fan out writes",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Needs escalation?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Needs escalation?": {
+   "main": [
+    [
+     {
+      "node": "Escalate now",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "errorWorkflow": "GKF6X82UvFFth43w"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "SoTR9D5CjH1BGs4F",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-08-23T13:11:41.302Z",
+   "updatedAt": "2026-08-23T13:11:41.302Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "056c0d46-9e9e-493a-929c-52370e866062",
+  "workflowId": "SoTR9D5CjH1BGs4F",
+  "nodes": [
+   {
+    "id": "postcall-note",
+    "name": "Sticky Note",
+    "type": "n8n-nodes-base.stickyNote",
+    "typeVersion": 1,
+    "position": [
+     -1100,
+     -280
+    ],
+    "parameters": {
+     "content": "## Stage 3: Post-Call Actions\nFires once, after the AI call ends, from Vapi's \"End of Call Report\" server message.\n\nIn the Vapi Assistant config:\n- Server URL -> https://keystoneconsultancy.app.n8n.cloud/webhook/vapi/end-of-call\n- Server Messages -> enable ONLY \"end-of-call-report\"\n- Analysis Plan -> add a structured data schema so the assistant extracts: bookingMade (bool), customerName, customerPhone, customerEmail, service, date, time, transferredToManager (bool), transferReason (string). This is what \"Extract Call Summary\" below reads.\n\nIf bookingMade is true: sends the customer a confirmation email and the business a new-booking notification, both via the Resend HTTP API (NOT SMTP - Railway blocks outbound SMTP, so these are plain HTTPS calls instead). Requires a \"Resend API\" Header Auth credential in n8n with header 'Authorization: Bearer <resend-api-key>', same pattern as the Vapi credential.\n\nIndependently, if transferredToManager is true: sends the business a separate FYI email about the transfer. This is purely a post-call record - by the time this webhook fires, the live transfer (Vapi's transferCall tool, mid-conversation) has already happened; this workflow has no way to trigger or affect that transfer itself, only to log it afterwards. Not the same mechanism as the SIP-failure fallback in 01-inbound-ivr (that's a Twilio DialCallStatus callback for a technical connection failure, this is the AI's own uncertainty about the request) - the two are completely independent and can both exist without interacting.\n\nA third, always-on branch (\"Log Call To CallLog\") writes one row per call - regardless of outcome - to this client's own reportingSheetId (Client Config). Added so workflows/monthly-reporting has a real historical record of call volume/bookings to read - previously this workflow only ever sent emails and kept no log of its own at all.",
+     "height": 560,
+     "width": 520
+    }
+   },
+   {
+    "id": "webhook-end-of-call",
+    "name": "Vapi End Of Call",
+    "webhookId": "vapi-end-of-call",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -1100,
+     160
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "vapi/end-of-call",
+     "responseMode": "responseNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "set-extract-summary",
+    "name": "Extract Call Summary",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     -860,
+     160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "booking-made",
+        "name": "bookingMade",
+        "type": "boolean",
+        "value": "={{ $json.body.message.analysis?.structuredData?.bookingMade === true }}"
+       },
+       {
+        "id": "customer-name",
+        "name": "customerName",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.customerName || 'there' }}"
+       },
+       {
+        "id": "customer-phone",
+        "name": "customerPhone",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.customerPhone || $json.body.message.customer?.number || '' }}"
+       },
+       {
+        "id": "customer-email",
+        "name": "customerEmail",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.customerEmail || '' }}"
+       },
+       {
+        "id": "booked-service",
+        "name": "service",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.service || '' }}"
+       },
+       {
+        "id": "booked-date",
+        "name": "bookingDate",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.date || '' }}"
+       },
+       {
+        "id": "booked-time",
+        "name": "bookingTime",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.time || '' }}"
+       },
+       {
+        "id": "call-transcript",
+        "name": "transcript",
+        "type": "string",
+        "value": "={{ $json.body.message.transcript || '' }}"
+       },
+       {
+        "id": "transferred-to-manager",
+        "name": "transferredToManager",
+        "type": "boolean",
+        "value": "={{ $json.body.message.analysis?.structuredData?.transferredToManager === true }}"
+       },
+       {
+        "id": "transfer-reason",
+        "name": "transferReason",
+        "type": "string",
+        "value": "={{ $json.body.message.analysis?.structuredData?.transferReason || '' }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "exec-client-config",
+    "name": "Get Client Config",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     -620,
+     160
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "xNwsUFYDgiXVvXPv",
+      "mode": "id"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "if-booking-made",
+    "name": "Was A Booking Made?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     -380,
+     160
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $('Extract Call Summary').item.json.bookingMade }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "email-customer-confirmation",
+    "name": "Email Customer Confirmation",
+    "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     -140,
+     60
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.resend.com/emails",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.isDemo ? 'khan.bilalbk408@gmail.com' : $('Extract Call Summary').item.json.customerEmail], subject: `Your booking with ${$json.businessName} is confirmed`, text: `Hi ${$('Extract Call Summary').item.json.customerName},\\n\\nYour ${$('Extract Call Summary').item.json.service} appointment with ${$json.businessName} is confirmed for ${$('Extract Call Summary').item.json.bookingDate} at ${$('Extract Call Summary').item.json.bookingTime}.\\n\\nIf you need to change or cancel, just call us back.\\n\\nThanks,\\n${$json.businessName}` }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   },
+   {
+    "id": "email-business-notification",
+    "name": "Email Business Notification",
+    "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential (header Authorization: Bearer <resend-api-key>).",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     -140,
+     260
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.resend.com/emails",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `New booking: ${$('Extract Call Summary').item.json.customerName} - ${$('Extract Call Summary').item.json.bookingDate}`, text: `New booking taken by the AI phone assistant:\\n\\nCustomer: ${$('Extract Call Summary').item.json.customerName}\\nPhone: ${$('Extract Call Summary').item.json.customerPhone}\\nEmail: ${$('Extract Call Summary').item.json.customerEmail}\\nService: ${$('Extract Call Summary').item.json.service}\\nDate: ${$('Extract Call Summary').item.json.bookingDate}\\nTime: ${$('Extract Call Summary').item.json.bookingTime}` }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   },
+   {
+    "id": "respond-ack",
+    "name": "Acknowledge",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.4,
+    "position": [
+     140,
+     160
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ { \"received\": true } }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "log-call-to-sheet",
+    "name": "Log Call To CallLog",
+    "notes": "Raw Sheets REST API - values:append (POST, not the values.get/update/clear verbs used elsewhere in this project so far - this is the first use of the append verb here). Logs every call regardless of outcome, since this is the only historical record of call volume at all - Monthly Reporting reads this sheet for 'calls answered'/'bookings made'. Requires reportingSheetId to be set in Client Config to a real sheet with a CallLog tab whose row 1 has headers matching this row's order (timestamp, clientId, callerNumber, bookingMade, transferredToManager, service, date, time) - see workflows/monthly-reporting/README.md. onError: continueRegularOutput so a logging failure (e.g. blank/placeholder reportingSheetId) can never block Acknowledge or the other notification branches.",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     -140,
+     640
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.reportingSheetId }}/values/{{ $json.callLogTabName }}:append",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api",
+     "sendQuery": true,
+     "queryParameters": {
+      "parameters": [
+       {
+        "name": "valueInputOption",
+        "value": "RAW"
+       },
+       {
+        "name": "insertDataOption",
+        "value": "INSERT_ROWS"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ values: [[ new Date().toISOString(), $json.clientId, $('Extract Call Summary').item.json.customerPhone || '', $('Extract Call Summary').item.json.bookingMade, $('Extract Call Summary').item.json.transferredToManager, $('Extract Call Summary').item.json.service || '', $('Extract Call Summary').item.json.bookingDate || '', $('Extract Call Summary').item.json.bookingTime || '' ]] }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "xKa0P1ACdrwcNgDR",
+      "name": "Google Sheets account"
+     }
+    }
+   },
+   {
+    "id": "if-transferred",
+    "name": "Was Transferred To Manager?",
+    "notes": "Independent of \"Was A Booking Made?\" - both read from the same Extract Call Summary/Get Client Config output, so either or both notifications can fire for the same call (a caller could get booked for one thing and separately get confused about something else later in the same conversation).",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     -380,
+     400
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $('Extract Call Summary').item.json.transferredToManager }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "email-manager-transfer-alert",
+    "name": "Email Business - Manager Transfer Alert",
+    "notes": "Resend API - POST /emails. Uses the 'Header Auth account 2' credential. Purely informational - the live transfer already happened via Vapi's transferCall tool by the time this fires; this just gives the business a searchable record of why, since a live transfer otherwise leaves no trace in this system at all.",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     -140,
+     460
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.resend.com/emails",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ from: $json.confirmationFromEmail, to: [$json.businessNotificationEmail], subject: `Call transferred to manager - ${$('Extract Call Summary').item.json.transferReason || 'uncertain request'}`, text: `The AI phone assistant transferred a live call to the manager because it couldn't confidently handle the caller's request.\\n\\nReason: ${$('Extract Call Summary').item.json.transferReason || '(not captured)'}\\nCaller number: ${$('Extract Call Summary').item.json.customerPhone || 'unknown'}\\n\\nThis is an FYI only - the call was already transferred live to ${$json.managerPhoneNumber || $json.receptionForwardNumber}, no action needed unless you want to follow up.` }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   },
+   {
+    "id": "8972bdaa-3e10-44f1-a18f-5c96a4ea3959",
+    "name": "Check call outcome",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -380,
+     520
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "// ===== Keystone shared library (generated from ops/lib; do not edit here) =====\nconst __KS = (() => {\n  const defs = {\n  'phone': function (module, exports, require) {\n'use strict';\n// AI Phone Booking logic: TwiML, the per-client Vapi assistant config (built from\n// the registry), free-slot calculation, urgency detection and call-outcome logging.\n\nconst T = require('./time');\nconst { escapeHtml } = require('./log');\n\nconst DEFAULT_URGENT = ['leak', 'leaking', 'flood', 'flooding', 'burst', 'no heating', 'no hot water', 'gas smell', 'smell of gas', 'sparking', 'burning smell', 'smoke', 'no power', 'carbon monoxide', 'emergency', 'water everywhere', 'electric shock'];\n\nfunction xml(s) { return escapeHtml(s).replace(/'/g, '&apos;'); }\n\n// Step 1: the caller hears the client greeting, then 1 for reception or 2 for the assistant.\nfunction menuTwiml(client, actionUrl) {\n  const name = client.clientName || 'us';\n  const greeting = client.phone.greeting || `Thanks for calling ${name}.`;\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather input=\"dtmf\" numDigits=\"1\" timeout=\"6\" action=\"${xml(actionUrl)}\" method=\"POST\">\n    <Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">${xml(greeting)} Press 1 to speak to the team. Press 2 to book, reschedule or get a price estimate now.</Say>\n  </Gather>\n  <Redirect method=\"POST\">${xml(actionUrl)}?Digits=2</Redirect>\n</Response>`;\n}\n\n// Step 2: route the choice. Option 2 dials Vapi over SIP; if that fails, the fallback forwards to reception.\nfunction routeTwiml(client, digit, { vapiSipUri, fallbackUrl }) {\n  if (String(digit) === '1' || !vapiSipUri) {\n    return dialReceptionTwiml(client, 'Connecting you to the team now.');\n  }\n  const sip = `${vapiSipUri}${vapiSipUri.includes('?') ? '&' : '?'}X-Keystone-Client=${encodeURIComponent(client.clientId)}`;\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial timeout=\"15\" action=\"${xml(fallbackUrl)}\" method=\"POST\" answerOnBridge=\"true\">\n    <Sip>${xml(sip)}</Sip>\n  </Dial>\n</Response>`;\n}\n\nfunction dialReceptionTwiml(client, say) {\n  const reception = client.phone.receptionNumber;\n  if (!reception) {\n    return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response><Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">Sorry, nobody is available right now. Please leave your name, number and a short message after the tone.</Say><Record maxLength=\"120\" playBeep=\"true\"/></Response>`;\n  }\n  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>${say ? `<Say voice=\"Polly.Amy-Neural\" language=\"en-GB\">${xml(say)}</Say>` : ''}<Dial timeout=\"25\">${xml(reception)}</Dial></Response>`;\n}\n\n// Dial action callback: if the SIP leg failed, protect the caller by sending them to reception.\nfunction sipFailed(dialCallStatus) {\n  return ['failed', 'busy', 'no-answer', 'canceled'].includes(String(dialCallStatus || '').toLowerCase());\n}\n\nfunction fallbackTwiml(client, dialCallStatus) {\n  if (!sipFailed(dialCallStatus)) return '<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>';\n  return dialReceptionTwiml(client, 'Sorry about that. Let me put you through to the team.');\n}\n\n// ---------- Vapi assistant built from the registry ----------\n\nfunction servicesText(services) {\n  if (!services || !services.length) return 'No fixed service list. Take details and offer a callback.';\n  return services.map((s) => `- ${s.name}: about ${s.durationMins || 60} minutes${s.price ? `, from \u00a3${s.price}` : ''}`).join('\\n');\n}\n\nfunction hoursText(hours) {\n  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];\n  return order.map((d) => {\n    const h = hours[d];\n    return `${d}: ${Array.isArray(h) && h.length === 2 ? `${h[0]}-${h[1]}` : 'closed'}`;\n  }).join(', ');\n}\n\nfunction assistantSystemPrompt(client, now) {\n  const local = T.localParts(now || new Date(), client.timezone);\n  return `You are the phone assistant for ${client.clientName}, a ${client.industry || 'local'} business in the UK. Today is ${local.weekday} ${local.dateStr}, and the local time is ${local.timeStr} (${client.timezone}).\nVoice and tone: ${client.phone.tone}\nServices you can book:\n${servicesText(client.phone.services)}\nOpening hours: ${hoursText(client.phone.openingHours)}\n\nHow to handle calls:\n1. Find out what the caller needs. Get their name, the best callback number and the job address.\n2. URGENT problems (for example ${(client.phone.urgentKeywords.length ? client.phone.urgentKeywords : DEFAULT_URGENT).slice(0, 8).join(', ')}): call flag_urgent straight away with a short summary, then tell the caller the team has been alerted and will call back as soon as possible. If anyone is in danger (gas smell, electric shock, carbon monoxide, serious flooding near electrics), tell them to call 999, or the National Gas Emergency line on 0800 111 999 for gas.\n3. Bookings: use check_availability, offer up to 3 times, agree one, then call book_appointment. Read the date and time back to the caller.\n4. Reschedules: use find_booking, then check_availability, then reschedule_booking.\n5. Prices: use get_price_estimate. Always say it is an estimate and that the final price is confirmed by the team. Never commit to a fixed price.\n6. Complaints: stay calm and apologetic and never argue. Listen, take the details, call log_complaint, and tell them a manager will contact them.\n7. Anything else, or anything you can't do: call take_message so the team can call back.\n8. If the caller asks for a person, call transfer_to_human.\n9. Never take card details, agree refunds, discounts or contracts, or promise anything about money or legal matters. Take a message instead.\n10. If asked whether you are an AI, a robot or a real person, answer honestly: you are an AI assistant working for ${client.clientName}. Do not raise it yourself otherwise.\nKeep replies short and natural. Ask one question at a time. Use British English.`;\n}\n\nconst TOOL_DEFS = [\n  ['check_availability', 'Find free appointment slots for a service.', { service: 'string', preferredDate: 'string (YYYY-MM-DD, optional)', partOfDay: 'string: morning|afternoon|any (optional)' }, ['service']],\n  ['book_appointment', 'Book a confirmed slot.', { service: 'string', start: 'string ISO datetime of the chosen slot', customerName: 'string', customerPhone: 'string', customerEmail: 'string (optional)', address: 'string', notes: 'string (optional)' }, ['service', 'start', 'customerName', 'customerPhone', 'address']],\n  ['find_booking', 'Find an existing booking for this caller.', { customerName: 'string', customerPhone: 'string' }, ['customerPhone']],\n  ['reschedule_booking', 'Move an existing booking to a new free slot.', { bookingId: 'string', newStart: 'string ISO datetime' }, ['bookingId', 'newStart']],\n  ['get_price_estimate', 'Get an estimate from the business pricing rules.', { jobDescription: 'string', service: 'string (optional)', inputs: 'object of extra details e.g. {\"miles\": 12} (optional)' }, ['jobDescription']],\n  ['flag_urgent', 'Alert the business immediately about an urgent job.', { summary: 'string', customerName: 'string', customerPhone: 'string', address: 'string' }, ['summary', 'customerPhone']],\n  ['log_complaint', 'Log a complaint and escalate to a manager.', { summary: 'string', customerName: 'string', customerPhone: 'string', severity: 'string: low|medium|high' }, ['summary', 'customerPhone']],\n  ['take_message', 'Take a message for the team.', { message: 'string', customerName: 'string', customerPhone: 'string', forPerson: 'string (optional)' }, ['message', 'customerPhone']],\n];\n\nfunction toolSchema([name, description, props, required]) {\n  const properties = {};\n  for (const [k, v] of Object.entries(props)) properties[k] = { type: v.startsWith('object') ? 'object' : 'string', description: v };\n  return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } };\n}\n\n// Response to Vapi's \"assistant-request\" server message.\nfunction buildVapiAssistant(client, { serverUrl, model = 'claude-sonnet-4-6', voiceId, now } = {}) {\n  const tools = TOOL_DEFS.map(toolSchema).map((t) => ({ ...t, server: { url: serverUrl } }));\n  if (client.phone.receptionNumber) {\n    tools.push({\n      type: 'transferCall',\n      destinations: [{ type: 'number', number: client.phone.receptionNumber, message: 'Putting you through to the team now.' }],\n      function: { name: 'transfer_to_human', description: 'Transfer the caller to a human at the business.' },\n    });\n  }\n  return {\n    assistant: {\n      name: `${client.clientName} assistant`.slice(0, 40),\n      firstMessage: `Hi, you're through to ${client.clientName}. How can I help today?`,\n      model: { provider: 'anthropic', model, messages: [{ role: 'system', content: assistantSystemPrompt(client, now) }], tools },\n      voice: voiceId ? { provider: '11labs', voiceId } : { provider: 'azure', voiceId: 'en-GB-SoniaNeural' },\n      transcriber: { provider: 'deepgram', model: 'nova-2', language: 'en-GB' },\n      serverUrl,\n      metadata: { clientId: client.clientId },\n      endCallFunctionEnabled: true,\n      silenceTimeoutSeconds: 30,\n      maxDurationSeconds: 900,\n    },\n  };\n}\n\n// ---------- Calendar ----------\n\nfunction eventBounds(ev, tz, defaultMins) {\n  if (ev.start && ev.start.date && !ev.start.dateTime) {\n    // All-day event blocks the whole local day.\n    return { start: T.zonedToUtc(ev.start.date, '00:00', tz), end: T.zonedToUtc(ev.end && ev.end.date ? ev.end.date : T.addDaysStr(ev.start.date, 1), '00:00', tz) };\n  }\n  const start = new Date(ev.start && ev.start.dateTime ? ev.start.dateTime : ev.start);\n  let end = new Date(ev.end && ev.end.dateTime ? ev.end.dateTime : ev.end);\n  // Zero-duration or missing end: assume the service duration (an earlier fix, kept here).\n  if (!(end > start)) end = new Date(start.getTime() + defaultMins * 60000);\n  return { start, end };\n}\n\nfunction serviceDuration(client, serviceName) {\n  const s = matchPhoneService(client, serviceName);\n  return (s && Number(s.durationMins)) || 60;\n}\n\nfunction matchPhoneService(client, serviceName) {\n  const n = String(serviceName || '').toLowerCase();\n  const list = client.phone.services || [];\n  return list.find((s) => s.name.toLowerCase() === n) || list.find((s) => n.includes(s.name.toLowerCase()) || s.name.toLowerCase().includes(n)) || null;\n}\n\n// Free slots across the next `days` days. An empty calendar is fine: no events means every slot in opening hours is free.\nfunction freeSlots(client, events, { serviceName, from, days = 7, stepMins = 30, bufferMins = 15, max = 3, partOfDay = 'any', preferredDate } = {}) {\n  const tz = client.timezone;\n  const dur = serviceDuration(client, serviceName);\n  const now = from || new Date();\n  const busy = (events || []).filter((e) => e && e.status !== 'cancelled').map((e) => eventBounds(e, tz, dur));\n  const leadTime = new Date(now.getTime() + 60 * 60000);\n  const out = [];\n  let day = preferredDate || T.localParts(now, tz).dateStr;\n  for (let i = 0; i < days && out.length < max; i++, day = T.addDaysStr(day, 1)) {\n    const h = client.phone.openingHours[T.weekdayOf(day)];\n    if (!Array.isArray(h) || h.length !== 2) continue;\n    const open = T.toMinutes(h[0]), close = T.toMinutes(h[1]);\n    for (let m = open; m + dur <= close && out.length < max; m += stepMins) {\n      if (partOfDay === 'morning' && m >= 12 * 60) break;\n      if (partOfDay === 'afternoon' && m < 12 * 60) continue;\n      const hh = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');\n      const start = T.zonedToUtc(day, hh, tz);\n      const end = new Date(start.getTime() + dur * 60000);\n      if (start < leadTime) continue;\n      const clash = busy.some((b) => start < new Date(b.end.getTime() + bufferMins * 60000) && end > new Date(b.start.getTime() - bufferMins * 60000));\n      if (!clash) out.push({ start: start.toISOString(), end: end.toISOString(), label: `${T.weekdayOf(day)} ${day} at ${hh}` });\n    }\n  }\n  return { durationMins: dur, slots: out, fullyBooked: out.length === 0 };\n}\n\nfunction slotStillFree(client, events, startIso, serviceName) {\n  const dur = serviceDuration(client, serviceName);\n  const start = new Date(startIso), end = new Date(start.getTime() + dur * 60000);\n  const h = client.phone.openingHours[T.weekdayOf(T.localParts(start, client.timezone).dateStr)];\n  if (!Array.isArray(h)) return false;\n  return !(events || []).filter((e) => e && e.status !== 'cancelled').map((e) => eventBounds(e, client.timezone, dur)).some((b) => start < b.end && end > b.start);\n}\n\n// ---------- Urgency + outcome ----------\n\nfunction detectUrgency(text, keywords) {\n  const t = String(text || '').toLowerCase();\n  const list = (keywords && keywords.length ? keywords : DEFAULT_URGENT).map((k) => k.toLowerCase());\n  const hits = list.filter((k) => t.includes(k));\n  return { urgent: hits.length > 0, hits };\n}\n\nfunction askedIfAi(transcript) {\n  return /\\b(are you|is this|am i (talking|speaking) to)\\s+(an?\\s+)?(ai|a\\.i\\.|robot|bot|real person|human|machine|computer)\\b/i.test(String(transcript || ''));\n}\n\n// Builds the Call Log row from Vapi's end-of-call report plus the tools called during the call.\nfunction callOutcome(client, report, toolsCalled) {\n  const names = (toolsCalled || []).map((t) => t.name);\n  const transcript = report.transcript || (report.artifact && report.artifact.transcript) || '';\n  let category = 'Other', outcome = report.endedReason || 'ended';\n  if (names.includes('flag_urgent')) category = 'Urgent';\n  else if (names.includes('log_complaint')) category = 'Complaint';\n  else if (names.includes('reschedule_booking')) category = 'Reschedule';\n  else if (names.includes('book_appointment')) category = 'Booking';\n  else if (names.includes('get_price_estimate')) category = 'Quote';\n  else if (names.includes('take_message')) category = 'Message';\n  else if (names.includes('transfer_to_human')) category = 'Human reception';\n  const urgency = detectUrgency(transcript, client.phone.urgentKeywords);\n  const missedUrgent = urgency.urgent && !names.includes('flag_urgent');\n  const booking = (toolsCalled || []).find((t) => t.name === 'book_appointment' || t.name === 'reschedule_booking');\n  return {\n    row: {\n      'Call ID': report.callId || (report.call && report.call.id) || '',\n      'Client ID': client.clientId,\n      'Caller number': (report.call && report.call.customer && report.call.customer.number) || report.customerNumber || '',\n      'Caller name': (booking && booking.args && booking.args.customerName) || '',\n      'Category': category,\n      'Outcome': outcome,\n      'Service': (booking && booking.args && booking.args.service) || '',\n      'Booking start': booking && booking.args ? booking.args.start || booking.args.newStart || null : null,\n      'Escalated': names.includes('flag_urgent') || names.includes('log_complaint') || missedUrgent,\n      'Asked if AI': askedIfAi(transcript),\n      'Summary': (report.summary || (report.analysis && report.analysis.summary) || '').slice(0, 5000),\n      'Timestamp': new Date().toISOString(),\n    },\n    // Safety net: urgent words were heard but the agent never escalated, so escalate anyway.\n    safetyNetEscalation: missedUrgent ? urgency.hits : null,\n    events: [\n      'call_handled',\n      ...(names.includes('book_appointment') ? ['booking_made'] : []),\n      ...(names.includes('reschedule_booking') ? ['reschedule'] : []),\n      ...(names.includes('flag_urgent') || missedUrgent ? ['urgent_escalated'] : []),\n      ...(names.includes('log_complaint') ? ['complaint_logged'] : []),\n      ...(names.includes('take_message') ? ['message_taken'] : []),\n    ],\n  };\n}\n\n// Vapi tool-call payload helpers.\nfunction parseToolCalls(body) {\n  const msg = body && body.message ? body.message : body || {};\n  const list = msg.toolCallList || msg.toolCalls || [];\n  return list.map((tc) => {\n    let args = tc.function ? tc.function.arguments : tc.arguments;\n    if (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\n    return { id: tc.id, name: tc.function ? tc.function.name : tc.name, args: args || {} };\n  });\n}\n\nfunction vapiClientId(body) {\n  const msg = body && body.message ? body.message : body || {};\n  const call = msg.call || {};\n  const md = (call.assistant && call.assistant.metadata) || call.metadata || (msg.assistant && msg.assistant.metadata) || {};\n  if (md.clientId) return md.clientId;\n  const sipHeaders = (call.phoneCallProviderDetails && call.phoneCallProviderDetails.sipHeaders) || call.sipHeaders || {};\n  return sipHeaders['X-Keystone-Client'] || sipHeaders['x-keystone-client'] || null;\n}\n\nmodule.exports = {\n  DEFAULT_URGENT, menuTwiml, routeTwiml, dialReceptionTwiml, sipFailed, fallbackTwiml, assistantSystemPrompt, buildVapiAssistant,\n  TOOL_DEFS, eventBounds, serviceDuration, matchPhoneService, freeSlots, slotStillFree, detectUrgency, askedIfAi, callOutcome, parseToolCalls, vapiClientId,\n};\n\n  },\n  'time': function (module, exports, require) {\n'use strict';\n// Timezone-safe helpers. All \"local\" times are computed with Intl in the client's\n// IANA zone, never by adding a fixed offset. That was the root cause of the old\n// send-window bug, which was off by the UTC offset.\n\nconst DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction localParts(date, tz) {\n  const fmt = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz || 'Europe/London',\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    weekday: 'short', hourCycle: 'h23',\n  });\n  const p = {};\n  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;\n  return {\n    year: +p.year, month: +p.month, day: +p.day,\n    hour: +p.hour, minute: +p.minute, second: +p.second,\n    weekday: p.weekday.slice(0, 3).toLowerCase(),\n    dateStr: `${p.year}-${p.month}-${p.day}`,\n    timeStr: `${p.hour}:${p.minute}`,\n  };\n}\n\nfunction toMinutes(hhmm) {\n  if (typeof hhmm !== 'string' || !/^\\d{1,2}:\\d{2}$/.test(hhmm.trim())) return null;\n  const [h, m] = hhmm.trim().split(':').map(Number);\n  if (h > 24 || m > 59) return null;\n  return h * 60 + m;\n}\n\n// Offset in minutes of tz at the given instant (local - UTC).\nfunction tzOffsetMinutes(date, tz) {\n  const p = localParts(date, tz);\n  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);\n  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);\n}\n\n// Convert a local wall-clock time in tz to a UTC Date (DST-safe).\nfunction zonedToUtc(dateStr, hhmm, tz) {\n  const [y, mo, d] = dateStr.split('-').map(Number);\n  const mins = toMinutes(hhmm);\n  const guess = new Date(Date.UTC(y, mo - 1, d, Math.floor(mins / 60), mins % 60));\n  const off1 = tzOffsetMinutes(guess, tz);\n  const first = new Date(guess.getTime() - off1 * 60000);\n  const off2 = tzOffsetMinutes(first, tz);\n  return off1 === off2 ? first : new Date(guess.getTime() - off2 * 60000);\n}\n\nfunction addDaysStr(dateStr, n) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + n));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction weekdayOf(dateStr) {\n  const [y, m, d] = dateStr.split('-').map(Number);\n  return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];\n}\n\n// Send window. If start/end are missing, the window is always open.\n// Supports overnight windows, e.g. 20:00-06:00.\nfunction inSendWindow(now, start, end, tz) {\n  const s = toMinutes(start), e = toMinutes(end);\n  if (s === null || e === null) return true;\n  const p = localParts(now, tz);\n  const cur = p.hour * 60 + p.minute;\n  if (s === e) return true;\n  return s < e ? cur >= s && cur < e : cur >= s || cur < e;\n}\n\n// Next instant (UTC Date) when the send window opens.\nfunction nextWindowOpen(now, start, end, tz) {\n  if (inSendWindow(now, start, end, tz)) return now;\n  const p = localParts(now, tz);\n  const s = toMinutes(start);\n  const cur = p.hour * 60 + p.minute;\n  const day = cur < s ? p.dateStr : addDaysStr(p.dateStr, 1);\n  return zonedToUtc(day, start, tz);\n}\n\nmodule.exports = { DAYS, localParts, toMinutes, tzOffsetMinutes, zonedToUtc, addDaysStr, weekdayOf, inSendWindow, nextWindowOpen };\n\n  },\n  'log': function (module, exports, require) {\n'use strict';\n// One shape for every Agent Log row. Every agent or workflow decision goes through this.\n\nconst OPS_EMAIL = 'khan.bilalbk408@gmail.com'; // Bilal (Resend account owner, so test-sender mail is delivered)\n\n// Conservative admin-time estimates (minutes a person would have spent). Used for value reports.\nconst MINUTES_SAVED = {\n  invoice_draft_created: 12,\n  invoice_agent_fixed: 20,\n  invoice_queued: 2,\n  call_handled: 5,\n  booking_made: 8,\n  reschedule: 6,\n  urgent_escalated: 5,\n  complaint_logged: 8,\n  message_taken: 4,\n  quote_drafted: 25,\n  issue_auto_fixed: 20,\n  weekly_report: 45,\n  monthly_report: 90,\n};\n\nfunction logRecord({ clientId, service, event, decision, reasoning, outcome, confidence, reference, workflow, executionId, details, now }) {\n  const minutes = MINUTES_SAVED[event] || 0;\n  const summary = `[${clientId || 'keystone'}] ${service}: ${event}${outcome ? ' -> ' + outcome : ''}`.slice(0, 250);\n  return {\n    'Summary': summary,\n    'Client ID': clientId || '',\n    'Service': service,\n    'Event': event,\n    'Decision': decision || '',\n    'Reasoning': reasoning || '',\n    'Outcome': outcome || 'Success',\n    'Confidence': typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : null,\n    'Reference': reference || '',\n    'Minutes saved': ['Success', 'Draft created', 'Auto-fixed', 'Escalated'].includes(outcome || 'Success') ? minutes : 0,\n    'Timestamp': (now || new Date()).toISOString(),\n    'Workflow': workflow || '',\n    'Execution ID': executionId ? String(executionId) : '',\n    'Details JSON': details ? JSON.stringify(details).slice(0, 90000) : '',\n  };\n}\n\nfunction escapeHtml(s) {\n  return String(s === undefined || s === null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Airtable filterByFormula string literal escaping.\nfunction formulaString(s) {\n  return \"'\" + String(s || '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\") + \"'\";\n}\n\nmodule.exports = { OPS_EMAIL, MINUTES_SAVED, logRecord, escapeHtml, formulaString };\n\n  },\n  'registry': function (module, exports, require) {\n'use strict';\n// Client Registry: turns a \"My Clients\" Airtable row into one config object,\n// and decides whether a given service may run for that client.\n// Rule: every workflow calls gate() first and exits cleanly if it isn't ok.\n\n// Resend's test sender only delivers to the Resend account owner, so demo mail goes here.\nconst TEST_INBOX = 'khan.bilalbk408@gmail.com';\n\nconst SERVICE_TOGGLES = {\n  invoicing: 'Invoicing on',\n  phone: 'Phone on',\n  quotes: 'Quotes on',\n  reporting: 'Reporting on',\n  monitoring: 'Monitoring on',\n};\n\n// Jurisdictions where the phone agent must NOT be deployed (proactive AI disclosure required).\nconst BLOCKED_PHONE_JURISDICTIONS = ['Republic of Ireland / EU'];\n\nfunction parseJson(value, fallback) {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object') return value;\n  try { return JSON.parse(value); } catch (e) { return { __invalid: true, raw: String(value) }; }\n}\n\nfunction splitList(value) {\n  if (!value) return [];\n  return String(value).split(/[,;\\n]/).map((s) => s.trim()).filter(Boolean);\n}\n\n// Accepts an Airtable record ({id, fields}) or a flattened n8n Airtable item.\nfunction normalizeClient(record) {\n  const f = record && record.fields ? record.fields : record || {};\n  const services = parseJson(f['Services'], []);\n  const hours = parseJson(f['Opening hours'], {});\n  const pricing = parseJson(f['Pricing rules'], null);\n  return {\n    recordId: record.id || f.id || null,\n    clientId: (f['Client ID'] || '').trim(),\n    clientName: f['Client name'] || '',\n    status: (f['Status'] && f['Status'].name) || f['Status'] || 'Onboarding',\n    isDemo: !!f['Is demo/test'],\n    contactName: f['Contact name'] || '',\n    contactEmail: f['Contact email'] || '',\n    contactPhone: f['Contact phone'] || '',\n    industry: f['Industry'] || '',\n    halalPassed: !!f['Halal screen passed'],\n    jurisdiction: (f['Jurisdiction'] && f['Jurisdiction'].name) || f['Jurisdiction'] || '',\n    aiDisclosurePassed: !!f['AI disclosure check passed'],\n    toggles: {\n      invoicing: !!f['Invoicing on'],\n      phone: !!f['Phone on'],\n      quotes: !!f['Quotes on'],\n      reporting: !!f['Reporting on'],\n      monitoring: !!f['Monitoring on'],\n    },\n    businessEmail: f['Business email'] || f['Contact email'] || '',\n    timezone: f['Timezone'] || 'Europe/London',\n    invoice: {\n      brandLogoUrl: f['Brand logo URL'] || '',\n      brandColour: f['Brand colour'] || '#1F3A5F',\n      paymentOptions: f['Payment options'] || '',\n      sendWindowStart: f['Send window start'] || '',\n      sendWindowEnd: f['Send window end'] || '',\n      milestoneInvoicingEnabled: !!f['Milestone invoicing enabled'],\n      invoiceLineAmountType: (f['Invoice line amount type'] && f['Invoice line amount type'].name) || f['Invoice line amount type'] || 'Inclusive',\n      vatRatePct: f['VAT rate %'] === undefined || f['VAT rate %'] === null ? 20 : Number(f['VAT rate %']),\n      accountCode: f['Xero account code'] || '200',\n      paymentTermsDays: f['Payment terms days'] === undefined || f['Payment terms days'] === null ? 14 : Number(f['Payment terms days']),\n      xeroCredentialName: f['Xero credential name'] || '',\n      xeroTenantId: f['Xero organisation ID'] || '',\n      jobSource: (f['Job source'] && f['Job source'].name) || f['Job source'] || 'Airtable Jobs table',\n    },\n    phone: {\n      businessNumber: normalizePhone(f['Business phone number']),\n      receptionNumber: normalizePhone(f['Reception forwarding number']),\n      calendarId: f['Calendar ID'] || '',\n      services: Array.isArray(services) ? services : [],\n      openingHours: hours && !hours.__invalid ? hours : {},\n      greeting: f['Greeting'] || '',\n      tone: f['Tone / brand voice'] || 'Warm, professional and concise.',\n      urgentKeywords: splitList(f['Urgent keywords']),\n      escalationSms: normalizePhone(f['Escalation SMS number'] || f['Reception forwarding number']),\n    },\n    quotes: {\n      pricingRules: pricing,\n      pricesIncludeVat: !!f['Prices include VAT'],\n      validDays: Number(f['Quote valid days']) || 30,\n      minMarginPct: f['Minimum margin %'] === undefined || f['Minimum margin %'] === null ? 30 : Number(f['Minimum margin %']),\n      approverEmail: f['Quote approver email'] || f['Business email'] || f['Contact email'] || '',\n    },\n    reporting: { recipients: splitList(f['Report recipients']) },\n    dashboardToken: f['Dashboard token'] || '',\n    monthlyFee: f['Monthly fee'] || 0,\n    prospectIds: f['Prospect'] || [],\n    _invalidJson: [\n      services && services.__invalid ? 'Services' : null,\n      hours && hours.__invalid ? 'Opening hours' : null,\n      pricing && pricing.__invalid ? 'Pricing rules' : null,\n    ].filter(Boolean),\n  };\n}\n\nfunction normalizePhone(p) {\n  if (!p) return '';\n  let s = String(p).replace(/[^\\d+]/g, '');\n  if (s.startsWith('00')) s = '+' + s.slice(2);\n  if (s.startsWith('0')) s = '+44' + s.slice(1);\n  if (!s.startsWith('+') && s.length >= 10) s = '+' + s;\n  return s;\n}\n\n// The gate. Returns {ok:true} or {ok:false, reason}. Never throws.\nfunction gate(client, service) {\n  if (!client || !client.clientId) return { ok: false, reason: 'client_not_found' };\n  if (client.status !== 'Active') return { ok: false, reason: `status_${String(client.status).toLowerCase()}` };\n  if (!client.halalPassed) return { ok: false, reason: 'halal_screen_not_passed' };\n  if (service && SERVICE_TOGGLES[service] && !client.toggles[service]) return { ok: false, reason: `${service}_toggle_off` };\n  if (service === 'phone') {\n    if (!client.aiDisclosurePassed) return { ok: false, reason: 'ai_disclosure_check_not_passed' };\n    if (BLOCKED_PHONE_JURISDICTIONS.includes(client.jurisdiction)) return { ok: false, reason: 'jurisdiction_requires_ai_disclosure' };\n  }\n  if (client._invalidJson && client._invalidJson.length) {\n    const relevant = { phone: ['Services', 'Opening hours'], quotes: ['Pricing rules'] }[service] || [];\n    const bad = client._invalidJson.filter((x) => relevant.includes(x));\n    if (bad.length) return { ok: false, reason: `invalid_json_${bad.join('_').replace(/\\s/g, '').toLowerCase()}` };\n  }\n  return { ok: true };\n}\n\n// Pick the one client row for a lookup; refuses ambiguous matches (isolation).\nfunction resolveClient(records, { clientId, phoneNumber } = {}) {\n  const clients = (records || []).map(normalizeClient);\n  let matches = [];\n  if (clientId) matches = clients.filter((c) => c.clientId === String(clientId).trim());\n  else if (phoneNumber) {\n    const p = normalizePhone(phoneNumber);\n    matches = clients.filter((c) => c.phone.businessNumber && c.phone.businessNumber === p);\n  }\n  if (matches.length === 0) return { client: null, error: 'client_not_found' };\n  if (matches.length > 1) return { client: null, error: 'ambiguous_client_match' };\n  return { client: matches[0], error: null };\n}\n\n// Demo/test safety: outbound email to anyone other than Keystone goes to the test inbox.\nfunction safeRecipients(client, emails) {\n  const list = (Array.isArray(emails) ? emails : [emails]).filter(Boolean);\n  if (!client || client.isDemo) return list.length ? [TEST_INBOX] : [];\n  return list;\n}\n\nfunction safeSmsNumber(client, number, testNumber) {\n  if (!client || client.isDemo) return testNumber || null;\n  return number;\n}\n\n// Registry-wide integrity checks: duplicate keys would break isolation.\nfunction validateRegistry(records) {\n  const clients = (records || []).map(normalizeClient);\n  const problems = [];\n  const dup = (key, label) => {\n    const seen = {};\n    for (const c of clients) {\n      const v = key(c);\n      if (!v) continue;\n      if (seen[v]) problems.push(`Duplicate ${label} \"${v}\" on ${seen[v]} and ${c.clientName}`);\n      else seen[v] = c.clientName;\n    }\n  };\n  dup((c) => c.clientId, 'Client ID');\n  dup((c) => c.phone.businessNumber, 'Business phone number');\n  dup((c) => c.invoice.xeroTenantId, 'Xero organisation ID');\n  dup((c) => c.dashboardToken, 'Dashboard token');\n  for (const c of clients) if (!c.clientId) problems.push(`Client \"${c.clientName || '(unnamed)'}\" has no Client ID`);\n  return problems;\n}\n\nmodule.exports = { TEST_INBOX, SERVICE_TOGGLES, BLOCKED_PHONE_JURISDICTIONS, parseJson, splitList, normalizeClient, normalizePhone, gate, resolveClient, safeRecipients, safeSmsNumber, validateRegistry };\n\n  },\n  'requests': function (module, exports, require) {\n'use strict';\n// Request builders for the HTTP Request nodes. Each returns {url, method, body, tenantId?}\n// and goes on an item as $json.req. Credentials come from n8n, never from here.\n\nconst { formulaString } = require('./log');\n\nconst AIRTABLE_API = 'https://api.airtable.com/v0';\n// Change once a domain is verified in Resend (BLOCKERS.md). resend.dev only delivers to the Resend account owner.\nconst EMAIL_FROM = 'Keystone <onboarding@resend.dev>';\n\nfunction qs(pairs) {\n  // n8n's Code sandbox has no URLSearchParams, so encode by hand.\n  return pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\n}\n\nfunction airtableList(baseId, tableId, { formula, fields, maxRecords = 100, sort } = {}) {\n  const q = [];\n  if (formula) q.push(['filterByFormula', formula]);\n  if (maxRecords) q.push(['maxRecords', String(maxRecords)]);\n  (fields || []).forEach((f) => q.push(['fields[]', f]));\n  (sort || []).forEach((s, i) => { q.push([`sort[${i}][field]`, s.field]); q.push([`sort[${i}][direction]`, s.direction || 'asc']); });\n  return { method: 'GET', url: `${AIRTABLE_API}/${baseId}/${tableId}?${qs(q)}` };\n}\n\nfunction airtableCreate(baseId, tableId, fieldsList) {\n  return { method: 'POST', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: fieldsList.slice(0, 10).map((f) => ({ fields: clean(f) })), typecast: true } };\n}\n\nfunction airtableUpdate(baseId, tableId, updates) {\n  return { method: 'PATCH', url: `${AIRTABLE_API}/${baseId}/${tableId}`, body: { records: updates.slice(0, 10).map((u) => ({ id: u.id, fields: clean(u.fields) })), typecast: true } };\n}\n\nfunction clean(f) {\n  const o = {};\n  for (const [k, v] of Object.entries(f || {})) if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) o[k] = v;\n  return o;\n}\n\nfunction byClientFormula(clientId, extra) {\n  const base = `{Client ID} = ${formulaString(clientId)}`;\n  return extra ? `AND(${base}, ${extra})` : base;\n}\n\nfunction email({ to, subject, html, text, replyTo, from }) {\n  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);\n  return { method: 'POST', url: 'https://api.resend.com/emails', body: { from: from || EMAIL_FROM, to: list, subject: String(subject).slice(0, 200), html, text, ...(replyTo ? { reply_to: replyTo } : {}) } };\n}\n\nfunction xero(client, method, pathAndQuery, body) {\n  return { method, url: `https://api.xero.com/api.xro/2.0/${pathAndQuery}`, body, tenantId: client.invoice.xeroTenantId };\n}\n\n// Real Xero calls only for live clients with a real tenant ID. Demo rows use the simulated path.\nfunction useRealXero(client) {\n  return !!client.invoice.xeroTenantId && !/^DEMO-/.test(client.invoice.xeroTenantId);\n}\n\nfunction gcal(calendarId, method, path, body) {\n  return { method, url: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/${path}`, body };\n}\n\n// Writes fan out to one shared tail (Airtable write / email / SMS) in every workflow.\nconst write = {\n  airtable: (req) => ({ kind: 'airtable', req }),\n  email: (req) => ({ kind: 'email', req }),\n  sms: (from, to, message) => ({ kind: 'sms', sms: { from, to, message: String(message).slice(0, 600) } }),\n};\n\nfunction ok(res) { return res && res.statusCode >= 200 && res.statusCode < 300; }\n\nmodule.exports = { qs, write, AIRTABLE_API, EMAIL_FROM, airtableList, airtableCreate, airtableUpdate, byClientFormula, email, xero, useRealXero, gcal, ok, clean };\n\n  }\n  };\n  const cache = {};\n  function req(p) {\n    const n = String(p).replace(/^\\.\\//, '');\n    if (defs[n]) {\n      if (!cache[n]) { const module = { exports: {} }; cache[n] = module; defs[n](module, module.exports, req); }\n      return cache[n].exports;\n    }\n    if (typeof require === 'function') return require(p);\n    throw new Error('module not available: ' + p);\n  }\n  return req;\n})();\nconst KS = { phone: __KS('./phone'), time: __KS('./time'), log: __KS('./log'), registry: __KS('./registry'), requests: __KS('./requests') };\nconst AIRTABLE = {\"_note\":\"Airtable base and table IDs (not secrets). Workflows reference these. If you rename a table the ID stays the same.\",\"baseId\":\"app8WDGaKEamwXTqh\",\"tables\":{\"clients\":\"tbl3vmAkTQlzaU9ac\",\"jobs\":\"tbliUF4OWbhpsNMPA\",\"discounts\":\"tbl6UXWCyAHMqDQJ6\",\"agentLog\":\"tbl2w5ClJO9aojS43\",\"needsReview\":\"tblI09VVKADnb8Ln0\",\"callLog\":\"tblq3eEhVkCGlYuTy\",\"quotes\":\"tbl1lUnKBBqk7NKt7\",\"approvedFixes\":\"tblTnGQbfSDTLEf0i\",\"clientMetrics\":\"tblDIK2iPEv4bdkHj\",\"auditIntakes\":\"tbl1p0MQLs1MA0DnY\",\"prospects\":\"tblnjK4LLfZSqiGRc\",\"serviceProgress\":\"tblAJ5gq7HjyWMLu9\",\"settings\":\"tblpgFrCOqt5H5yFn\",\"quoteServices\":\"tblw64CBWD6hHEsGe\",\"quoteFactors\":\"tbli0lRoAC3IOfFJy\",\"opsApprovals\":\"tblMlJzPtGVEmpweo\"}};\n// ===== end library =====\nconst { phone: P, requests: R, log: Lg } = KS;\nconst cfg = $input.item.json;\nconst msg = ($('Vapi End Of Call').item.json.body || {}).message || {};\nconst art = msg.artifact || {};\nconst tools = [];\nfor (const m of art.messages || msg.messages || []) for (const tc of (m.toolCalls || m.tool_calls || [])) {\n  const fn = tc.function || {}; let args = fn.arguments; if (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\n  tools.push({ name: fn.name || tc.name, args: args || {} });\n}\nconst client = { clientId: cfg.clientId, phone: { urgentKeywords: cfg.urgentKeywords || [] } };\nconst report = { callId: (msg.call && msg.call.id) || '', transcript: art.transcript || msg.transcript || '', summary: (msg.analysis && msg.analysis.summary) || msg.summary || '', call: msg.call || { customer: msg.customer }, endedReason: msg.endedReason };\nconst o = P.callOutcome(client, report, tools);\nconst sd = (msg.analysis && msg.analysis.structuredData) || {};\nconst complaintMissed = (sd.complaint === true || /\\bcomplain/i.test(report.summary)) && !tools.some((t) => t.name === 'log_complaint');\nconst W = [R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.callLog, [o.row]))];\nfor (const ev of o.events) W.push(R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.agentLog, [Lg.logRecord({ clientId: cfg.clientId, service: 'phone', event: ev, outcome: ev === 'urgent_escalated' ? 'Escalated' : 'Success', decision: o.row.Category + ': ' + (o.row.Outcome || ''), reasoning: String(o.row.Summary || '').slice(0, 500), reference: o.row['Call ID'], workflow: '[Stock] Phone Booking - 3. Post-Call Actions', executionId: $execution.id })])));\nlet notice = null;\nif (o.safetyNetEscalation || complaintMissed) {\n  const who = (o.row['Caller number'] || 'unknown number');\n  const text = (o.safetyNetEscalation ? 'URGENT (safety net): the call from ' + who + ' mentioned ' + o.safetyNetEscalation.join(', ') + ' but was not escalated during the call. ' : 'Complaint from ' + who + ' was not escalated during the call. ') + 'Summary: ' + (report.summary || '(none)') + ' Please call them back now.';\n  notice = { kind: o.safetyNetEscalation ? 'urgent_call' : 'complaint', clientId: cfg.clientId, clientName: cfg.businessName, text, audience: 'both', business: { email: cfg.businessNotificationEmail, sms: cfg.escalationSmsNumber || cfg.managerPhoneNumber, isDemo: !!cfg.isDemo } };\n}\nreturn { json: { writes: W, notice } };\n"
+    }
+   },
+   {
+    "id": "99ebaa47-2611-4219-b3f0-1a3d32cdedf2",
+    "name": "Needs escalation?",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -140,
+     640
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "return $input.all().filter((i) => i.json.notice).map((i) => ({ json: i.json.notice }));\n"
+    }
+   },
+   {
+    "id": "a1616899-3d46-4b45-8533-90f7eb765098",
+    "name": "Escalate now",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     100,
+     640
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "Hfz3w3Wh7frMuwJ5",
+      "mode": "id"
+     },
+     "mode": "each",
+     "options": {
+      "waitForSubWorkflow": true
+     }
+    }
+   },
+   {
+    "id": "e4883116-fbeb-43c4-a188-62703b6c7e27",
+    "name": "Fan out writes",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -140,
+     780
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "const out = [];\nfor (const it of $input.all()) for (const w of (it.json.writes || [])) out.push({ json: { ...w, route: w.kind === 'email' ? 1 : w.kind === 'sms' ? 2 : 0 } });\nreturn out;\n"
+    }
+   },
+   {
+    "id": "489b3420-87ba-4d03-8f6f-186f7522c20a",
+    "name": "Write kind",
+    "type": "n8n-nodes-base.switch",
+    "typeVersion": 3,
+    "position": [
+     80,
+     780
+    ],
+    "parameters": {
+     "mode": "expression",
+     "numberOutputs": 3,
+     "output": "={{ $json.route }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "34325c37-76be-43b9-821f-1a9662a3e4d4",
+    "name": "Airtable write",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     300,
+     780
+    ],
+    "parameters": {
+     "method": "={{ $json.req.method }}",
+     "url": "={{ $json.req.url }}",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "airtableTokenApi",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "airtableTokenApi": {
+      "id": "Z7PPfHB8c3BsuGME",
+      "name": "Keystone Airtable"
+     }
+    }
+   },
+   {
+    "id": "e6963ea7-e45f-470a-a67e-3bc3d4c2ae5a",
+    "name": "Send email",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     520,
+     780
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.req.url }}",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendHeaders": false,
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true,
+        "neverError": true
+       }
+      },
+      "timeout": 30000
+     }
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "YHY8OwE9VDR10sYO",
+      "name": "Header Auth account 2"
+     }
+    }
+   },
+   {
+    "id": "b0be2ffb-9994-4dc7-8851-575d21d2020a",
+    "name": "Send SMS",
+    "type": "n8n-nodes-base.twilio",
+    "typeVersion": 1,
+    "onError": "continueRegularOutput",
+    "position": [
+     740,
+     780
+    ],
+    "parameters": {
+     "from": "={{ $json.sms.from }}",
+     "to": "={{ $json.sms.to }}",
+     "message": "={{ $json.sms.message }}",
+     "options": {}
+    },
+    "credentials": {
+     "twilioApi": {
+      "id": "pTRs7xfVMj2W7PcG",
+      "name": "Twilio"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Vapi End Of Call": {
+    "main": [
+     [
+      {
+       "node": "Extract Call Summary",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Extract Call Summary": {
+    "main": [
+     [
+      {
+       "node": "Get Client Config",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Client Config": {
+    "main": [
+     [
+      {
+       "node": "Was A Booking Made?",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Was Transferred To Manager?",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Log Call To CallLog",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Check call outcome",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Call To CallLog": {
+    "main": [
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Was Transferred To Manager?": {
+    "main": [
+     [
+      {
+       "node": "Email Business - Manager Transfer Alert",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email Business - Manager Transfer Alert": {
+    "main": [
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Was A Booking Made?": {
+    "main": [
+     [
+      {
+       "node": "Email Customer Confirmation",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Email Business Notification",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email Customer Confirmation": {
+    "main": [
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email Business Notification": {
+    "main": [
+     [
+      {
+       "node": "Acknowledge",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Fan out writes": {
+    "main": [
+     [
+      {
+       "node": "Write kind",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Write kind": {
+    "main": [
+     [
+      {
+       "node": "Airtable write",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Send email",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Send SMS",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check call outcome": {
+    "main": [
+     [
+      {
+       "node": "Fan out writes",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Needs escalation?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Needs escalation?": {
+    "main": [
+     [
+      {
+       "node": "Escalate now",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Bilal Khan",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-11-08T21:39:54.177Z",
+  "updatedAt": "2026-11-08T21:39:54.177Z",
+  "workflowPublishHistory": [
+   {
+    "id": 251,
+    "workflowId": "SoTR9D5CjH1BGs4F",
+    "versionId": "056c0d46-9e9e-493a-929c-52370e866062",
+    "event": "activated",
+    "userId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-11-08T21:39:54.355Z"
+   }
+  ]
+ },
+ "parentFolder": null
+}

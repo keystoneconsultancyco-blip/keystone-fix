@@ -1,0 +1,258 @@
+{
+ "id": "zUl9ib5lX7Ohwlpc",
+ "name": "KS Test - Sheets helper",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-11-08T21:46:16.722Z",
+ "updatedAt": "2026-11-08T21:46:16.722Z",
+ "isArchived": false,
+ "versionId": "9b365f24-6fe3-4000-b876-2ea4175e8318",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "9681299e-963e-4471-a37a-f872395730f8",
+   "name": "Sheets helper",
+   "webhookId": "f0cad862-0914-4afd-a129-b3f1bd57e31f",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "ks-test-sheets-helper",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "b6298da0-c424-488a-ac51-871639f67c44",
+   "name": "Check request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const b = $json.body || {};\nconst S = {\"calllog\":\"1pvDZQ2RBAPT6YrPCNQpShrug0wLLvmPWDKva-xA3h78\"};\nif (b.token !== \"sz0mj6VdxGMibF-6hccmCV3XKKhvAsiU\" || !S[b.sheet] || !/^[A-Za-z]+$/.test(b.tab || '')) return [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];\nconst base = 'https://sheets.googleapis.com/v4/spreadsheets/' + S[b.sheet] + '/values/' + b.tab + '!A2:Z1000';\nreturn [{ json: { allowed: true, req: b.op === 'clear' ? { method: 'POST', url: base + ':clear', body: {} } : { method: 'GET', url: base, body: {} } } }];\n"
+   }
+  },
+  {
+   "id": "ba3de188-185a-4751-a6df-a7caa44f0f5d",
+   "name": "Allowed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "8f1dbe7c-9e34-4ce8-a291-da079d5a18f4",
+       "leftValue": "={{ $json.allowed }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "d0614d20-f312-4168-a9ba-70d62dbec7ab",
+   "name": "Call Sheets",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleSheetsOAuth2Api",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "googleSheetsOAuth2Api": {
+     "id": "xKa0P1ACdrwcNgDR",
+     "name": "Google Sheets account"
+    }
+   }
+  },
+  {
+   "id": "1e33afa1-9b31-47db-aac7-c0aa6f778268",
+   "name": "Wrap",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{ json: { response: { ok: $json.statusCode < 300, statusCode: $json.statusCode, body: $json.body } } }];\n"
+   }
+  },
+  {
+   "id": "b5866dbd-a1fd-4fd5-a928-c9890d3f2d69",
+   "name": "Respond",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "1bac15a2-f059-4177-af3a-f198863b2c1b",
+   "name": "Respond refused",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    780,
+    180
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Sheets helper": {
+   "main": [
+    [
+     {
+      "node": "Check request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check request": {
+   "main": [
+    [
+     {
+      "node": "Allowed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Allowed?": {
+   "main": [
+    [
+     {
+      "node": "Call Sheets",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond refused",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Sheets": {
+   "main": [
+    [
+     {
+      "node": "Wrap",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wrap": {
+   "main": [
+    [
+     {
+      "node": "Respond",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "saveManualExecutions": true,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "errorWorkflow": "GKF6X82UvFFth43w",
+  "timezone": "Europe/London",
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "zUl9ib5lX7Ohwlpc",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-11-08T21:46:16.724Z",
+   "updatedAt": "2026-11-08T21:46:16.724Z"
+  }
+ ],
+ "activeVersion": null,
+ "parentFolder": null
+}

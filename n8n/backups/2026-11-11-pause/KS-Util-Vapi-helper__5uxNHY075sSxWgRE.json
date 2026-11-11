@@ -1,0 +1,258 @@
+{
+ "id": "5uxNHY075sSxWgRE",
+ "name": "KS Util - Vapi helper",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-11-08T21:30:52.914Z",
+ "updatedAt": "2026-11-08T21:42:42.125Z",
+ "isArchived": false,
+ "versionId": "767df013-7abc-4e88-bc9e-cefe421a3abc",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "47eb77e4-a595-4f6c-a0e9-5283cc76c6ce",
+   "name": "Vapi helper",
+   "webhookId": "559981af-bc06-428f-ad97-fa4359b28df3",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "ks-util-vapi-helper",
+    "responseMode": "responseNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "091b2c40-4d84-4031-ae7d-035d5ec80e16",
+   "name": "Check request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    260,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const b = $json.body || {};\nif (b.token !== \"bAXKeZkKCYlIIb7NM9r_77QdTwQaOxHI\") return [{ json: { allowed: false, response: { ok: false, error: 'bad token' } } }];\nconst m = String(b.method || 'GET').toUpperCase();\nconst p = String(b.path || '');\nconst ok = (m === 'GET' && /^(assistant|phone-number|credential|tool)(\\/[A-Za-z0-9-]+)?$/.test(p)) || ((m === 'PATCH') && /^(assistant|tool)\\/[A-Za-z0-9-]+$/.test(p)) || (m === 'POST' && /^(tool|assistant|phone-number)$/.test(p)) || (m === 'PATCH' && /^phone-number\\/[A-Za-z0-9-]+$/.test(p));\nif (!ok) return [{ json: { allowed: false, response: { ok: false, error: 'not allowed' } } }];\nreturn [{ json: { allowed: true, req: { url: 'https://api.vapi.ai/' + p, method: m, body: b.body || {} } } }];\n"
+   }
+  },
+  {
+   "id": "d42b9d46-7297-4c37-a157-da58339bc836",
+   "name": "Allowed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    520,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "8f1dbe7c-9e34-4ce8-a291-da079d5a18f4",
+       "leftValue": "={{ $json.allowed }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "f98beaa2-78d4-4996-a13f-e1dc74f583ff",
+   "name": "Call Vapi",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    780,
+    0
+   ],
+   "parameters": {
+    "method": "={{ $json.req.method }}",
+    "url": "={{ $json.req.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendHeaders": false,
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.req.body || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true
+      }
+     },
+     "timeout": 30000
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "icudeL42gRUvGPEm",
+     "name": "Vapi AP1"
+    }
+   }
+  },
+  {
+   "id": "b09e9354-62d2-4320-a060-52970a6c2ec0",
+   "name": "Wrap",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{ json: { response: { ok: $json.statusCode < 300, statusCode: $json.statusCode, body: $json.body } } }];\n"
+   }
+  },
+  {
+   "id": "90fc570c-6182-4cad-aa4e-defcbfed209b",
+   "name": "Respond",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  },
+  {
+   "id": "ae00d937-c55c-4999-a3cd-3d4f81bcaf0e",
+   "name": "Respond refused",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    780,
+    180
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ JSON.stringify($json.response) }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Vapi helper": {
+   "main": [
+    [
+     {
+      "node": "Check request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check request": {
+   "main": [
+    [
+     {
+      "node": "Allowed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Allowed?": {
+   "main": [
+    [
+     {
+      "node": "Call Vapi",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond refused",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Vapi": {
+   "main": [
+    [
+     {
+      "node": "Wrap",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wrap": {
+   "main": [
+    [
+     {
+      "node": "Respond",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "saveManualExecutions": true,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "errorWorkflow": "GKF6X82UvFFth43w",
+  "timezone": "Europe/London",
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "5uxNHY075sSxWgRE",
+   "projectId": "FrKmPeJlyYapT3T8",
+   "project": {
+    "id": "FrKmPeJlyYapT3T8",
+    "name": "Bilal Khan <keystoneconsultancy.co@gmail.com>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "f6190d69-8f69-458c-863d-06591949f4d9",
+    "createdAt": "2026-07-06T18:03:16.642Z",
+    "updatedAt": "2026-07-06T18:03:25.479Z"
+   },
+   "createdAt": "2026-11-08T21:30:52.916Z",
+   "updatedAt": "2026-11-08T21:30:52.916Z"
+  }
+ ],
+ "activeVersion": null,
+ "parentFolder": null
+}
