@@ -10,12 +10,12 @@ Prices always come from `docs/PRICING.md`. Never quote a price that is not on th
 | 1 | Client pays on the audit link. The card is **held**, not charged. | Client | Stripe link (Keystone Settings > `audit_payment_link`) |
 | 2 | Audit Intakes row appears with Status **Held**. You get an SMS or email. | System | Airtable > Audit Intakes |
 | 3 | You fill **Available slots**: one time per line, UK time, e.g. `Wed 18 Nov 10:00`. | You | Audit Intakes |
-| 4 | The client gets an email from bilal.khan@ saying the £100 is reserved, not charged, with the times as buttons and the recording line. They pick one, or suggest another. It is logged in **Confirmed time** and you are alerted. | System + client | Email, then the pick page |
+| 4 | The client gets an email from bilal.khan@ saying the £100 is reserved, not charged, with the times as buttons. They pick one, or suggest another. It is logged in **Confirmed time** and you are alerted. | System + client | Email, then the pick page |
 | 5 | You tick **Confirm**. The £100 is taken, a Google Meet is created on Keystone's calendar, and the client gets the invite (.ics) plus the intake form. A reminder goes out about 24 hours before. | You, then system | Audit Intakes |
 | – | No confirmed time by **day 3** or **day 5**: a chase. The client is chased if they have not picked a time, you are chased if they have. On **day 6** the hold is cancelled and the client is told nothing was charged. | System | – |
 | 6 | The client fills the intake form: tools, team size, revenue band, top 3 manual tasks, admin hours a week, and a marketing consent tick. | Client | Intake form |
 | 7 | **Call 1** (60 minutes, discovery). Script below. | You | Google Meet |
-| 8 | Paste the transcript into **Transcript**, or it is pulled from Fireflies if enabled. Opus writes the report and the PDF goes into **Report PDF**. Status becomes **Report ready** and you are alerted. | You, then system | Audit Intakes |
+| 8 | Type your notes into **Call 1 notes** straight after the call. Opus writes the report from your notes plus the intake form, and the PDF goes into **Report PDF**. Status becomes **Report ready** and you are alerted. | You, then system | Audit Intakes |
 | 9 | Read the PDF and tick **Approve report**. Fill **Call 2 slots** with times 3–7 days after Call 1. The client picks one, you tick **Confirm call 2**, and the Meet invite goes out. The report PDF is emailed 24 hours before. | You + client | Audit Intakes |
 | 10 | **Call 2** (45 minutes, proposal). Script below. | You | Google Meet |
 | 11 | Set **Outcome**. **Won**: the client gets the agreement PDF from you and the setup invoice (setup minus £100) from Keystone Accounts. **Lost**: nurture emails start, if they ticked consent. | You, then system | Audit Intakes |
@@ -30,12 +30,10 @@ Prices always come from `docs/PRICING.md`. Never quote a price that is not on th
 
 ## Call 1: discovery (60 minutes)
 
-**Goal:** understand how money and time leak out of the business, in their words and with their numbers. You are not selling on this call.
+**Goal:** understand how money and time leak out of the business, in their words and with their numbers. You are not selling on this call. Take notes as you go: they are what the report is written from.
 
-### 0. Open and get consent to record (2 minutes)
-> "Thanks for making the time, [name]. Before we start: I record these calls for note-taking, so I can listen to you rather than scribble. The recording stays with Keystone and is deleted once your report is done. Are you happy for me to record?"
-- **Yes:** start Fireflies or your recorder.
-- **No:** "No problem at all." Take notes, and afterwards paste your notes into **Transcript** instead. Check the **Recording** field first: if it says *Prefers not*, do not ask again. Just say "I won't record today, as you asked."
+### 0. Open (2 minutes)
+> "Thanks for making the time, [name]. I'll be taking notes as we go so I can get the numbers right in your report."
 
 ### 1. Set the scene (3 minutes)
 > "Here's how today works. I'll ask about four areas: invoicing, calls, quotes and reporting. For each one I want to know what happens now, how long it takes, and what goes wrong. Then I go away and put numbers on it, and in a few days I come back with a written report and exactly what I'd fix and what it costs. Sound good?"
@@ -76,7 +74,10 @@ Prices always come from `docs/PRICING.md`. Never quote a price that is not on th
 > "That's really helpful. I'll put numbers on all of this and you'll have a written report before our second call, where I'll show you what I found and exactly what I'd recommend, with prices. You'll get an email with times for that call in the next couple of days."
 - Do not quote prices on Call 1. If asked: "Our prices are fixed and published, and I'll show you exactly which parts apply to you on the next call."
 
-**After the call:** paste the transcript (or your notes) into **Transcript**. The report is written automatically.
+**After the call:** type your notes into **Call 1 notes** while it's fresh. The report is written automatically from your notes plus the intake form.
+- Write down every number they gave you (hours, £, missed calls, days late, invoice counts). Opus only uses what is in your notes or the form, and never guesses missing numbers.
+- Use their words for the problems, and note anything they said they'd do with the hours saved.
+- Shorthand is fine, e.g. `invoices by hand ~6h/wk (Sarah); 3 inv 60+ days late ~£4.2k; misses ~5 calls/wk eves, avg job £400, wins ~1 in 3`.
 
 ---
 
@@ -147,5 +148,4 @@ Read it from the report. It is computed from `docs/PRICING.md`, so never improvi
 ## Rules
 - **Halal screen:** don't book audits for businesses that fail it (Audit Agent rules).
 - **Money:** you approve every money decision. Ticking Confirm takes the £100; setting Won sends the invoice.
-- **Recording:** always ask on the call, even if the email mentioned it. Respect "prefers not".
-- **Data:** recordings and transcripts are only for the audit. Delete recordings once the report is approved.
+- **Data:** your call notes are only for the audit and stay in Airtable.

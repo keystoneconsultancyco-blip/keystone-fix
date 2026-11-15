@@ -8,7 +8,7 @@
 //    day 3 / day 5 without a confirmed call  -> chase (client if they have not picked, Bilal if he has not confirmed)
 //    day 6                                   -> hold cancelled, client told nothing was charged
 //  5 24h before Call 1                       -> reminder
-//  6 transcript pasted (or Fireflies)        -> Opus report -> PDF -> Status "Report ready", Bilal alerted
+//  6 Bilal types "Call 1 notes"            -> Opus report (notes + intake form) -> PDF -> Status "Report ready", Bilal alerted
 //  7 Bilal ticks "Approve report" + fills "Call 2 slots" (3-7 days after Call 1) -> client picks -> "Confirm call 2"
 //    -> Meet + invite; the report PDF is emailed 24h before Call 2
 //  8 Outcome Won  -> agreement PDF + setup invoice (setup total minus the £100) ; Lost -> nurture (only with consent)
@@ -26,7 +26,6 @@ const TZ = 'Europe/London';
 const DAY = 864e5;
 const CALL1_MIN = 60;
 const CALL2_MIN = 45;
-const RECORDING_LINE = 'Calls are recorded for note-taking. Let us know if you’d prefer not.';
 const ACTIVE_STATUSES = ['Held', 'Slots sent', 'Time chosen', 'Call 1 booked', 'Report ready', 'Call 2 offered', 'Call 2 time chosen', 'Call 2 booked'];
 
 const sel = (v) => (v && v.name) || v || '';
@@ -103,9 +102,9 @@ function slotsEmail(rec, slots, call, S) {
   const intro = call === 1
     ? [`Hi ${n},`, `Thank you for booking your Finance Ops Audit for ${biz}.`, 'Your £100 is reserved, not charged. We only take it once your call time is confirmed, and if we cannot find a time it is released in full.', 'Please pick a time for our first call (about 60 minutes, on Google Meet):']
     : [`Hi ${n},`, `Your audit report for ${biz} is ready. Let's go through it together on a second call (about 45 minutes, on Google Meet).`, 'Please pick a time:'];
-  const text = intro.join('\n\n') + '\n\n' + slots.map((s, i) => `- ${s.label}: ${pickUrl(rec, call, i)}`).join('\n') + `\n\nNone of these work? ${otherUrl(rec, call)}\n\n${RECORDING_LINE}\n\nBilal Khan\nKeystone\n${contact(S)}`;
+  const text = intro.join('\n\n') + '\n\n' + slots.map((s, i) => `- ${s.label}: ${pickUrl(rec, call, i)}`).join('\n') + `\n\nNone of these work? ${otherUrl(rec, call)}\n\nBilal Khan\nKeystone\n${contact(S)}`;
   const html = wrap(intro.map(para).join('') + `<p>${slots.map((s, i) => button(pickUrl(rec, call, i), s.label)).join('')}</p>`
-    + `<p style="margin:0 0 14px"><a href="${e(otherUrl(rec, call))}">None of these work? Suggest another time</a></p>` + para(RECORDING_LINE));
+    + `<p style="margin:0 0 14px"><a href="${e(otherUrl(rec, call))}">None of these work? Suggest another time</a></p>`);
   return { subject: call === 1 ? `Your Finance Ops Audit: pick a time, ${n}` : `Your audit report is ready: pick a time for call 2`, html, text };
 }
 
@@ -114,9 +113,9 @@ function chaseEmail(rec, slots, which) {
   const lines = which === 2
     ? [`Hi ${n},`, 'A last reminder about your Finance Ops Audit. Your £100 is still only reserved, not charged.', 'If none of the times suit, tell us a better one. If we do not hear back, the hold is released tomorrow and nothing is taken.']
     : [`Hi ${n},`, 'Just checking you saw the times for your Finance Ops Audit call. Your £100 is reserved, not charged, until a time is confirmed.'];
-  const text = lines.join('\n\n') + '\n\n' + slots.map((s, i) => `- ${s.label}: ${pickUrl(rec, 1, i)}`).join('\n') + `\n\nNone of these work? ${otherUrl(rec, 1)}\n\n${RECORDING_LINE}`;
+  const text = lines.join('\n\n') + '\n\n' + slots.map((s, i) => `- ${s.label}: ${pickUrl(rec, 1, i)}`).join('\n') + `\n\nNone of these work? ${otherUrl(rec, 1)}`;
   const html = wrap(lines.map(para).join('') + (slots.length ? `<p>${slots.map((s, i) => button(pickUrl(rec, 1, i), s.label)).join('')}</p>` : '')
-    + `<p><a href="${e(otherUrl(rec, 1))}">Suggest another time</a></p>` + para(RECORDING_LINE));
+    + `<p><a href="${e(otherUrl(rec, 1))}">Suggest another time</a></p>`);
   return { subject: which === 2 ? 'Last reminder: your Finance Ops Audit call' : 'Your Finance Ops Audit: pick a time', html, text };
 }
 
@@ -144,8 +143,8 @@ function inviteEmail(rec, { call, start, link, eventId }, S) {
     ? [`Hi ${n},`, `You're booked: ${when} (UK time), about 60 minutes on Google Meet. The calendar invite is attached.`, 'Your £100 audit fee has now been taken. It is credited against setup if you go ahead within 30 days.', 'To make the call count, please fill in the short intake form before we speak (5 minutes):']
     : [`Hi ${n},`, `You're booked: ${when} (UK time), about 45 minutes on Google Meet. The calendar invite is attached.`, 'I will email your audit report the day before, so you have time to read it.'];
   const ics = icsFor({ uid: `${eventId || randomToken(12)}@keystone`, start, minutes, title, link, attendee: { email: fv(rec, 'Contact email'), name: fv(rec, 'Contact name') }, organizer: contact(S) });
-  const text = lines.join('\n\n') + (call === 1 ? `\n\n${prepUrl(rec)}` : '') + `\n\nJoin: ${link}\n\n${RECORDING_LINE}`;
-  const html = wrap(lines.map(para).join('') + (call === 1 ? `<p>${button(prepUrl(rec), 'Fill in the intake form')}</p>` : '') + `<p>${button(link, 'Join on Google Meet')}</p>` + para(RECORDING_LINE));
+  const text = lines.join('\n\n') + (call === 1 ? `\n\n${prepUrl(rec)}` : '') + `\n\nJoin: ${link}`;
+  const html = wrap(lines.map(para).join('') + (call === 1 ? `<p>${button(prepUrl(rec), 'Fill in the intake form')}</p>` : '') + `<p>${button(link, 'Join on Google Meet')}</p>`);
   return { subject: `Confirmed: ${title.replace('Keystone ', '')} on ${when}`, html, text, attachments: [{ filename: 'keystone-call.ics', content: b64(ics), content_type: 'text/calendar' }] };
 }
 
@@ -175,15 +174,15 @@ const REPORT_SCHEMA = {
     why_these: { type: 'string' }, quick_wins: { type: 'array', items: { type: 'string' } },
   },
 };
-const REPORT_SYSTEM = `You are Keystone's senior finance-operations auditor (UK, small and mid-sized service businesses). Write the findings for a Finance Ops Audit report from the Call 1 transcript and the client's intake form.
+const REPORT_SYSTEM = `You are Keystone's senior finance-operations auditor (UK, small and mid-sized service businesses). Write the findings for a Finance Ops Audit report from Bilal's notes from Call 1 (the discovery call) and the client's intake form.
 Rules:
-- Only use facts the client said or wrote. Quote or paraphrase the evidence for each finding. Never invent numbers: where you estimate, show the working in "evidence" (e.g. "about 6 hours a week x 52 = 312 hours").
+- Only use facts in Bilal's notes or the intake form. Paraphrase the evidence for each finding and say where it came from (call notes or intake form). The notes may be brief or in shorthand: read them sensibly, but never fill gaps with guesses. Never invent numbers: where you estimate, show the working in "evidence" (e.g. "about 6 hours a week x 52 = 312 hours").
 - Money lost = hours x their stated hourly cost, or £19.67/hour (ONS UK median full-time pay, April 2025) if they gave none, plus cash effects they described (missed jobs, late payments, errors).
 - Recommend only from Keystone's four services: invoicing (Invoice Automation), phone (AI Phone Booking), quotes (Quote Calculator), reporting (Reporting Dashboard). Recommend a service only if a finding supports it.
 - Do not quote prices: Keystone's code adds the exact price from the approved price list.
 - Plain British English, short sentences, no jargon. The client is a busy business owner.`;
 function reportPrompt(rec) {
-  return `Business: ${fv(rec, 'Business name') || ''}\nIndustry: ${fv(rec, 'Industry') || ''}\nRevenue band: ${sel(fv(rec, 'Revenue band')) || 'unknown'}\nTeam size: ${fv(rec, 'Team size') || 'unknown'}\nTools: ${fv(rec, 'Tools used') || 'unknown'}\nTop 3 manual tasks: ${fv(rec, 'Top 3 manual tasks') || 'unknown'}\nAdmin hours per week: ${fv(rec, 'Admin hours per week') || 'unknown'}\n\nCall 1 transcript:\n${String(fv(rec, 'Transcript') || '').slice(0, 120000)}`;
+  return `Business: ${fv(rec, 'Business name') || ''}\nIndustry: ${fv(rec, 'Industry') || ''}\nRevenue band: ${sel(fv(rec, 'Revenue band')) || 'unknown'}\nTeam size: ${fv(rec, 'Team size') || 'unknown'}\nTools: ${fv(rec, 'Tools used') || 'unknown'}\nTop 3 manual tasks: ${fv(rec, 'Top 3 manual tasks') || 'unknown'}\nAdmin hours per week: ${fv(rec, 'Admin hours per week') || 'unknown'}\n\nBilal's notes from Call 1:\n${String(fv(rec, 'Call 1 notes') || '').slice(0, 60000)}`;
 }
 const BAND_FIELD = { 'Under £500k': 'under500k', '£500k–£1M': '500k-1m', '£1M–£3M': '1m-3m', '£3M–£10M': '3m-10m', 'Over £10M': 'over10m' };
 function quoteFor(services, revenueBand, lossPerYear) {
@@ -276,9 +275,7 @@ function decide(rec, S = {}, now = Date.now(), trigger = 'schedule') {
   }
   const call1 = fv(rec, 'Call 1 at');
   if (call1 && !fv(rec, 'Call 1 reminder sent') && Date.parse(call1) > now && Date.parse(call1) - now <= 28 * 3600e3) return local('remind', { call: 1, start: call1, link: fv(rec, 'Call 1 Meet link') });
-  if (has(rec, 'Transcript') && !has(rec, 'Report JSON')) return { route: 'report', step: 'report', ctx };
-  if (!has(rec, 'Transcript') && S.fireflies_enabled === 'yes' && call1 && now - Date.parse(call1) > 90 * 60000 && now - Date.parse(call1) < 7 * DAY && trigger === 'schedule')
-    return { route: 'fireflies', step: 'fireflies', ctx: { ...ctx, req: firefliesReq(rec) } };
+  if (has(rec, 'Call 1 notes') && !has(rec, 'Report JSON')) return { route: 'report', step: 'report', ctx };
   if (fv(rec, 'Approve report') === true && has(rec, 'Report PDF')) {
     if (has(rec, 'Call 2 slots') && !has(rec, 'Call 2 slots emailed at')) {
       const p = parseSlots(fv(rec, 'Call 2 slots'), now);
@@ -310,12 +307,6 @@ function meetReq(rec, start, call) {
     conferenceData: { createRequest: { requestId: `ks-${rec.id}-${call}-${Date.parse(start)}`, conferenceSolutionKey: { type: 'hangoutsMeet' } } },
     reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 30 }] },
   });
-}
-function firefliesReq(rec) {
-  const c1 = Date.parse(fv(rec, 'Call 1 at'));
-  return { method: 'POST', url: 'https://api.fireflies.ai/graphql', body: {
-    query: 'query($from: DateTime, $to: DateTime) { transcripts(fromDate: $from, toDate: $to, limit: 10) { id title date participants sentences { speaker_name text } } }',
-    variables: { from: new Date(c1 - 3600e3).toISOString(), to: new Date(c1 + 4 * 3600e3).toISOString() } } };
 }
 
 // ---------- apply: turn a step (+ outside-call results) into writes, emails and notices ----------
@@ -382,15 +373,7 @@ function apply(step, rec, ctx, S = {}, res = {}) {
       tell(`Audit report ready for ${biz}: about ${Math.round(ctx.report.findings.hours_lost_per_year)} hours and ${gbp(ctx.report.findings.money_lost_per_year_gbp)} a year lost; recommended ${ctx.report.quote.setup.lines.map((l) => l.name).join(', ')}: setup ${gbp(ctx.report.quote.setupAfterCredit)} after the £100 credit + ${ctx.report.quote.package.name} ${gbp(ctx.report.quote.package.price)}/month.${ctx.report.quote.senseCheck.ok === false ? ' WARNING: the monthly fee is more than a third of the monthly loss found (sense check).' : ''} Read the PDF in Audit Intakes, then tick "Approve report" and fill "Call 2 slots".`);
       log = 'Report ready'; break;
     }
-    case 'report_failed': tell(`The Opus audit report for ${biz} failed (${ctx.error}). Fix the transcript or run it again by clearing "Report JSON".`, 'failure'); fields['Report JSON'] = ''; log = 'Report failed: ' + ctx.error; break;
-    case 'fireflies': {
-      const list = (((res.body || {}).data || {}).transcripts) || [];
-      const email = String(fv(rec, 'Contact email') || '').toLowerCase();
-      const t = list.find((x) => (x.participants || []).some((p) => String(p).toLowerCase().includes(email))) || list.find((x) => String(x.title || '').toLowerCase().includes(String(biz).toLowerCase().slice(0, 12)));
-      if (!t) { log = 'Fireflies: no transcript found yet'; break; }
-      Object.assign(fields, { 'Transcript': (t.sentences || []).map((s) => `${s.speaker_name}: ${s.text}`).join('\n').slice(0, 95000), 'Transcript source': 'Fireflies ' + t.id });
-      log = 'Transcript pulled from Fireflies'; break;
-    }
+    case 'report_failed': tell(`The Opus audit report for ${biz} failed (${ctx.error}). Check "Call 1 notes", then run it again by clearing "Report JSON" (or editing the notes).`, 'failure'); fields['Report JSON'] = ''; log = 'Report failed: ' + ctx.error; break;
     case 'won': {
       const r = ctx.report, inv = ctx.invoice || {};
       const agreement = (fv(rec, 'Agreement PDF') || [])[0] || ctx.agreementAttachment;
@@ -467,19 +450,17 @@ function pickPage(rec, call, s, slots, S) {
   if (has(rec, field) && s !== 'other') return page('Time chosen', `<p>Thank you. We have your time: <b>${e(fv(rec, field))}</b>. Bilal will confirm by email shortly.</p><p>Need to change it? Email ${e(contact(S))}.</p>`);
   const t = e(fv(rec, 'Client token') || '');
   const hidden = `<input type="hidden" name="r" value="${e(rec.id)}"><input type="hidden" name="t" value="${t}"><input type="hidden" name="c" value="${call}">`;
-  const rec1 = call === 1 ? '<p><label><input type="checkbox" name="norec" value="1"> I would prefer the call is not recorded</label></p>' : '';
   const action = `${BASE}/ks-audit-pick-submit`;
-  if (s === 'other') return page('Suggest a time', `<form method="post" action="${action}">${hidden}<input type="hidden" name="s" value="other"><p>Which days and times suit you? (UK time)</p><textarea name="text" rows="3" style="width:100%"></textarea>${rec1}<p><button style="background:#C9A961;border:0;padding:11px 18px;font-weight:bold;border-radius:4px">Send</button></p></form>`);
+  if (s === 'other') return page('Suggest a time', `<form method="post" action="${action}">${hidden}<input type="hidden" name="s" value="other"><p>Which days and times suit you? (UK time)</p><textarea name="text" rows="3" style="width:100%"></textarea><p><button style="background:#C9A961;border:0;padding:11px 18px;font-weight:bold;border-radius:4px">Send</button></p></form>`);
   const slot = slots[Number(s)];
   if (!slot) return page('Not found', '<p>That time is no longer available. Please use the latest email from Bilal, or reply to it.</p>');
-  return page('Confirm your time', `<form method="post" action="${action}">${hidden}<input type="hidden" name="s" value="${Number(s)}"><p>Book <b>${e(slot.label)}</b> (UK time) for your ${call === 1 ? 'Finance Ops Audit call' : 'report call'}?</p>${rec1}<p><button style="background:#C9A961;border:0;padding:11px 18px;font-weight:bold;border-radius:4px">Yes, book this time</button></p><p style="font-size:13px;color:#555">${e(RECORDING_LINE)}</p></form>`);
+  return page('Confirm your time', `<form method="post" action="${action}">${hidden}<input type="hidden" name="s" value="${Number(s)}"><p>Book <b>${e(slot.label)}</b> (UK time) for your ${call === 1 ? 'Finance Ops Audit call' : 'report call'}?</p><p><button style="background:#C9A961;border:0;padding:11px 18px;font-weight:bold;border-radius:4px">Yes, book this time</button></p></form>`);
 }
 // POST from the pick page -> fields + notice.
 function pickSubmit(rec, body, now = Date.now()) {
   const call = String(body.c) === '2' ? 2 : 1;
   const f = call === 2 ? { time: 'Call 2 confirmed time', at: 'Call 2 confirmed at', status: 'Call 2 time chosen' } : { time: 'Confirmed time', at: 'Confirmed time at', status: 'Time chosen' };
   const fields = {}; const biz = fv(rec, 'Business name') || 'A client';
-  if (String(body.norec) === '1') fields.Recording = 'Prefers not';
   if (body.s === 'other') {
     const text = String(body.text || '').trim().slice(0, 300);
     if (!text) return { error: 'Please tell us which days and times suit you.' };
@@ -490,7 +471,7 @@ function pickSubmit(rec, body, now = Date.now()) {
   const slot = slots[Number(body.s)];
   if (!slot) return { error: 'That time is no longer available.' };
   Object.assign(fields, { [f.time]: slot.label, [f.at]: slot.start, Status: f.status });
-  return { fields, notice: { kind: 'info', audience: 'bilal', clientName: biz, text: `${biz} picked ${slot.label} for call ${call}${fields.Recording ? ' (prefers the call NOT recorded)' : ''}. Tick "${call === 1 ? 'Confirm' : 'Confirm call 2'}" in Audit Intakes to ${call === 1 ? 'take the £100 and send the Meet invite' : 'send the Meet invite'}.` }, message: `Thank you, ${slot.label} is requested. Bilal will confirm by email shortly.` };
+  return { fields, notice: { kind: 'info', audience: 'bilal', clientName: biz, text: `${biz} picked ${slot.label} for call ${call}. Tick "${call === 1 ? 'Confirm' : 'Confirm call 2'}" in Audit Intakes to ${call === 1 ? 'take the £100 and send the Meet invite' : 'send the Meet invite'}.` }, message: `Thank you, ${slot.label} is requested. Bilal will confirm by email shortly.` };
 }
 
 const BANDS = ['Under £500k', '£500k–£1M', '£1M–£3M', '£3M–£10M', 'Over £10M'];
@@ -517,7 +498,7 @@ function prepSubmit(rec, b) {
   return { fields, notice: { kind: 'info', audience: 'bilal', clientName: fv(rec, 'Business name'), text: `${fv(rec, 'Business name')} filled in the audit intake form: ${fields['Admin hours per week'] ?? '?'} admin hours a week; top tasks: ${String(b.tasks || '').replace(/\s+/g, ' ').slice(0, 200)}` } };
 }
 
-module.exports = { BASE, TZ, CALL1_MIN, CALL2_MIN, RECORDING_LINE, ACTIVE_STATUSES, REPORT_SCHEMA, REPORT_SYSTEM, BANDS,
+module.exports = { BASE, TZ, CALL1_MIN, CALL2_MIN, ACTIVE_STATUSES, REPORT_SCHEMA, REPORT_SYSTEM, BANDS,
   parseSlot, parseSlots, fmtWhen, decide, apply, setAirtable, fromCheckout, quoteFor, reportPrompt, reportHtml, agreementHtml, mdToHtml,
-  stripeReq, meetReq, firefliesReq, icsFor, slotsEmail, chaseEmail, releaseEmail, inviteEmail, reminderEmail, reportEmail,
+  stripeReq, meetReq, icsFor, slotsEmail, chaseEmail, releaseEmail, inviteEmail, reminderEmail, reportEmail,
   pickPage, pickSubmit, prepPage, prepSubmit, page, randomToken, has, fv, sel };

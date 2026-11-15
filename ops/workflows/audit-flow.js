@@ -3,7 +3,7 @@
 //  POST /webhook/ks-stripe-events   Stripe (checkout.session.completed / payment_intent.canceled). Never trusted as sent:
 //                                   the session or payment is re-read from Stripe with Keystone's own key.
 //  POST /webhook/ks-audit-step      Airtable automation "Keystone audit flow" (any audit field Bilal changes) {token, recordId}
-//  Schedule 09:05-19:05 every 2h     chases (day 3/5), release (day 6), reminders (24h before), reports, Fireflies
+//  Schedule 09:05-19:05 every 2h     chases (day 3/5), release (day 6), reminders (24h before), reports
 //  GET/POST /webhook/ks-audit-pick  the client picks a call time (or suggests one)
 //  GET/POST /webhook/ks-audit-prep  the client's intake form (after the £100 is captured)
 // Built switched OFF while Keystone is PAUSED.
@@ -94,7 +94,7 @@ const D = {}; $input.all().forEach((it, i) => { if (!(it.json.statusCode < 300))
 const S = O.settingsMap(D.settings);
 const event = plan[0].json.event;
 if (event && (!S.audit_hook_token || plan[0].json.token !== S.audit_hook_token)) return [];
-const ROUTES = { local: 0, stripe: 1, confirm1: 2, gcal: 3, report: 4, won: 5, fireflies: 6 };
+const ROUTES = { local: 0, stripe: 1, confirm1: 2, gcal: 3, report: 4, won: 5 };
 const now = Date.now();
 const out = [];
 for (const rec of D.intakes) {
@@ -102,7 +102,7 @@ for (const rec of D.intakes) {
   if (d) out.push({ json: { route: ROUTES[d.route], step: d.step, ctx: d.ctx, rec, S, req: d.ctx.req || null } });
 }
 return out;`, { libs: L }),
-  n.route('Route', 7),
+  n.route('Route', 6),
 
   // stripe (release the hold)
   stripeHttp('Stripe: call', 'POST'),
@@ -213,9 +213,6 @@ const b = $('Xero: online link request').item.json;
 const url = (((($json.body || {}).OnlineInvoices) || [])[0] || {}).OnlineInvoiceUrl || '';
 return { json: { ...b, step: 'won', ctx: { ...b.ctx, invoice: { ...b.invoice, url } } } };`, { mode: 'runOnceForEachItem' }),
 
-  // Fireflies (only when fireflies_enabled = yes and the "Keystone Fireflies" credential exists)
-  Object.assign(n.http('Fireflies: transcripts', 'fireflies', { method: 'POST' }), { onError: 'continueRegularOutput' }),
-  n.code('After Fireflies', `const b = $('Decide').item.json; return { json: { ...b, res: { statusCode: $json.statusCode, body: $json.body } } };`, { mode: 'runOnceForEachItem' }),
 
   // every path ends here
   n.code('Apply', `
@@ -303,7 +300,6 @@ const edges = [
   ['PDF: attach request', 'Airtable: attach PDF'], ['Airtable: attach PDF', 'PDF: next'], ['PDF: next', 'After PDF'],
   ['After PDF', 'Apply', 0], ['After PDF', 'Xero: invoice request', 1], ['Xero: invoice request', 'Xero: create invoice'], ['Xero: create invoice', 'Xero: online link request'],
   ['Xero: online link request', 'Invoice ok?'], ['Invoice ok?', 'Xero: online invoice', 0], ['Invoice ok?', 'Apply', 1], ['Xero: online invoice', 'After Xero'], ['After Xero', 'Apply'],
-  ['Route', 'Fireflies: transcripts', 6], ['Fireflies: transcripts', 'After Fireflies'], ['After Fireflies', 'Apply'],
   ['Apply', 'Fan out writes'], ['Apply', 'Notices'],
 
   ['Pick page', 'Tag: pick-get'], ['Pick submit', 'Tag: pick-post'], ['Prep page', 'Tag: prep-get'], ['Prep submit', 'Tag: prep-post'],

@@ -72,7 +72,7 @@ test('Bilal fills Available slots -> client emailed from bilal.khan@: reserved n
   const [mail] = emails(x);
   assert.equal(mail.from, 'Bilal Khan | Keystone <bilal.khan@keystoneconsultancyuk.co.uk>');
   assert.equal(mail.reply_to, 'bilal.khan@keystoneconsultancyuk.co.uk');
-  assert.match(mail.text, /reserved, not charged/); assert.match(mail.text, /Calls are recorded for note-taking\. Let us know if you’d prefer not\./);
+  assert.match(mail.text, /reserved, not charged/); assert.ok(!/record/i.test(mail.text + mail.html), 'no recording line');
   assert.match(mail.html, /ks-audit-pick\?r=recAudit000000001&amp;t=clienttoken123&amp;c=1&amp;s=0/);
   noGmail(mail);
   assert.ok(updates(x)[0].fields['Slots emailed at']);
@@ -93,11 +93,11 @@ test('client picks a time: confirmation page, then Confirmed time logged and Bil
   const x = mocks({ intakes: [r0] });
   const g = await simulate(wf, { start: 'Pick page', items: [{ query: { r: r0.id, t: 'clienttoken123', c: '1', s: '1' } }], mocks: x.m });
   assert.deepEqual(g.errors, []); assert.match(g.responses[0].body, /Yes, book this time/); assert.equal(x.writes.length, 0, 'clicking a link changes nothing (link scanners)');
-  const p = await simulate(wf, { start: 'Pick submit', items: [{ body: { r: r0.id, t: 'clienttoken123', c: '1', s: '1', norec: '1' } }], mocks: x.m });
+  const p = await simulate(wf, { start: 'Pick submit', items: [{ body: { r: r0.id, t: 'clienttoken123', c: '1', s: '1' } }], mocks: x.m });
   assert.deepEqual(p.errors, []);
   const f = updates(x)[0].fields;
-  assert.ok(f['Confirmed time']); assert.ok(f['Confirmed time at']); assert.equal(f.Recording, 'Prefers not'); assert.equal(f.Status, 'Time chosen');
-  assert.match(notices(p)[0], /picked .* for call 1 \(prefers the call NOT recorded\)/);
+  assert.ok(f['Confirmed time']); assert.ok(f['Confirmed time at']); assert.equal(f.Status, 'Time chosen');
+  assert.match(notices(p)[0], /picked .* for call 1\. Tick "Confirm"/);
   const bad = await simulate(wf, { start: 'Pick page', items: [{ query: { r: r0.id, t: 'guess', c: '1', s: '0' } }], mocks: mocks({ intakes: [r0] }).m });
   assert.match(bad.responses[0].body, /not valid/);
   assert.ok(!/gmail/.test(bad.responses[0].body));
@@ -154,12 +154,12 @@ test('24h reminder for call 1, once', async () => {
   assert.equal(emails(x)[0].from, 'Keystone Operations <operations@keystoneconsultancyuk.co.uk>');
 });
 
-test('transcript -> Opus -> PDF -> "Report ready" with the exact quote (multi-service discount, £100 credit)', async () => {
+test('Call 1 notes -> Opus -> PDF -> "Report ready" with the exact quote (multi-service discount, £100 credit)', async () => {
   const report = { summary: 'Too much admin.', findings: [{ area: 'invoicing', problem: 'Invoices typed by hand', evidence: '6 h/week x 52', hours_per_year: 312, gbp_per_year: 6137 }, { area: 'calls', problem: 'Missed calls', evidence: '5 a week', hours_per_year: 50, gbp_per_year: 9000 }],
     hours_lost_per_year: 362, money_lost_per_year_gbp: 60000, recommended_services: ['invoicing', 'phone'], why_these: 'Biggest losses.', quick_wins: ['Turn on Xero reminders'] };
   let attach = null;
-  const x = mocks({ intakes: [rec({ 'Payment status': 'Captured', 'Call 1 at': iso(NOW - DAY), Transcript: 'Bilal: ... Sam: we lose calls ...' })], extra: {
-    'Claude: report': (req) => { assert.equal(req.body.model, 'claude-opus-5-5'); return { statusCode: 200, body: { content: [{ type: 'text', text: JSON.stringify(report) }], usage: { input_tokens: 1000, output_tokens: 500 }, model: 'claude-opus-5-5' } }; },
+  const x = mocks({ intakes: [rec({ 'Payment status': 'Captured', 'Call 1 at': iso(NOW - DAY), 'Call 1 notes': 'Invoices typed by hand, ~6h/week. Misses ~5 calls a week, avg job £400. 3 invoices 60+ days late.' })], extra: {
+    'Claude: report': (req) => { assert.equal(req.body.model, 'claude-opus-5-5'); assert.match(req.body.messages[0].content, /Bilal's notes from Call 1:\nInvoices typed by hand/); assert.match(req.body.messages[0].content, /Admin hours per week/); return { statusCode: 200, body: { content: [{ type: 'text', text: JSON.stringify(report) }], usage: { input_tokens: 1000, output_tokens: 500 }, model: 'claude-opus-5-5' } }; },
     'Drive: create doc': (req) => { assert.match(req.contentType, /^multipart\/related; boundary=/); assert.match(req.body, /application\/vnd\.google-apps\.document/); return { statusCode: 200, body: { id: 'doc1' } }; },
     'Drive: export PDF': () => ({ __binary: { data: { data: Buffer.from('%PDF-1.4 test').toString('base64'), mimeType: 'application/pdf' } } }),
     'Airtable: attach PDF': (req) => { attach = req; return { statusCode: 200, body: { fields: { 'Report PDF': [{ url: 'https://dl.airtable.com/r.pdf' }] } } }; },
@@ -177,7 +177,7 @@ test('transcript -> Opus -> PDF -> "Report ready" with the exact quote (multi-se
 
 test('Call 2: slots must be 3-7 days after Call 1; confirm -> Meet; report emailed 24h before with the PDF', async () => {
   const call1 = NOW - DAY;
-  const base = { 'Payment status': 'Captured', 'Call 1 at': iso(call1), Transcript: 't', 'Report JSON': '{}', 'Report PDF': [{ url: 'https://dl.airtable.com/r.pdf' }], 'Approve report': true };
+  const base = { 'Payment status': 'Captured', 'Call 1 at': iso(call1), 'Call 1 notes': 'n', 'Report JSON': '{}', 'Report PDF': [{ url: 'https://dl.airtable.com/r.pdf' }], 'Approve report': true };
   const early = mocks({ intakes: [rec({ ...base, 'Call 2 slots': slotLine(1, 10) })] });
   const re = await simulate(wf, { start: 'Airtable change', items: event(), mocks: early.m });
   assert.equal(emails(early).length, 0); assert.match(notices(re)[0], /not 3-7 days after Call 1/);

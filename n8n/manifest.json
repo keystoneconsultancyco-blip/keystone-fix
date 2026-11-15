@@ -281,7 +281,7 @@
   {
     "name": "KS Audit Flow",
     "file": "n8n/workflows/ks-audit-flow.json",
-    "nodes": 70,
+    "nodes": 68,
     "attachErrorWorkflow": true,
     "webhooks": [
       {
@@ -322,7 +322,6 @@
       "Keystone Anthropic",
       "Google Drive account",
       "Xero account",
-      "Keystone Fireflies",
       "Header Auth account 2",
       "Twilio"
     ]

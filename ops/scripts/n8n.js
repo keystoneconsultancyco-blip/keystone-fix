@@ -22,9 +22,8 @@ const CREDS = {
   n8n: { type: 'n8nApi', name: 'Keystone n8n API' },
   sheets: { type: 'googleSheetsOAuth2Api', name: 'Google Sheets account' },
   gdrive: { type: 'googleDriveOAuth2Api', name: 'Google Drive account' },
-  // Bilal adds these two in n8n > Credentials (Header Auth, name Authorization, value Bearer <key>):
+  // Bilal adds this in n8n > Credentials (Header Auth, name Authorization, value Bearer <key>):
   stripe: { type: 'httpHeaderAuth', name: 'Keystone Stripe' },
-  fireflies: { type: 'httpHeaderAuth', name: 'Keystone Fireflies' },
 };
 
 function uuid(seed) {

@@ -47,7 +47,7 @@ Do these before Step 3, which switches on **KS Audit Flow**:
 1. **n8n credential "Keystone Stripe":** n8n → Credentials → New → **Header Auth**. Name: `Keystone Stripe`; header name: `Authorization`; value: `Bearer rk_live_…`, the same restricted key you gave me. Then run Step 0b again so the Stripe steps are redeployed.
 2. **Stripe webhook on:** Stripe → Developers → Webhooks → "Keystone audit flow (KS Audit Flow)" (`we_1Uc7iYJR8vcxCxOmQ9hh9x4B`) → **Enable**. Or ask me to enable it.
 3. **Airtable automation:** Airtable → Keystone Client Finder → Automations → Create:
-   - **Trigger:** "When a record is updated", table **Audit Intakes**. Fields: Available slots, Confirm, Confirmed time at, Transcript, Approve report, Call 2 slots, Confirm call 2, Call 2 confirmed at, Outcome.
+   - **Trigger:** "When a record is updated", table **Audit Intakes**. Fields: Available slots, Confirm, Confirmed time at, Call 1 notes, Approve report, Call 2 slots, Confirm call 2, Call 2 confirmed at, Outcome.
    - **Action:** "Run a script". Input variable `recordId` = the trigger's Airtable record ID. Script:
      ```js
      const cfg = input.config();
