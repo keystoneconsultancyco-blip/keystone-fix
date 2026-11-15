@@ -24,6 +24,8 @@ const CREDS = {
   gdrive: { type: 'googleDriveOAuth2Api', name: 'Google Drive account' },
   // Bilal adds this in n8n > Credentials (Header Auth, name Authorization, value Bearer <key>):
   stripe: { type: 'httpHeaderAuth', name: 'Keystone Stripe' },
+  // Basic Auth: user = the Companies House API key, password empty.
+  companiesHouse: { type: 'httpBasicAuth', name: 'Keystone Companies House' },
 };
 
 function uuid(seed) {
@@ -101,9 +103,9 @@ function http(name, cred, { method = 'POST', headers = [], sendBody = true, time
   const p = {
     method,
     url: '={{ $json.req.url }}',
-    authentication: c ? (['httpHeaderAuth'].includes(c.type) ? 'genericCredentialType' : 'predefinedCredentialType') : 'none',
-    ...(c && c.type === 'httpHeaderAuth' ? { genericAuthType: 'httpHeaderAuth' } : {}),
-    ...(c && c.type !== 'httpHeaderAuth' ? { nodeCredentialType: c.type } : {}),
+    authentication: c ? (['httpHeaderAuth', 'httpBasicAuth'].includes(c.type) ? 'genericCredentialType' : 'predefinedCredentialType') : 'none',
+    ...(c && ['httpHeaderAuth', 'httpBasicAuth'].includes(c.type) ? { genericAuthType: c.type } : {}),
+    ...(c && !['httpHeaderAuth', 'httpBasicAuth'].includes(c.type) ? { nodeCredentialType: c.type } : {}),
     sendHeaders: headers.length > 0,
     headerParameters: { parameters: headers.map(([n, v]) => ({ name: n, value: v })) },
     sendBody,

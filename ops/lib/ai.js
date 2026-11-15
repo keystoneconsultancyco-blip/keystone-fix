@@ -18,6 +18,7 @@ const TASKS = {
   weekly_explainer: 'routine',
   lead_research: 'routine',
   outreach_draft: 'routine',
+  reply_classify: 'routine',
   call_brief: 'routine',
   chief_brief: 'routine',
   chief_scorecard: 'routine',

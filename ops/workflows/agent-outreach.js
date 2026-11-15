@@ -1,5 +1,7 @@
 'use strict';
-// KS Agent - Outreach. Drafts only: Bilal approves every send.
+// KS Agent - Outreach. Bilal approves the first 20 cold emails one by one (YES/NO). After that KS Cold Outreach sends
+// automatically (lib/coldoutreach.js) and this agent stops drafting. Only prospects that passed the Companies House
+// check (Cold email OK = Yes: limited company / LLP) are drafted; every email has the unsubscribe link + business address.
 //  draft (daily 08:20, and when Lead Researcher finds high-potential leads): Haiku writes a personal email for each
 //    High potential prospect with a published email -> Prospects (Pending approval) + YES/NO approval to Bilal.
 //  send (Bilal says YES, or sets "Approved - send" in Airtable): emails it via Resend once the domain is verified;
@@ -10,20 +12,21 @@ module.exports = makeAgent({
   name: 'KS Agent - Outreach',
   slug: 'outreach',
   crons: [{ label: 'Daily 08:20', cron: '20 8 * * *' }],
-  libs: ['agentprompts', 'audit'],
+  libs: ['agentprompts', 'audit', 'coldoutreach', 'calc'],
   nothingToDo: 'No prospects need an email draft or a send.',
   reads: `
 if (input.stage === 'send') return [['prospect', list('prospects', { formula: 'RECORD_ID() = ' + Lg.formulaString(input.prospectId || 'none'), maxRecords: 1 })]];
 return [
-  ['toDraft', list('prospects', { formula: "AND({Potential} = 'High potential', {Email} != '', {Sent on} = '', OR({Email approval} = '', {Email approval} = 'Edit requested'), OR({Status} = 'New - review', {Status} = ''))", maxRecords: Number(input.max) || 8, sort: [{ field: 'Fit score', direction: 'desc' }] })],
-  ['toSend', list('prospects', { formula: "AND({Email approval} = 'Approved - send', {Sent on} = '', {Email} != '')", maxRecords: 20 })],
+  ['toDraft', list('prospects', { formula: "AND({Potential} = 'High potential', {Email} != '', {Sent on} = '', {Cold email OK} = 'Yes', NOT({Do not email}), OR({Email approval} = '', {Email approval} = 'Edit requested'), OR({Status} = 'New - review', {Status} = ''))", maxRecords: Number(input.max) || 8, sort: [{ field: 'Fit score', direction: 'desc' }] })],
+  ['approvedSent', list('prospects', { formula: "AND({Email approval} = 'Sent', {Outreach mode} != 'Automatic')", fields: ['Company'], maxRecords: 25 })],
+  ['toSend', list('prospects', { formula: "AND({Email approval} = 'Approved - send', {Sent on} = '', {Email} != '', NOT({Do not email}))", maxRecords: 20 })],
   ['agentSettings', list('agentSettings', { maxRecords: 50 })],
 ];`,
   plan: `
 const P = KS.agentprompts;
 const verified = S.domain_status === 'Verified' && S.email_from && !/@resend\\.dev/i.test(S.email_from);
 const from = S.email_from;
-const sendJob = (rec) => ({ ctx: { stage: 'send', id: rec.id, company: rec.fields.Company, email: rec.fields.Email, subject: rec.fields['Email subject'], body: rec.fields['Email draft'], verified, from, isTest: /\\[TEST\\]/.test(rec.fields['Your notes'] || '') } });
+const sendJob = (rec) => ({ ctx: { stage: 'send', id: rec.id, company: rec.fields.Company, email: rec.fields.Email, subject: rec.fields['Email subject'], body: rec.fields['Email draft'], verified, from, address: S.business_address || '', token: rec.fields['Unsubscribe token'] || '', okToEmail: rec.fields['Cold email OK'] && (rec.fields['Cold email OK'].name || rec.fields['Cold email OK']) === 'Yes' && !rec.fields['Do not email'], isTest: /\\[TEST\\]/.test(rec.fields['Your notes'] || '') } });
 if (input.stage === 'send') {
   const rec = D.prospect[0];
   if (!rec) return [{ ctx: { stage: 'missing', id: input.prospectId } }];
@@ -31,6 +34,8 @@ if (input.stage === 'send') {
 }
 // Released or Airtable-approved emails go first (no AI); drafts are the next run's job.
 if (D.toSend.length && (verified || input.release)) return D.toSend.map(sendJob);
+// After Bilal has approved 20, KS Cold Outreach drafts and sends automatically: stop drafting here.
+if (S.cold_outreach !== 'off' && (D.approvedSent || []).length >= KS.coldoutreach.APPROVED_FIRST) return [];
 const rules = (D.agentSettings.find((r) => /outreach rules/i.test(r.fields.Setting || '')) || { fields: {} }).fields.Value || '';
 return D.toDraft.filter((r) => KS.audit.halalScreen(r.fields.Industry, r.fields['What they do'], r.fields.Company).pass).map((r) => ({
   task: 'outreach_draft',
@@ -54,6 +59,8 @@ if (ctx.stage === 'draft') {
 }
 // ---- send ----
 if (!ctx.email || !ctx.body) return { error: ctx.company + ': no email address or draft' };
+if (!ctx.okToEmail) return { error: ctx.company + ': not sent: not a Companies House limited company / LLP, or marked Do not email' };
+if (!ctx.address) return { error: ctx.company + ': not sent: fill Keystone Settings > business_address (every cold email must show it)' };
 if (!ctx.verified) {
   return { writes: [R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email approval': 'Approved - send', 'Next step': 'Approved: sends automatically once your email domain is verified' } }]))],
     result: { message: 'Approved. It will be sent automatically as soon as your email domain is verified.' }, log: [{ kind: 'Run', summary: 'Approved email to ' + ctx.company + ' held until the domain is verified', ref: ctx.id }] };
@@ -62,7 +69,8 @@ if (!ctx.verified) {
 const to = ctx.isTest ? [Rg.TEST_INBOX] : [ctx.email];
 const dueDate = Tm.addDaysStr(new Date().toISOString().slice(0, 10), 7);
 return { writes: [
-  R.write.email(R.email({ sender: 'personal', from: ctx.from, to, subject: ctx.subject, text: ctx.body, html: '<div style="font-family:Arial,sans-serif;white-space:pre-wrap">' + Lg.escapeHtml(ctx.body) + '</div>', replyTo: (ctx.from.match(/<([^>]+)>/) || [])[1] })),
-  R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email approval': 'Sent', 'Sent on': new Date().toISOString().slice(0, 10), 'Status': 'Contacted', 'Next step': 'Follow up if no reply', 'Next step date': dueDate } }])),
+  (() => { const token = ctx.token || KS.calc.randomId(32); ctx.token = token; const m = KS.coldoutreach.buildEmail({ id: ctx.id, fields: { Company: ctx.company } }, { subject: ctx.subject, body: ctx.body }, { business_address: ctx.address }, token);
+    const mail = R.email({ sender: 'team', from: ctx.from, to, subject: m.subject, text: m.text, html: m.html }); mail.body.headers = m.headers; mail.body.tags = [{ name: 'prospect', value: ctx.id }, { name: 'kind', value: 'cold' }]; return R.write.email(mail); })(),
+  R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email approval': 'Sent', 'Sent on': new Date().toISOString().slice(0, 10), 'Status': 'Contacted', 'Outreach mode': 'Approved by Bilal', 'Unsubscribe token': ctx.token, 'Next step': 'Wait for a reply (replies are read automatically)', 'Next step date': dueDate } }])),
 ], done: 0, log: [{ kind: 'Completed', summary: 'Sent approved email to ' + ctx.company, items: 0, ref: ctx.id }], result: { message: 'Sent to ' + ctx.company + '.' } };`,
 });

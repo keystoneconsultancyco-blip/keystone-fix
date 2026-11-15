@@ -13,7 +13,9 @@ test('three senders once the domain is verified; clients reply to bilal.khan@, B
   assert.equal(Sd.apply(mail('accounts'), LIVE).body.from, 'Keystone Accounts <accounts@keystoneconsultancyuk.co.uk>');
   assert.equal(Sd.apply(mail('operations'), LIVE).body.from, 'Keystone Operations <operations@keystoneconsultancyuk.co.uk>');
   assert.equal(Sd.apply(mail(), LIVE).body.from, 'Keystone Operations <operations@keystoneconsultancyuk.co.uk>', 'default = operations');
-  for (const k of Sd.KINDS) assert.equal(Sd.apply(mail(k, undefined, { reply_to: 'someone@else.com' }), LIVE).body.reply_to, 'bilal.khan@keystoneconsultancyuk.co.uk');
+  for (const k of ['personal', 'accounts', 'operations']) assert.equal(Sd.apply(mail(k, undefined, { reply_to: 'someone@else.com' }), LIVE).body.reply_to, 'bilal.khan@keystoneconsultancyuk.co.uk');
+  const team = Sd.apply(mail('team'), LIVE).body;
+  assert.equal(team.from, 'The Keystone Team <team@keystoneconsultancyuk.co.uk>'); assert.equal(team.reply_to, 'team@reply.keystoneconsultancyuk.co.uk');
   const own = Sd.apply({ body: { from: 'Keystone <onboarding@resend.dev>', to: ['khan.bilalbk408@gmail.com'], subject: 's' } }, LIVE);
   assert.equal(own.body.reply_to, 'keystoneconsultancy.co@gmail.com', 'emails to Bilal himself keep the gmail');
   assert.equal(Sd.apply(mail('personal'), LIVE).sender, undefined, 'the tag never reaches Resend');

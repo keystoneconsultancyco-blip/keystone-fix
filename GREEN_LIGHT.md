@@ -61,6 +61,19 @@ Do these before Step 3, which switches on **KS Audit Flow**:
 5. **Website contact address:** once forwarding works, merge branch `green-light-contact` in `keystone-website-v3`. It replaces the gmail with bilal.khan@ on every page.
 6. **Before the first Won:** a solicitor checks `docs/CLIENT_AGREEMENT.md`, then set `agreement_approved` = yes and fill `keystone_xero_tenant_id`.
 
+## Step 0d: cold outreach (built 16 Nov, `ops/lib/coldoutreach.js`)
+1. **Companies House API key** (free): register at developer.company-information.service.gov.uk, create an application, then add a "REST" API key. In n8n → Credentials → New → **Basic Auth**: name `Keystone Companies House`, user = the key, password empty. Then run Step 0b again.
+2. **Business address:** Keystone Settings → `business_address`. Every cold email shows it; nothing sends while it is empty. A virtual office address is fine if you'd rather not show your home.
+3. **Receiving replies:** Resend → Domains → add `reply.keystoneconsultancyuk.co.uk` with **receiving** switched on. Add the MX record Resend shows in Namecheap (host `reply`). Replies to cold emails go to team@reply.…
+4. **Resend webhook:** Resend → Webhooks → add `https://keystoneconsultancy.app.n8n.cloud/webhook/ks-resend-events` with events `email.received`, `email.bounced`, `email.complained`. Or ask me to create it.
+5. **n8n Resend key must be full access** (credential "Header Auth account 2"), so n8n can read the replies.
+6. **How it runs:**
+   - You approve the first 20 cold emails one by one (Outreach agent YES/NO, all from The Keystone Team, with footer).
+   - Then KS Cold Outreach sends automatically on weekdays at 09:40 and 13:40: 10 a day in week 1, 20 in week 2, 30 in week 3, and 40 from week 4.
+   - Only prospects that Companies House shows as an active limited company or LLP are emailed.
+   - Interested replies come to you as a YES/NO with a drafted answer. Every Monday you get a summary.
+   - To stop at any time: `cold_outreach` = off.
+
 ## Step 1: alerts
 ```bash
 NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js alerts

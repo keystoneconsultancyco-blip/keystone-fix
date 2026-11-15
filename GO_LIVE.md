@@ -55,7 +55,7 @@ All prices follow `docs/PRICING.md`; the website is live at https://keystonecons
 | 11 | Jarvis: add `KEYSTONE_FEED_TOKEN` in Vercel (value: Keystone Settings > `jarvis_feed_token`), then merge the branch | [Vercel](https://vercel.com/dashboard) > Jarvis > Settings > Environment Variables · [Jarvis changes](https://github.com/khanbilalbk408-sudo/Jarvis/compare/main...keystone-agents) | Agent pages appear (tap "Keystone agent team" or ask Jarvis) |
 | 12 | Have a solicitor check `docs/CLIENT_AGREEMENT.md` | – | Ready to sign your first client |
 
-After that: approve the outreach emails the agents draft, book calls, and the rest of the pipeline runs itself.
+After that: approve the first 20 cold emails the agents draft (then cold outreach runs automatically, 10 -> 40 a day), book calls, and the rest of the pipeline runs itself.
 
 ## Useful links
 - Agents switchboard: [Airtable > Agents](https://airtable.com/app8WDGaKEamwXTqh/tbl0hUNJIb689RuZH) (set Status to Paused to stop one)

@@ -352,6 +352,31 @@
     ]
   },
   {
+    "name": "KS Cold Outreach",
+    "file": "n8n/workflows/ks-cold-outreach.json",
+    "nodes": 34,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Resend event",
+        "method": "POST",
+        "path": "ks-resend-events"
+      },
+      {
+        "node": "Send approved reply",
+        "method": "POST",
+        "path": "ks-agent-cold-reply"
+      }
+    ],
+    "credentials": [
+      "Keystone Airtable",
+      "Keystone Companies House",
+      "Keystone Anthropic",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS-01 Invoice Automation",
     "file": "n8n/workflows/ks-01-invoice-automation.json",
     "nodes": 46,

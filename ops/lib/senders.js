@@ -3,6 +3,7 @@
 //  personal   "Bilal Khan | Keystone <bilal.khan@domain>"     outreach, proposals, audits, nurture, client success
 //  accounts   "Keystone Accounts <accounts@domain>"            invoices, quotes, payment reminders
 //  operations "Keystone Operations <operations@domain>"        bookings, reports, alerts and other automatic emails (default)
+//  team       "The Keystone Team <team@domain>"               cold outreach; replies go to team@reply.<domain> (Resend receiving)
 // Reply-To: emails to Bilal himself -> keystoneconsultancy.co@gmail.com (Keystone Settings > reply_to).
 // Emails to anyone else -> client_contact_email (bilal.khan@...): clients never see a gmail address (15 Nov rule).
 // Until Resend has verified the domain (domain_status = Verified) everything goes from Resend's test sender, which only
@@ -12,7 +13,7 @@ const TEST_FROM = 'Keystone <onboarding@resend.dev>';
 const REPLY_TO = 'keystoneconsultancy.co@gmail.com';
 const CLIENT_CONTACT = 'bilal.khan@keystoneconsultancyuk.co.uk';
 const INTERNAL = ['khan.bilalbk408@gmail.com', 'keystoneconsultancy.co@gmail.com'];
-const KINDS = ['personal', 'accounts', 'operations'];
+const KINDS = ['personal', 'accounts', 'operations', 'team'];
 
 function addresses(S = {}) {
   const domain = String(S.sending_domain || '').trim().toLowerCase();
@@ -23,6 +24,8 @@ function addresses(S = {}) {
     personal: S.sender_personal || `Bilal Khan | Keystone <${local}@${domain}>`,
     accounts: S.sender_accounts || `Keystone Accounts <accounts@${domain}>`,
     operations: S.sender_operations || `Keystone Operations <operations@${domain}>`,
+    team: S.sender_team || `The Keystone Team <team@${domain}>`,
+    teamReplyTo: S.cold_reply_to || `team@reply.${domain}`,
     replyTo: S.reply_to || REPLY_TO,
     clientContact: S.client_contact_email || ((domain && verified) ? `${local}@${domain}` : CLIENT_CONTACT),
   };
@@ -34,7 +37,7 @@ const addrOf = (from) => ((String(from || '').match(/<([^>]+)>/) || [])[1] || St
 function isKeystoneSender(from, S = {}) {
   const a = addrOf(from);
   const domain = String(S.sending_domain || '').trim().toLowerCase();
-  return !a || /@resend\.dev$/.test(a) || (!!domain && a.endsWith('@' + domain));
+  return !a || /@resend\.dev$/.test(a) || (!!domain && (a.endsWith('@' + domain) || a.endsWith('.' + domain)));
 }
 
 // Every recipient is Bilal (alert_email / his own inboxes)?
@@ -54,7 +57,7 @@ function apply(req, S = {}) {
   const internal = isInternal(body.to, S);
   if (isKeystoneSender(body.from, S)) {
     body.from = A.verified ? A[kind] : TEST_FROM;
-    body.reply_to = internal ? A.replyTo : A.clientContact;
+    body.reply_to = internal ? A.replyTo : kind === 'team' ? A.teamReplyTo : A.clientContact;
   } else if (!body.reply_to) {
     body.reply_to = internal ? A.replyTo : A.clientContact;
   }

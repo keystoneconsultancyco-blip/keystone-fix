@@ -14,7 +14,7 @@ const N8N = 'https://keystoneconsultancy.app.n8n.cloud';
 const BEFORE = path.join(__dirname, '../../n8n/backups/2026-11-11-pause/_active_before_pause.json');
 
 // Built during the pause (never active before it), switched on at GREEN LIGHT too.
-const NEW_SINCE_PAUSE = ['KS Audit Flow'];
+const NEW_SINCE_PAUSE = ['KS Audit Flow', 'KS Cold Outreach'];
 const STAGES = {
   // 1. Alerts first, so anything that breaks later is reported.
   alerts: ['KS Ops - Notify', 'KS Ops - Failure Alerts'],
@@ -26,7 +26,7 @@ const STAGES = {
   // 3. Keystone's own operations (website backend, tracking, approvals, budget, switch-on, Jarvis feed).
   ops: ['KS Ops Manager', 'KS AI Budget', 'KS Switch-On', 'KS Website Calculator', 'KS Nurture Tracking', 'KS Jarvis Feed', 'KS Agent Switch', 'KS Audit Flow'],
   // 4. Agents last.
-  agents: ['KS Agent - Ops Monitor', 'KS Agent - Chief of Staff', 'KS Agent - Client Hunter', 'KS Agent - Outreach', 'KS Agent - Sales Prep', 'KS Agent - Nurture'],
+  agents: ['KS Agent - Ops Monitor', 'KS Agent - Chief of Staff', 'KS Agent - Client Hunter', 'KS Agent - Outreach', 'KS Agent - Sales Prep', 'KS Agent - Nurture', 'KS Cold Outreach'],
 };
 
 async function n8n(method, p, body) {
