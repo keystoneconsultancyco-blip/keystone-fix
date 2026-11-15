@@ -15,7 +15,7 @@ const T = AT.tables;
 
 const tplRecs = (approved) => TPL.map((t, i) => ({ id: 'recTpl' + String(i).padStart(8, '0'), fields: { ...t, Approved: approved, Sent: 2, Bookings: 0 } }));
 function settings(extra = {}) {
-  return Object.entries({ agent_run_token: 'tok', email_from: 'Keystone <hello@keystone.co.uk>', domain_status: 'Verified', alert_email: ME, audit_slots_per_month: '5', nurture_social_proof: '', ...extra })
+  return Object.entries({ agent_run_token: 'tok', email_from: 'Bilal Khan | Keystone <bilal.khan@keystone.co.uk>', sending_domain: 'keystone.co.uk', sending_address: 'bilal.khan', domain_status: 'Verified', alert_email: ME, audit_slots_per_month: '5', nurture_social_proof: '', ...extra })
     .map(([k, v]) => ({ id: 'r' + k, fields: { Setting: k, Value: v } }));
 }
 const lead = (over = {}) => ({ id: 'recLead0000000001', createdTime: new Date(Date.now() - 1 * DAY).toISOString(), fields: { Source: 'Website', Company: 'Acme Plumbing Ltd', 'Contact name': 'Sam Jones', Email: 'sam@acme-plumbing.co.uk',
@@ -88,6 +88,7 @@ test('daily run: due lead gets email 1 with tracking, Sends row, lead + template
   assert.equal(x.emails.length, 1);
   const mail = x.emails[0].body;
   assert.deepEqual(mail.to, ['sam@acme-plumbing.co.uk']);
+  assert.equal(mail.from, 'Bilal Khan | Keystone <bilal.khan@keystone.co.uk>'); assert.equal(mail.reply_to, 'keystoneconsultancy.co@gmail.com');
   assert.match(mail.html, /ks-nurture-click\?s=[a-z0-9]{24}&amp;t=recTpl/); assert.match(mail.html, /ks-nurture-open\?s=/); assert.match(mail.html, /ks-unsubscribe\?p=recLead/);
   assert.match(mail.text, /Sam/); assert.match(mail.text, /3 are left for/);
   const send = x.at(T.nurtureSends)[0].body.records[0].fields;

@@ -116,9 +116,9 @@ return $input.all().map((it) => {
     'Approval token': sendNow ? '' : token, 'Sent at': sendNow ? now.toISOString() : undefined,
   }])));
   W.push(R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.agentLog, [Lg.logRecord({ clientId: client.clientId, service: 'quotes', event: 'quote_drafted', outcome: sendNow ? 'Success' : priced ? 'Draft created' : 'Sent to review', decision: status + ' £' + q.total, reasoning: pricedBy === 'agent' ? (q.agentNotes || '') : 'Priced from Quote Services/Factors', confidence: quote.confidence, reference: ref, workflow: 'KS Quote Calculator', executionId: $execution.id, details: { source, belowMarginFloor: q.belowMarginFloor } })])));
-  if (sendNow) W.push(R.write.email(R.email({ to: Rg.safeRecipients(client, [q.customerEmail]), subject: 'Your quote from ' + client.clientName + ' (' + ref + ')', html: H.customerQuoteEmail(client, q), replyTo: client.businessEmail })));
+  if (sendNow) W.push(R.write.email(R.email({ sender: 'accounts', to: Rg.safeRecipients(client, [q.customerEmail]), subject: 'Your quote from ' + client.clientName + ' (' + ref + ')', html: H.customerQuoteEmail(client, q), replyTo: client.businessEmail })));
   const approver = Rg.safeRecipients(client, [client.quotes.approverEmail || client.businessEmail]);
-  if (!sendNow && approver.length) W.push(R.write.email(R.email({ to: approver, subject: (priced ? 'Approve quote ' : 'Quote needs details ') + ref + ': ' + (q.customerName || 'customer') + (q.belowMarginFloor ? ' [BELOW MARGIN]' : ''), html: H.approvalEmail(client, q, approveUrl) })));
+  if (!sendNow && approver.length) W.push(R.write.email(R.email({ sender: 'accounts', to: approver, subject: (priced ? 'Approve quote ' : 'Quote needs details ') + ref + ': ' + (q.customerName || 'customer') + (q.belowMarginFloor ? ' [BELOW MARGIN]' : ''), html: H.approvalEmail(client, q, approveUrl) })));
   let message;
   if (source === 'phone') message = Qc.phoneSentence(quote, client.clientName);
   else if (sendNow) message = 'Quote ' + ref + ' sent to ' + q.customerEmail + '.';
@@ -166,7 +166,7 @@ const saved = JSON.parse(r.fields['Inputs JSON'] || '{}').quote || {};
 const now = new Date().toISOString();
 const W = [
   R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.quotes, [{ id: r.id, fields: { 'Status': 'Sent to customer', 'Sent at': now, 'Approval token': '' } }])),
-  R.write.email(R.email({ to: Rg.safeRecipients(client, [r.fields['Customer email']]), subject: 'Your quote from ' + client.clientName + ' (' + saved.ref + ')', html: H.customerQuoteEmail(client, saved), replyTo: client.businessEmail })),
+  R.write.email(R.email({ sender: 'accounts', to: Rg.safeRecipients(client, [r.fields['Customer email']]), subject: 'Your quote from ' + client.clientName + ' (' + saved.ref + ')', html: H.customerQuoteEmail(client, saved), replyTo: client.businessEmail })),
   R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.agentLog, [Lg.logRecord({ clientId: client.clientId, service: 'quotes', event: 'quote_sent', outcome: 'Success', decision: 'Approved by business and emailed', reference: saved.ref, workflow: 'KS Quote Calculator', executionId: $execution.id })])),
 ];
 return [{ json: { statusCode: 200, html: H.messagePage(client, 'Quote sent', 'Quote ' + saved.ref + ' has been emailed to ' + r.fields['Customer email'] + '.'), writes: W } }];`, { libs: L }),

@@ -3,6 +3,7 @@
 // so the "Client Config" sub-workflows can read My Clients without changing any caller.
 
 const Rg = require('./registry');
+const Sd = require('./senders');
 
 const DAY_NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
 
@@ -46,7 +47,9 @@ function toInvoiceConfig(client, record) {
     invoiceStatus: 'DRAFT', // fixed: Keystone never authorises invoices automatically
     invoiceDueDays: client.invoice.paymentTermsDays,
     invoiceLineAmountType: client.invoice.invoiceLineAmountType,
-    confirmationFromEmail: field(record, 'From email') || 'onboarding@resend.dev',
+    // Invoices and payment reminders: the client's Accounts sender (Keystone Accounts once the domain is verified).
+    confirmationFromEmail: field(record, 'Accounts from email') || field(record, 'From email') || 'onboarding@resend.dev',
+    replyTo: field(record, 'Reply-to email') || Sd.REPLY_TO,
     jobsSheetId: field(record, 'Jobs sheet ID') || '',
     jobsSheetTabName: field(record, 'Jobs sheet tab') || 'Jobs',
     discountsSheetTabName: 'Discounts',
@@ -86,7 +89,9 @@ function toPhoneConfig(client, record) {
     businessHoursEnd: ends[ends.length - 1] || '17:00',
     businessDays: openDays.map((d) => DAY_NAMES[d]),
     serviceMenu: services.map((s) => ({ name: s.name, durationMinutes: Number(s.durationMins) || 60 })),
+    // Bookings and call notifications: the client's From email (Keystone Operations once the domain is verified).
     confirmationFromEmail: field(record, 'From email') || 'onboarding@resend.dev',
+    replyTo: field(record, 'Reply-to email') || Sd.REPLY_TO,
     businessNotificationEmail: client.businessEmail,
     reportingSheetId: field(record, 'Call log sheet ID') || '',
     callLogTabName: 'CallLog',

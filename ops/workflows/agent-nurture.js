@@ -79,7 +79,7 @@ const mail = Nu.emailParts({ subject: ctx.tpl.subject, body: ctx.tpl.body, vars,
   unsubUrl: '${BASE}/ks-unsubscribe?p=' + encodeURIComponent(L.id) + '&t=' + encodeURIComponent(L.token) });
 const nowIso = new Date().toISOString();
 const writes = [
-  R.write.email(R.email({ from: ctx.from, to: [test ? Rg.TEST_INBOX : L.email], subject: (ctx.preview ? '[PREVIEW ' + ctx.tpl.name + '] ' : '') + mail.subject, text: mail.text, html: mail.html, replyTo: ctx.replyTo })),
+  R.write.email(R.email({ sender: 'personal', from: ctx.from, to: [test ? Rg.TEST_INBOX : L.email], subject: (ctx.preview ? '[PREVIEW ' + ctx.tpl.name + '] ' : '') + mail.subject, text: mail.text, html: mail.html, replyTo: ctx.replyTo })),
   R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.nurtureSends, [{ 'Send ID': sendId, 'Lead ID': L.id, 'Company': L.company, 'Email': L.email, 'Template': ctx.tpl.name, 'Step': ctx.step, 'Sent at': nowIso, 'Opens': 0, 'Clicks': 0, 'Test': test, 'Template ID': ctx.tpl.id }])),
 ];
 if (!ctx.preview) writes.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, P, [{ id: L.id, fields: { 'Nurture step': ctx.step, 'Nurture last sent': nowIso, 'Nurture status': 'Active', 'Nurture last send': sendId, 'Nurture last template': ctx.tpl.id } }])));

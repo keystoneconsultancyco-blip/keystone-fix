@@ -120,7 +120,7 @@ for (const it of $input.all()) {
     W.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.jobs, [{ id: j.recordId, fields: { 'Status': 'Invoiced (draft)', 'Xero invoice ID': x.result.invoiceId, 'Invoice number': x.result.invoiceNumber, 'Processed at': now, 'Agent note': x.note || '', 'Error message': '' } }])));
     W.push(R.write.airtable(R.airtableCreate(AIRTABLE.baseId, AIRTABLE.tables.agentLog, [Lg.logRecord({ clientId: c.clientId, service: 'invoicing', event: x.viaAgent ? 'invoice_agent_fixed' : 'invoice_draft_created', outcome: 'Draft created', decision: 'Xero DRAFT ' + x.result.invoiceNumber + (x.result.simulated ? ' (demo, simulated)' : ''), reasoning: x.viaAgent ? x.reason : 'Clean data: fixed core', confidence: x.confidence, reference: j.jobId, workflow: 'KS-01 Invoice Automation', executionId: $execution.id, details: { issues: x.issues, discount: x.discount, total: x.result.total } })])));
     const to = Rg.safeRecipients(c, [c.businessEmail]);
-    if (to.length) W.push(R.write.email(R.email({ to, subject: 'Draft invoice ready: ' + j.customerName + ' (' + j.jobId + ')', html: Rn.invoiceDraftEmail(c, { job: j, invoiceNumber: x.result.invoiceNumber, total: x.result.total, note: x.note }) })));
+    if (to.length) W.push(R.write.email(R.email({ sender: 'accounts', to, subject: 'Draft invoice ready: ' + j.customerName + ' (' + j.jobId + ')', html: Rn.invoiceDraftEmail(c, { job: j, invoiceNumber: x.result.invoiceNumber, total: x.result.total, note: x.note }) })));
   } else {
     // Fail safe: the job is never lost. A transient error gets one automatic retry on the next poll; anything else goes to review.
     const transient = [0, 408, 429, 500, 502, 503, 504].includes(Number(x.result.statusCode));

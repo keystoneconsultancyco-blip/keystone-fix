@@ -34,7 +34,7 @@ if (ctx.stage === 'send') {
   const x = ctx.x;
   if (!ctx.verified) return { result: { message: 'Approved, but the email domain is not verified yet, so it could not go to the client.' }, log: [{ kind: 'Run', summary: 'Check-in for ' + x.clientName + ' approved but held (domain not verified)' }] };
   const to = Rg.safeRecipients({ isDemo: !!x.isDemo }, [x.email]);
-  return { writes: to.length ? [R.write.email(R.email({ from: ctx.from, to, subject: x.subject, text: x.body, html: '<div style="font-family:Arial,sans-serif;white-space:pre-wrap">' + Lg.escapeHtml(x.body) + '</div>' }))] : [], log: [{ kind: 'Completed', summary: 'Check-in sent to ' + x.clientName, items: 0 }] };
+  return { writes: to.length ? [R.write.email(R.email({ sender: 'personal', from: ctx.from, to, subject: x.subject, text: x.body, html: '<div style="font-family:Arial,sans-serif;white-space:pre-wrap">' + Lg.escapeHtml(x.body) + '</div>' }))] : [], log: [{ kind: 'Completed', summary: 'Check-in sent to ' + x.clientName, items: 0 }] };
 }
 if (!parsed.ok) return { error: ctx.clientName + ': check-in failed (' + parsed.error + ')' };
 const d = parsed.data;

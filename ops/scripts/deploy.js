@@ -29,8 +29,9 @@ async function deploy(names) {
   const alertWf = live.find((w) => w.name === 'KS Ops - Failure Alerts');
   const targets = Object.values(workflows).filter((w) => !names.length || names.includes(w.name));
   const results = [];
-  const allowOn = await require('./pause').mayActivate();
-  if (!allowOn) console.error('system_status is PAUSED: workflows are deployed switched OFF. (GREEN_LIGHT.md explains how to switch on.)');
+  // KS_DEPLOY_KEEP_OFF=1: update workflows but never switch them on (GREEN_LIGHT.md step 0b).
+  const allowOn = process.env.KS_DEPLOY_KEEP_OFF === '1' ? false : await require('./pause').mayActivate();
+  if (!allowOn) console.error('Workflows are deployed switched OFF (system PAUSED or KS_DEPLOY_KEEP_OFF=1).');
   for (const wf of targets) {
     if (!/^KS /.test(wf.name) || /^\[Stock\]/.test(wf.name)) { results.push({ name: wf.name, skipped: 'not a KS workflow' }); continue; }
     const wants = true;

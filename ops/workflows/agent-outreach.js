@@ -62,7 +62,7 @@ if (!ctx.verified) {
 const to = ctx.isTest ? [Rg.TEST_INBOX] : [ctx.email];
 const dueDate = Tm.addDaysStr(new Date().toISOString().slice(0, 10), 7);
 return { writes: [
-  R.write.email(R.email({ from: ctx.from, to, subject: ctx.subject, text: ctx.body, html: '<div style="font-family:Arial,sans-serif;white-space:pre-wrap">' + Lg.escapeHtml(ctx.body) + '</div>', replyTo: (ctx.from.match(/<([^>]+)>/) || [])[1] })),
+  R.write.email(R.email({ sender: 'personal', from: ctx.from, to, subject: ctx.subject, text: ctx.body, html: '<div style="font-family:Arial,sans-serif;white-space:pre-wrap">' + Lg.escapeHtml(ctx.body) + '</div>', replyTo: (ctx.from.match(/<([^>]+)>/) || [])[1] })),
   R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.prospects, [{ id: ctx.id, fields: { 'Email approval': 'Sent', 'Sent on': new Date().toISOString().slice(0, 10), 'Status': 'Contacted', 'Next step': 'Follow up if no reply', 'Next step date': dueDate } }])),
 ], done: 0, log: [{ kind: 'Completed', summary: 'Sent approved email to ' + ctx.company, items: 0, ref: ctx.id }], result: { message: 'Sent to ' + ctx.company + '.' } };`,
 });

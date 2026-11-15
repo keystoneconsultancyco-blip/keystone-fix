@@ -22,6 +22,26 @@ All commands run from `keystone-fix/ops`.
    ```
    Expect: `system_status = PAUSED`, 0 active workflows.
 
+## Step 0b: apply the email sender update (from 15 Nov; no executions)
+```bash
+NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js senders
+```
+- **What it does:**
+  - redeploys every KS workflow with the new senders, all kept **off**;
+  - patches the [Stock] workflows (change 11: Reply-To on their 10 email nodes, and Client Config rebuilt);
+  - backs up each [Stock] workflow first.
+- **Pass:** every line says `(off)` and the last line says `Active workflows after the sender update: 0`.
+- **Who emails come from** once Resend has verified `keystoneconsultancyuk.co.uk` (until then, Resend's test sender, which reaches only Bilal):
+
+| Sender | Used for |
+|---|---|
+| Bilal Khan \| Keystone &lt;bilal.khan@keystoneconsultancyuk.co.uk&gt; | outreach, proposals, audits, nurture, client emails from Bilal |
+| Keystone Accounts &lt;accounts@keystoneconsultancyuk.co.uk&gt; | invoices, quotes, payment reminders |
+| Keystone Operations &lt;operations@keystoneconsultancyuk.co.uk&gt; | bookings, reports, alerts, all automatic notifications |
+
+  Reply-To on every email: keystoneconsultancy.co@gmail.com. All four are editable in Keystone Settings (`sender_personal`, `sender_accounts`, `sender_operations`, `reply_to`). A client with their own From address keeps it.
+- **Domain:** on 15 Nov Resend showed the domain as **failed**: none of the DNS records were found. Add the records from the DNS email in Namecheap first. Switch-On (Step 3) then asks Resend to check again.
+
 ## Step 1: alerts
 ```bash
 NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js alerts

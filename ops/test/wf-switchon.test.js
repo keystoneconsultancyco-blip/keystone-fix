@@ -9,7 +9,7 @@ const wf = build({ write: false }).workflows['KS Switch-On'];
 const SID = 'AC' + 'a'.repeat(32);
 function setup(settings, extra = {}) {
   const writes = [], calls = [];
-  const S = Object.entries({ agent_run_token: 'tok', sending_address: 'hello', ...settings }).map(([k, v]) => ({ id: 'r' + k, fields: { Setting: k, Value: v } }));
+  const S = Object.entries({ agent_run_token: 'tok', sending_address: 'bilal.khan', ...settings }).map(([k, v]) => ({ id: 'r' + k, fields: { Setting: k, Value: v } }));
   const m = {
     'Read Airtable': (req) => {
       if (req.url.includes('tblpgFrCOqt5H5yFn')) return { body: { records: S } };
@@ -31,10 +31,11 @@ test('domain verified -> sender switched, clients moved, held outreach and propo
   const r = await simulate(wf, { start: '4 times a day', items: [{}], mocks: x.m });
   assert.deepEqual(r.errors, []);
   const settings = x.writes.filter((w) => w.url.includes('tblpgFrCOqt5H5yFn')).flatMap((w) => w.body.records.map((rec) => rec.fields));
-  assert.deepEqual(settings.find((f) => f.Setting === 'email_from'), { Setting: 'email_from', Value: 'Keystone <hello@keystoneops.co.uk>' });
+  assert.deepEqual(settings.find((f) => f.Setting === 'email_from'), { Setting: 'email_from', Value: 'Bilal Khan | Keystone <bilal.khan@keystoneops.co.uk>' });
   assert.ok(settings.some((f) => f.Setting === 'domain_status' && f.Value === 'Verified'));
   const clientUpdates = x.writes.filter((w) => w.url.includes('tbl3vmAkTQlzaU9ac')).flatMap((w) => w.body.records);
   assert.equal(clientUpdates.length, 2);
+  assert.deepEqual(clientUpdates[0].fields, { 'From email': 'Keystone Operations <operations@keystoneops.co.uk>', 'Accounts from email': 'Keystone Accounts <accounts@keystoneops.co.uk>' });
   assert.ok(x.calls.some((c) => c.url.endsWith('/ks-agent-outreach') && c.body.release === true && c.body.token === 'tok'));
   assert.ok(x.calls.some((c) => c.url.endsWith('/ks-agent-sales-prep') && c.body.intakeId === 'recHeld1'));
   assert.ok(r.calls.some((c) => c.node === 'Tell Bilal' && /is verified/.test(c.req.text)));

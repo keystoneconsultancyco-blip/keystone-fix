@@ -79,7 +79,7 @@ const isTest = /\\[TEST\\]|^KS TEST/i.test(rec.f['Business name'] || '');
 const to = isTest ? [Rg.TEST_INBOX] : [rec.f['Contact email']];
 const html = '<div style="font-family:Arial,sans-serif;max-width:680px"><p style="white-space:pre-wrap">' + Lg.escapeHtml(pj.email.body) + '</p><hr><div style="white-space:pre-wrap">' + Lg.escapeHtml(rec.f['Proposal draft'] || '') + '</div></div>';
 return { writes: [
-  R.write.email(R.email({ from: ctx.from, to, subject: pj.email.subject, html, text: pj.email.body + '\\n\\n' + (rec.f['Proposal draft'] || ''), replyTo: (String(ctx.from).match(/<([^>]+)>/) || [])[1] })),
+  R.write.email(R.email({ sender: 'personal', from: ctx.from, to, subject: pj.email.subject, html, text: pj.email.body + '\\n\\n' + (rec.f['Proposal draft'] || ''), replyTo: (String(ctx.from).match(/<([^>]+)>/) || [])[1] })),
   R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.auditIntakes, [{ id: rec.id, fields: { 'Status': 'Proposal sent', 'Proposal sent at': new Date().toISOString() } }])),
 ], log: [{ kind: 'Completed', summary: 'Proposal sent to ' + rec.f['Business name'], items: 0, ref: rec.id }], result: { message: 'Proposal sent to ' + rec.f['Business name'] + '.' } };`,
 });

@@ -2,7 +2,8 @@
 // GREEN LIGHT: switch Keystone back on in safe order, one stage at a time, testing each stage before the next.
 // Only run after Bilal has said "GREEN LIGHT" (see GREEN_LIGHT.md).
 //   NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js <stage>
-// Stages, in order: alerts, core, ops, agents, check.   (status = read-only overview; safe any time)
+// Stages, in order: senders, alerts, core, ops, agents, check.   (status = read-only overview; safe any time)
+// senders = deploy the email sender update (15 Nov) with every workflow kept OFF; makes no executions.
 // Only workflows that were active before the pause are switched on (n8n/backups/2026-11-11-pause/_active_before_pause.json).
 const fs = require('fs');
 const path = require('path');
@@ -116,6 +117,23 @@ async function status() {
   if (stage === 'status') return status();
   if (process.env.KS_GREEN_LIGHT !== '1') { console.error('Refusing: set KS_GREEN_LIGHT=1, and only after Bilal has said "GREEN LIGHT".'); process.exit(1); }
   const S = await settings();
+  if (stage === 'senders') {
+    // 1) every KS workflow from the code, switched off; 2) the [Stock] workflows get change 11 (Reply-To + Client Config).
+    const { execFileSync } = require('child_process');
+    const built = Object.keys(require('./build-workflows').build({ write: false }).workflows);
+    const live = await workflows();
+    const ks = built.filter((nm) => live.some((w) => w.name === nm) && !/^KS Test/.test(nm));
+    const env = { ...process.env, KS_DEPLOY_KEEP_OFF: '1' };
+    const out = JSON.parse(execFileSync('node', ['--no-warnings', path.join(__dirname, 'deploy.js'), ...ks], { env, encoding: 'utf8', maxBuffer: 1 << 24 }));
+    for (const r of out) console.log(r.error ? '  FAILED   ' : '  updated  ', r.name, r.error ? r.detail : (r.activeNow ? '(ON - unexpected!)' : '(off)'));
+    for (const w of live.filter((x) => /^\[Stock\]/.test(x.name))) {
+      const res = execFileSync('node', ['--no-warnings', path.join(__dirname, '../changes/run.js'), w.id, '11-senders.js', 'senders'], { env, encoding: 'utf8' });
+      console.log('  patched  ', w.name, /"active":true/.test(res) ? '(ON - unexpected!)' : '(off)');
+    }
+    const on = (await workflows()).filter((w) => w.active);
+    console.log('Active workflows after the sender update:', on.length, '(expected 0)');
+    return;
+  }
   if (stage === 'check') {
     const before = JSON.parse(fs.readFileSync(BEFORE, 'utf8')).filter((w) => w.active).map((w) => w.name);
     const on = new Set((await workflows()).filter((w) => w.active).map((w) => w.name));
@@ -124,7 +142,7 @@ async function status() {
     if (!missing.length) { await setSetting('system_status', 'LIVE'); console.log('system_status set to LIVE.'); }
     return;
   }
-  if (!STAGES[stage]) { console.error('Stage must be one of: alerts, core, ops, agents, check, status'); process.exit(1); }
+  if (!STAGES[stage]) { console.error('Stage must be one of: senders, alerts, core, ops, agents, check, status'); process.exit(1); }
   console.log(`== GREEN LIGHT stage: ${stage}`);
   await activate(STAGES[stage]);
   await TESTS[stage](S);

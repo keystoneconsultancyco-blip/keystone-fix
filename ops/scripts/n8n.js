@@ -163,11 +163,9 @@ return out;`),
     code('Set sender', `
 const S = {};
 for (const r of (($json.body || {}).records || [])) if (r.fields && r.fields.Setting) S[r.fields.Setting] = String(r.fields.Value || '').trim();
-const verified = S.email_from && !/@resend\\.dev/i.test(S.email_from) ? S.email_from : null;
 const it = $('Write kind').item.json;
-const req = JSON.parse(JSON.stringify(it.req || {}));
-if (verified && req.body && /@resend\\.dev/i.test(String(req.body.from || ''))) req.body.from = verified;
-return { json: { ...it, req } };`, { mode: 'runOnceForEachItem' }),
+// From by email type (personal / accounts / operations) + Reply-To on everything: lib/senders.js
+return { json: { ...it, req: KS.senders.apply(it.req, S) } };`, { libs: ['senders'], mode: 'runOnceForEachItem' }),
     Object.assign(resendHttp('Send email'), { onError: 'continueRegularOutput' }),
     Object.assign(twilioSms('Send SMS'), { onError: 'continueRegularOutput' }),
     Object.assign(http('Call webhook', null, { method: '={{ $json.req.method || "POST" }}', timeout: 120000 }), { onError: 'continueRegularOutput' }),

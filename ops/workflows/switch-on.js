@@ -1,7 +1,7 @@
 'use strict';
 // KS Switch-On: makes go-live a matter of filling two cells in Keystone Settings.
 //  Domain:  sending_domain filled -> registers it in Resend and emails Bilal the exact DNS records -> keeps asking Resend
-//           to verify -> once verified: email_from switches to <sending_address>@domain for every workflow (the shared
+//           to verify -> once verified: Keystone emails come from bilal.khan@ / accounts@ / operations@ the domain (lib/senders.js; the shared
 //           tail swaps the test sender), clients still on the test sender move over, held outreach emails and
 //           proposals are released, and Bilal is told.
 //  Twilio:  twilio_from filled -> points the number's calls at the phone IVR and its texts at the Ops Manager
@@ -9,7 +9,7 @@
 //           alert_sms_to (his mobile) is filled too.
 // 4 times a day (07:07, 11:07, 15:07, 19:07), or POST /webhook/ks-switch-check {token} (add "probeTwilio": true to test the Twilio login only).
 const n = require('../scripts/n8n');
-const L = ['opsmanager', 'requests', 'log', 'agentteam'];
+const L = ['senders', 'opsmanager', 'requests', 'log', 'agentteam'];
 const BASE = 'https://keystoneconsultancy.app.n8n.cloud/webhook';
 
 function twilioHttp(name, method) {
@@ -44,7 +44,7 @@ $input.all().forEach((it, i) => { D[plan[i].json.key] = ((it.json.body || {}).re
 const S = O.settingsMap(D.settings);
 const input = plan[0].json.input || {};
 if (plan[0].json.isWebhook && (!S.agent_run_token || input.token !== S.agent_run_token)) return [{ json: { route: 4, note: 'refused' } }];
-const ctx = { S: { twilio_account_sid: S.twilio_account_sid, sending_domain: S.sending_domain, sending_address: S.sending_address || 'hello', domain_status: S.domain_status, domain_resend_id: S.domain_resend_id, domain_registered_name: S.domain_registered_name, twilio_from: S.twilio_from, twilio_connected: S.twilio_connected, alert_sms_to: S.alert_sms_to, agent_run_token: S.agent_run_token },
+const ctx = { S: { twilio_account_sid: S.twilio_account_sid, sending_domain: S.sending_domain, sending_address: S.sending_address || 'bilal.khan', sender_personal: S.sender_personal, sender_accounts: S.sender_accounts, sender_operations: S.sender_operations, reply_to: S.reply_to, domain_status: S.domain_status, domain_resend_id: S.domain_resend_id, domain_registered_name: S.domain_registered_name, twilio_from: S.twilio_from, twilio_connected: S.twilio_connected, alert_sms_to: S.alert_sms_to, agent_run_token: S.agent_run_token },
   clients: D.clients.map((r) => r.id), held: D.heldProposals.map((r) => r.id), demo: D.demoClient[0] ? { id: D.demoClient[0].id, phone: D.demoClient[0].fields['Business phone number'] || '' } : null };
 const domain = String(S.sending_domain || '').trim().toLowerCase().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/.*$/, '');
 const out = [];
@@ -75,7 +75,7 @@ const recs = (ok && res.body.records) || [];
 const set = ok ? { domain_resend_id: res.body.id, domain_registered_name: p.domain, domain_status: 'Waiting for DNS' } : { domain_status: 'Failed: ' + ((res.body && (res.body.message || res.body.name)) || res.statusCode) };
 const table = recs.map((r) => r.record + ' | ' + r.type + ' | Name: ' + r.name + ' | Value: ' + r.value + (r.priority !== undefined ? ' | Priority: ' + r.priority : '') + (r.ttl ? ' | TTL: ' + r.ttl : '')).join('\\n');
 const text = ok
-  ? 'Your email domain ' + p.domain + ' is registered with Resend. Add these DNS records where you bought the domain (e.g. GoDaddy, Namecheap, 123-reg), in the DNS settings:\\n\\n' + table + '\\n\\nKeystone checks 4 times a day (or tap "check now"). As soon as Resend confirms them (usually within an hour, up to 72), every Keystone email switches to ' + p.ctx.S.sending_address + '@' + p.domain + ' and any approved emails waiting for this are sent. Nothing else to do.'
+  ? 'Your email domain ' + p.domain + ' is registered with Resend. Add these DNS records where you bought the domain (e.g. GoDaddy, Namecheap, 123-reg), in the DNS settings:\\n\\n' + table + '\\n\\nKeystone checks 4 times a day (or tap "check now"). As soon as Resend confirms them (usually within an hour, up to 72), Keystone emails switch to ' + p.ctx.S.sending_address + '@, accounts@ and operations@' + p.domain + ' and any approved emails waiting for this are sent. Nothing else to do.'
   : 'I could not register ' + p.domain + ' with Resend: ' + set.domain_status + '. If the Resend key only has "sending access", either give it full access or add the domain yourself at resend.com/domains and put its ID in Keystone Settings > domain_resend_id (and the domain in domain_registered_name).';
 return { json: { writes: [R.write.airtable(R.airtableUpsert(AIRTABLE.baseId, AIRTABLE.tables.settings, ['Setting'], Object.entries(set).map(([k, v]) => ({ 'Setting': k, 'Value': v }))))], notices: [{ kind: ok ? 'info' : 'failure', text }] } };`, { libs: L, mode: 'runOnceForEachItem' }),
   // ---- domain: check / verify ----
@@ -86,12 +86,15 @@ const p = $('Plan').item.json;
 const res = $json;
 const st = res.statusCode < 300 && res.body ? String(res.body.status || '') : 'unknown';
 if (st === 'verified') {
-  const from = 'Keystone <' + p.ctx.S.sending_address + '@' + p.domain + '>';
+  // Three senders (lib/senders.js): personal, accounts, operations. email_from = the personal one (Keystone's main sender).
+  const A = KS.senders.addresses({ ...p.ctx.S, sending_domain: p.domain, domain_status: 'Verified' });
+  const from = A.personal;
   const W = [R.write.airtable(R.airtableUpsert(AIRTABLE.baseId, AIRTABLE.tables.settings, ['Setting'], [{ 'Setting': 'email_from', 'Value': from }, { 'Setting': 'domain_status', 'Value': 'Verified' }]))];
-  for (let i = 0; i < p.ctx.clients.length; i += 10) W.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.clients, p.ctx.clients.slice(i, i + 10).map((id) => ({ id, fields: { 'From email': from } })))));
+  // Clients still on the test sender: bookings/reports from Operations, invoices/reminders from Accounts.
+  for (let i = 0; i < p.ctx.clients.length; i += 10) W.push(R.write.airtable(R.airtableUpdate(AIRTABLE.baseId, AIRTABLE.tables.clients, p.ctx.clients.slice(i, i + 10).map((id) => ({ id, fields: { 'From email': A.operations, 'Accounts from email': A.accounts } })))));
   W.push(R.write.webhook('${BASE}/ks-agent-outreach', { release: true, token: p.ctx.S.agent_run_token }));
   for (const id of p.ctx.held) W.push(R.write.webhook('${BASE}/ks-agent-sales-prep', { stage: 'send_proposal', intakeId: id, token: p.ctx.S.agent_run_token }));
-  return { json: { verify: false, writes: W, notices: [{ kind: 'info', text: 'Your email domain ' + p.domain + ' is verified. All Keystone emails now come from ' + from + '. ' + p.ctx.clients.length + ' client(s) moved to the new sender, approved outreach emails are being sent now' + (p.ctx.held.length ? ', and ' + p.ctx.held.length + ' approved proposal(s) are going out' : '') + '. Customers now receive their emails, the website calculator now emails verification codes to every visitor, and the Nurture sequence can send (once you tick Approved on its templates).' }] } };
+  return { json: { verify: false, writes: W, notices: [{ kind: 'info', text: 'Your email domain ' + p.domain + ' is verified. Keystone emails now come from ' + A.personal + ' (outreach, proposals, audits), ' + A.accounts + ' (invoices, quotes, reminders) and ' + A.operations + ' (bookings, reports, notifications), with replies going to ' + A.replyTo + '. ' + p.ctx.clients.length + ' client(s) moved to the new sender, approved outreach emails are being sent now' + (p.ctx.held.length ? ', and ' + p.ctx.held.length + ' approved proposal(s) are going out' : '') + '. Customers now receive their emails, the website calculator now emails verification codes to every visitor, and the Nurture sequence can send (once you tick Approved on its templates).' }] } };
 }
 const failed = st === 'failed' || st === 'temporary_failure';
 const W = failed && p.ctx.S.domain_status !== 'Failed' ? [R.write.airtable(R.airtableUpsert(AIRTABLE.baseId, AIRTABLE.tables.settings, ['Setting'], [{ 'Setting': 'domain_status', 'Value': 'Failed' }]))] : [];

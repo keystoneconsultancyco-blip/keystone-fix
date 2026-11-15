@@ -42,8 +42,8 @@ test('calc rules: free-mail, rate limit, code checks', () => {
   assert.equal(C.checkCode({ ...row, Expires: new Date(Date.now() - 1000).toISOString() }, '123456', 's').reason, 'expired');
   assert.equal(C.sendingAllowed({ domain_status: '' }, 'someone@acme.co.uk', ME), false);
   assert.equal(C.sendingAllowed({ domain_status: '' }, ME, ME), true);
-  assert.equal(C.sendingAllowed({ domain_status: 'Verified', email_from: 'Keystone <hello@k.co.uk>' }, 'someone@acme.co.uk', ME), true);
-  assert.equal(C.sendingAllowed({ domain_status: 'Verified', email_from: 'Keystone <hello@k.co.uk>', website_calculator: 'off' }, 'someone@acme.co.uk', ME), false);
+  assert.equal(C.sendingAllowed({ domain_status: 'Verified', email_from: 'Keystone <bilal.khan@k.co.uk>' }, 'someone@acme.co.uk', ME), true);
+  assert.equal(C.sendingAllowed({ domain_status: 'Verified', email_from: 'Keystone <bilal.khan@k.co.uk>', website_calculator: 'off' }, 'someone@acme.co.uk', ME), false);
 });
 
 test('start: honeypot -> fake success, nothing stored or sent', async () => {
@@ -63,7 +63,7 @@ test('start: before the domain is verified only Bilal\'s inbox gets a code; othe
   const b = startMocks();
   const r2 = await simulate(wf, { start: 'Calc start', items: [form({ email: 'owner@acme-plumbing.co.uk' })], mocks: b.m });
   assert.equal(resp(r2).comingSoon, true); assert.equal(b.writes.length, 0);
-  const c = startMocks({ S: settings({ domain_status: 'Verified', email_from: 'Keystone <hello@keystone.co.uk>' }) });
+  const c = startMocks({ S: settings({ domain_status: 'Verified', email_from: 'Keystone <bilal.khan@keystone.co.uk>' }) });
   const r3 = await simulate(wf, { start: 'Calc start', items: [form({ email: 'owner@acme-plumbing.co.uk' })], mocks: c.m });
   assert.equal(resp(r3).ok, true); assert.ok(c.writes.some((w) => w.url === 'https://api.resend.com/emails'));
 });
