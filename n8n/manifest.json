@@ -279,6 +279,55 @@
     ]
   },
   {
+    "name": "KS Audit Flow",
+    "file": "n8n/workflows/ks-audit-flow.json",
+    "nodes": 70,
+    "attachErrorWorkflow": true,
+    "webhooks": [
+      {
+        "node": "Stripe event",
+        "method": "POST",
+        "path": "ks-stripe-events"
+      },
+      {
+        "node": "Airtable change",
+        "method": "POST",
+        "path": "ks-audit-step"
+      },
+      {
+        "node": "Pick page",
+        "method": "GET",
+        "path": "ks-audit-pick"
+      },
+      {
+        "node": "Pick submit",
+        "method": "POST",
+        "path": "ks-audit-pick-submit"
+      },
+      {
+        "node": "Prep page",
+        "method": "GET",
+        "path": "ks-audit-prep"
+      },
+      {
+        "node": "Prep submit",
+        "method": "POST",
+        "path": "ks-audit-prep-submit"
+      }
+    ],
+    "credentials": [
+      "Keystone Stripe",
+      "Keystone Airtable",
+      "Google Calendar account",
+      "Keystone Anthropic",
+      "Google Drive account",
+      "Xero account",
+      "Keystone Fireflies",
+      "Header Auth account 2",
+      "Twilio"
+    ]
+  },
+  {
     "name": "KS Audit Agent",
     "file": "n8n/workflows/ks-audit-agent.json",
     "nodes": 36,

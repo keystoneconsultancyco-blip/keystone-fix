@@ -1,6 +1,6 @@
 'use strict';
 // Change 11 (apply at GREEN LIGHT): email senders and Reply-To in the [Stock] workflows.
-//  - every Resend email node gets reply_to = the client's Reply-to (default keystoneconsultancy.co@gmail.com);
+//  - every Resend email node gets reply_to = the client's Reply-to (default bilal.khan@keystoneconsultancyuk.co.uk: clients never see a gmail);
 //  - the Client Config sub-workflows are rebuilt from lib/clientconfig.js, so invoices/reminders use the client's
 //    "Accounts from email" and bookings use "From email" (both set to Keystone Accounts / Operations when the domain
 //    is verified, unless the client has their own address).
@@ -8,7 +8,7 @@
 const n = require('../scripts/n8n');
 const { H } = require('../scripts/stock');
 const L = ['clientconfig', 'registry', 'requests', 'log'];
-const REPLY = "'keystoneconsultancy.co@gmail.com'";
+const REPLY = "'bilal.khan@keystoneconsultancyuk.co.uk'";
 
 function addReplyTo(w) {
   let changed = 0;

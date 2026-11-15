@@ -44,14 +44,15 @@ function runCode(node, items, state, wfName) {
   const wrap = (src) => `(async () => {\n${src}\n})()`;
   if (mode === 'runOnceForEachItem') {
     return Promise.all(items.map(async (it, i) => {
-      const ctx = { ...base, $json: it.json, $input: { item: { json: it.json }, all: () => items.map((x) => ({ json: x.json })) }, $: makeDollar(state, it.lin), $itemIndex: i };
+      const ctx = { ...base, Buffer, $json: it.json, $input: { item: { json: it.json }, all: () => items.map((x) => ({ json: x.json })) }, $: makeDollar(state, it.lin), $itemIndex: i };
       const res = await vm.runInNewContext(wrap(jsCode), ctx, { filename: node.name });
       if (res === undefined || res === null) return [];
       const r = Array.isArray(res) ? res : [res];
       return r.map((x) => ({ json: x.json !== undefined ? x.json : x, lin: { ...it.lin } }));
     })).then((arrs) => arrs.flat());
   }
-  const ctx = { ...base, $input: { all: () => items.map((x) => ({ json: x.json })), first: () => ({ json: items[0] && items[0].json }) }, $json: items[0] && items[0].json, $: makeDollar(state, items[0] && items[0].lin) };
+  const helpers = { getBinaryDataBuffer: async (i, prop) => Buffer.from(((items[i] || {}).binary || {})[prop] ? items[i].binary[prop].data : '', 'base64') };
+  const ctx = { ...base, helpers, Buffer, $input: { all: () => items.map((x) => ({ json: x.json, binary: x.binary })), first: () => ({ json: items[0] && items[0].json, binary: items[0] && items[0].binary }) }, $json: items[0] && items[0].json, $: makeDollar(state, items[0] && items[0].lin) };
   return Promise.resolve(vm.runInNewContext(wrap(jsCode), ctx, { filename: node.name })).then((res) => {
     const r = (res || []).map((x) => (x && x.json !== undefined ? x : { json: x }));
     return r.map((x, i) => {
@@ -94,6 +95,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
             req = { method: evalExpr(node.parameters.method, ctx), url: evalExpr(node.parameters.url, ctx), headers: {} };
             for (const h of (node.parameters.headerParameters && node.parameters.headerParameters.parameters) || []) req.headers[h.name] = evalExpr(h.value, ctx);
             if (node.parameters.sendBody) req.body = node.parameters.contentType === 'raw' ? evalExpr(node.parameters.body, ctx) : JSON.parse(evalExpr(node.parameters.jsonBody, ctx));
+            if (node.parameters.contentType === 'raw') req.contentType = evalExpr(node.parameters.rawContentType, ctx);
             req.credential = node.credentials ? Object.values(node.credentials)[0].name : null;
           }
           result.calls.push({ node: name, req });
@@ -101,6 +103,7 @@ async function simulate(wf, { start, items = [{}], mocks = {}, staticData = {}, 
           const mock = mocks[name] || (name === 'Email sender settings' ? () => ({ records: [] }) : null);
           if (!mock) throw new Error(`No mock for HTTP node "${name}" (${req.url || req.to})`);
           const res = await mock(req, it.json);
+          if (res && res.__binary) { out.push({ json: {}, binary: res.__binary, lin: { ...it.lin } }); continue; }
           const json = t === 'twilio' ? (res || { sid: 'SMsim' }) : { statusCode: res && res.statusCode !== undefined ? res.statusCode : 200, body: res && res.body !== undefined ? res.body : res, headers: {} };
           out.push({ json, lin: { ...it.lin } });
         }

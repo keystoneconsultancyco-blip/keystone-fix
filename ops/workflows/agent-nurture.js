@@ -18,7 +18,7 @@ module.exports = makeAgent({
   crons: [{ label: 'Daily 10:20', cron: '20 10 * * *' }],
   nothingToDo: 'No nurture emails due (or waiting for approved templates / a verified email domain).',
   reads: `return [
-  ['leads', list('prospects', { formula: "AND({Source} = 'Website', OR({Nurture status} = BLANK(), {Nurture status} = 'Active'))", maxRecords: 100 })],
+  ['leads', list('prospects', { formula: "AND(OR({Source} = 'Website', {Source} = 'Audit'), OR({Nurture status} = BLANK(), {Nurture status} = 'Active'))", maxRecords: 100 })],
   ['templates', list('nurtureTemplates', { maxRecords: 50 })],
   ['audits', list('auditIntakes', { formula: "IS_SAME({Created}, NOW(), 'month')", fields: ['Created'], maxRecords: 100 })],
 ];`,

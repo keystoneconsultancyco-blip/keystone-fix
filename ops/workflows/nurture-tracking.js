@@ -45,7 +45,8 @@ ${kind === 'open'
     ? `return [{ json: { writes }, binary: { data: { data: '${GIF}', mimeType: 'image/gif', fileName: 'p.gif', fileExtension: 'gif' } } }];`
     : `const S = O.settingsMap((got.settings || []));
 const company = send ? send.fields.Company || '' : '';
-const to = String(S.alert_email || 'keystoneconsultancy.co@gmail.com').split(',')[0].trim();
+// Clients only ever see the Keystone address (never a gmail).
+const to = S.client_contact_email || 'bilal.khan@keystoneconsultancyuk.co.uk';
 const url = /^https:\\/\\//.test(String(S.audit_booking_url || '')) ? S.audit_booking_url
   : 'mailto:' + to + '?subject=' + encodeURIComponent('Book my Finance Ops Audit' + (company ? ' - ' + company : '')) + '&body=' + encodeURIComponent('Hi Bilal, I would like to book my Finance Ops Audit. Some times that suit me: ');
 const safe = url.split('&').join('&amp;').split('"').join('&quot;');

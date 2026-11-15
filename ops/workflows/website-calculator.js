@@ -43,7 +43,7 @@ const reply = (statusCode, response, writes = []) => [{ json: { statusCode, resp
 if (v.isBot) return reply(200, { ok: true, requestId: C.randomId(), message: 'Check your email for a 6-digit code.' });
 if (v.errors.length) return reply(400, { ok: false, message: v.errors.join(' ') });
 if (C.rateLimited(recent, v.x.email, x.ipHash)) return reply(429, { ok: false, message: 'You have asked for 3 codes today. Please try again tomorrow, or email us.' });
-if (!C.sendingAllowed(S, v.x.email, Rg.TEST_INBOX)) return reply(503, { ok: false, comingSoon: true, message: 'Instant estimates open very soon. In the meantime, email keystoneconsultancy.co@gmail.com and we will send you prices the same day.' });
+if (!C.sendingAllowed(S, v.x.email, Rg.TEST_INBOX)) return reply(503, { ok: false, comingSoon: true, message: 'Instant estimates open very soon. In the meantime, email ' + (S.client_contact_email || 'bilal.khan@keystoneconsultancyuk.co.uk') + ' and we will send you prices the same day.' });
 const code = C.randomCode(), requestId = C.randomId();
 const now = new Date();
 const mail = C.codeEmail(v.x.name, code);

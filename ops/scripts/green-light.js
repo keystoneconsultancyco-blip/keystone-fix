@@ -13,6 +13,8 @@ const AT = require('../config/airtable.json');
 const N8N = 'https://keystoneconsultancy.app.n8n.cloud';
 const BEFORE = path.join(__dirname, '../../n8n/backups/2026-11-11-pause/_active_before_pause.json');
 
+// Built during the pause (never active before it), switched on at GREEN LIGHT too.
+const NEW_SINCE_PAUSE = ['KS Audit Flow'];
 const STAGES = {
   // 1. Alerts first, so anything that breaks later is reported.
   alerts: ['KS Ops - Notify', 'KS Ops - Failure Alerts'],
@@ -22,7 +24,7 @@ const STAGES = {
     '[Stock] Phone Booking - 1. Inbound IVR', '[Stock] Phone Booking - 2. Vapi Tools', '[Stock] Phone Booking - 3. Post-Call Actions',
     'KS Quote Calculator', 'KS Audit Agent', 'KS Weekly Money + Dashboard'],
   // 3. Keystone's own operations (website backend, tracking, approvals, budget, switch-on, Jarvis feed).
-  ops: ['KS Ops Manager', 'KS AI Budget', 'KS Switch-On', 'KS Website Calculator', 'KS Nurture Tracking', 'KS Jarvis Feed', 'KS Agent Switch'],
+  ops: ['KS Ops Manager', 'KS AI Budget', 'KS Switch-On', 'KS Website Calculator', 'KS Nurture Tracking', 'KS Jarvis Feed', 'KS Agent Switch', 'KS Audit Flow'],
   // 4. Agents last.
   agents: ['KS Agent - Ops Monitor', 'KS Agent - Chief of Staff', 'KS Agent - Client Hunter', 'KS Agent - Outreach', 'KS Agent - Sales Prep', 'KS Agent - Nurture'],
 };
@@ -60,7 +62,7 @@ async function activate(names) {
   for (const name of names) {
     const w = all.find((x) => x.name === name);
     if (!w) { console.log('  MISSING  ', name); continue; }
-    if (!wasOn.has(name)) { console.log('  skipped   ', name, '(was off before the pause)'); continue; }
+    if (!wasOn.has(name) && !NEW_SINCE_PAUSE.includes(name)) { console.log('  skipped   ', name, '(was off before the pause)'); continue; }
     const r = await n8n('POST', `/workflows/${w.id}/activate`);
     console.log(r.status < 300 && r.body.active ? '  ON       ' : '  FAILED   ', name, r.status < 300 ? '' : JSON.stringify(r.body).slice(0, 200));
   }
@@ -135,7 +137,7 @@ async function status() {
     return;
   }
   if (stage === 'check') {
-    const before = JSON.parse(fs.readFileSync(BEFORE, 'utf8')).filter((w) => w.active).map((w) => w.name);
+    const before = JSON.parse(fs.readFileSync(BEFORE, 'utf8')).filter((w) => w.active).map((w) => w.name).concat(NEW_SINCE_PAUSE);
     const on = new Set((await workflows()).filter((w) => w.active).map((w) => w.name));
     const missing = before.filter((n) => !on.has(n));
     console.log(`Active now: ${on.size}. Active before the pause: ${before.length}. Missing: ${missing.length ? missing.join(', ') : 'none'}`);

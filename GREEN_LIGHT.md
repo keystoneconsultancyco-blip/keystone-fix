@@ -42,6 +42,25 @@ NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js 
   Reply-To on every email: keystoneconsultancy.co@gmail.com. All four are editable in Keystone Settings (`sender_personal`, `sender_accounts`, `sender_operations`, `reply_to`). A client with their own From address keeps it.
 - **Domain:** on 15 Nov Resend showed the domain as **failed**: none of the DNS records were found. Add the records from the DNS email in Namecheap first. Switch-On (Step 3) then asks Resend to check again.
 
+## Step 0c: audit flow (built 15 Nov, see `docs/AUDIT_PLAYBOOK.md`)
+Do these before Step 3, which switches on **KS Audit Flow**:
+1. **n8n credential "Keystone Stripe":** n8n → Credentials → New → **Header Auth**. Name: `Keystone Stripe`; header name: `Authorization`; value: `Bearer rk_live_…`, the same restricted key you gave me. Then run Step 0b again so the Stripe steps are redeployed.
+2. **Stripe webhook on:** Stripe → Developers → Webhooks → "Keystone audit flow (KS Audit Flow)" (`we_1Uc7iYJR8vcxCxOmQ9hh9x4B`) → **Enable**. Or ask me to enable it.
+3. **Airtable automation:** Airtable → Keystone Client Finder → Automations → Create:
+   - **Trigger:** "When a record is updated", table **Audit Intakes**. Fields: Available slots, Confirm, Confirmed time at, Transcript, Approve report, Call 2 slots, Confirm call 2, Call 2 confirmed at, Outcome.
+   - **Action:** "Run a script". Input variable `recordId` = the trigger's Airtable record ID. Script:
+     ```js
+     const cfg = input.config();
+     const settings = await base.getTable('Keystone Settings').selectRecordsAsync({ fields: ['Setting', 'Value'] });
+     const row = settings.records.find((r) => r.getCellValueAsString('Setting') === 'audit_hook_token');
+     await fetch('https://keystoneconsultancy.app.n8n.cloud/webhook/ks-audit-step', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ recordId: cfg.recordId, token: row ? row.getCellValueAsString('Value') : '' }) });
+     ```
+   - Turn it on. If your Airtable plan has no "Run a script" action, skip this: the audit flow still checks every 2 hours from 09:05 to 19:05, so things you tick are actioned within 2 hours instead of straight away.
+4. **Email forwarding:** Namecheap → Domain → **Redirect Email**: `bilal.khan@`, `accounts@` and `operations@` keystoneconsultancyuk.co.uk → your gmail. Client replies go to bilal.khan@, so test it by sending an email there.
+5. **Website contact address:** once forwarding works, merge branch `green-light-contact` in `keystone-website-v3`. It replaces the gmail with bilal.khan@ on every page.
+6. **Before the first Won:** a solicitor checks `docs/CLIENT_AGREEMENT.md`, then set `agreement_approved` = yes and fill `keystone_xero_tenant_id`.
+
 ## Step 1: alerts
 ```bash
 NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js alerts
@@ -65,7 +84,7 @@ NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js 
 ```bash
 NODE_USE_ENV_PROXY=1 KS_GREEN_LIGHT=1 node --no-warnings scripts/green-light.js ops
 ```
-- **Switches on:** Ops Manager, AI Budget, Switch-On, Website Calculator, Nurture Tracking, Jarvis Feed and Agent Switch.
+- **Switches on:** Ops Manager, AI Budget, Switch-On, Website Calculator, Nurture Tracking, Jarvis Feed, Agent Switch and **KS Audit Flow** (new; it was never on before the pause).
 - **Tests (each should say OK):**
   - Jarvis feed should return `ok:true`;
   - the email open pixel should return 200;

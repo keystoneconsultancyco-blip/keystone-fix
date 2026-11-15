@@ -81,3 +81,6 @@ Audit free, 50% off setup, in exchange for a written case study and testimonial.
 ## 8. Presentation and admin
 - Website shows the audit offer, setup fees, the 3 packages with "from" prices and "Pricing is based on business size".
 - Bilal is a sole trader and not VAT registered: no VAT on Keystone invoices. Keystone Settings > `keystone_vat_registered` (no / yes) switches VAT on later.
+
+## Audit payment (15 Nov 2026)
+The £100 audit link is a Stripe hold (manual capture): the card is authorised at booking and charged only when Bilal confirms the call time; released on day 6 if no time is agreed. Flow and call scripts: `docs/AUDIT_PLAYBOOK.md`.

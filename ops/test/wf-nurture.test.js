@@ -88,7 +88,7 @@ test('daily run: due lead gets email 1 with tracking, Sends row, lead + template
   assert.equal(x.emails.length, 1);
   const mail = x.emails[0].body;
   assert.deepEqual(mail.to, ['sam@acme-plumbing.co.uk']);
-  assert.equal(mail.from, 'Bilal Khan | Keystone <bilal.khan@keystone.co.uk>'); assert.equal(mail.reply_to, 'keystoneconsultancy.co@gmail.com');
+  assert.equal(mail.from, 'Bilal Khan | Keystone <bilal.khan@keystone.co.uk>'); assert.equal(mail.reply_to, 'bilal.khan@keystone.co.uk'); assert.ok(!/gmail/.test(mail.reply_to + mail.html + mail.text));
   assert.match(mail.html, /ks-nurture-click\?s=[a-z0-9]{24}&amp;t=recTpl/); assert.match(mail.html, /ks-nurture-open\?s=/); assert.match(mail.html, /ks-unsubscribe\?p=recLead/);
   assert.match(mail.text, /Sam/); assert.match(mail.text, /3 are left for/);
   const send = x.at(T.nurtureSends)[0].body.records[0].fields;
@@ -175,7 +175,7 @@ test('open: bad or mismatched links count nothing but still return the pixel', a
 test('click: counted, then redirect to booking page (or an email to Bilal until it is set)', async () => {
   const x = await track('Click', Q, { send: sendRow() });
   assert.deepEqual(x.r.errors, []);
-  assert.match(x.r.responses[0].body, /url=mailto:khan\.bilalbk408@gmail\.com\?subject=Book%20my%20Finance%20Ops%20Audit%20-%20Acme/);
+  assert.match(x.r.responses[0].body, /url=mailto:bilal\.khan@keystoneconsultancyuk\.co\.uk\?subject=Book%20my%20Finance%20Ops%20Audit%20-%20Acme/); assert.ok(!/gmail/.test(x.r.responses[0].body));
   assert.equal(x.writes[0].body.records[0].fields.Clicks, 1); assert.equal(x.writes[1].body.records[0].fields.Clicked, 2);
   const y = await track('Click', Q, { send: sendRow({ Test: true }), S: settings({ audit_booking_url: 'https://cal.example.com/keystone' }) });
   assert.match(y.r.responses[0].body, /url=https:\/\/cal\.example\.com\/keystone"/);

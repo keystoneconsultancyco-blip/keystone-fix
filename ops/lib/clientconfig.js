@@ -49,7 +49,7 @@ function toInvoiceConfig(client, record) {
     invoiceLineAmountType: client.invoice.invoiceLineAmountType,
     // Invoices and payment reminders: the client's Accounts sender (Keystone Accounts once the domain is verified).
     confirmationFromEmail: field(record, 'Accounts from email') || field(record, 'From email') || 'onboarding@resend.dev',
-    replyTo: field(record, 'Reply-to email') || Sd.REPLY_TO,
+    replyTo: field(record, 'Reply-to email') || Sd.CLIENT_CONTACT,
     jobsSheetId: field(record, 'Jobs sheet ID') || '',
     jobsSheetTabName: field(record, 'Jobs sheet tab') || 'Jobs',
     discountsSheetTabName: 'Discounts',
@@ -91,7 +91,7 @@ function toPhoneConfig(client, record) {
     serviceMenu: services.map((s) => ({ name: s.name, durationMinutes: Number(s.durationMins) || 60 })),
     // Bookings and call notifications: the client's From email (Keystone Operations once the domain is verified).
     confirmationFromEmail: field(record, 'From email') || 'onboarding@resend.dev',
-    replyTo: field(record, 'Reply-to email') || Sd.REPLY_TO,
+    replyTo: field(record, 'Reply-to email') || Sd.CLIENT_CONTACT,
     businessNotificationEmail: client.businessEmail,
     reportingSheetId: field(record, 'Call log sheet ID') || '',
     callLogTabName: 'CallLog',
